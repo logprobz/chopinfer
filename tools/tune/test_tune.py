@@ -2052,6 +2052,99 @@ class Tuner(unittest.TestCase):
         mode, schedule, rows = stub.options(arguments)
         self.assertEqual((mode, schedule, rows), ('balanced', [(1, 5), (8, 3), (16, 3), (32, 0)], 32))
 
+    def test_table_arms_plan_from_frozen_costs_in_ab_jobs_only(self):
+        costs = '8:13918:0:847:336,16:20878:0:327:395,32:28240:0:412:296'
+        model = {'speculation_mode': 'balanced', 'mode': 'ab', 'max_depth': 5, 'verify_rows': 64,
+                 'extra_arguments': ['--speculative-rows', '64'],
+                 'arms': [{'label': 'b', 'depths': '1:5,8:3,16:3,32:0',
+                           'arguments': ['--speculation-widths', '6,8,16,32,64']},
+                          {'label': 't', 'speculation': 'table', 'costs': costs}]}
+        config = {'model': model}
+        balanced, table = tune.arms(config)
+        self.assertEqual(table['depth'], 5)
+        self.assertEqual(tune.arm_arguments(config, table),
+                         ['--speculation', 'table', '--speculation-costs', costs, '--speculative-rows', '64'])
+        self.assertEqual(tune.arm_arguments(config, balanced)[:4],
+                         ['--speculation', 'balanced', '--speculation-depths', '1:5,8:3,16:3,32:0'])
+        self.assertEqual(tune.table_costs(costs)[2], (32, 28240, 0, 412, 296))
+        self.assertFalse(tune.allocation_possible(config, table, 32))
+        # The depth check bounds a table arm by the model's deepest depth.
+        tune.check_depth('table', [{'batch': 1, 'verify_items': 8, 'verify_rows': 48}], table['depth'])
+        with self.assertRaisesRegex(RuntimeError, 'above depth 5'):
+            tune.check_depth('table', [{'batch': 1, 'verify_items': 8, 'verify_rows': 49}], table['depth'])
+        health = lambda mode: {'serving': {'profile': {'speculation': {'mode': mode, 'tokens': 5}}}}
+        self.assertEqual(tune.check_speculation_mode('t', config, table, health('table')), 'table')
+        self.assertEqual(tune.check_speculation_mode('b', config, balanced, health('balanced')), 'balanced')
+        with self.assertRaisesRegex(RuntimeError, 'serves speculation balanced, expected table'):
+            tune.check_speculation_mode('t', config, table, health('balanced'))
+        with self.assertRaisesRegex(RuntimeError, 'serves speculation table, expected balanced'):
+            tune.check_speculation_mode('b', config, balanced, health('table'))
+        import stub
+        self.assertEqual(stub.options(tune.arm_arguments(config, table)), ('table', [(1, 5)], 64))
+        for words in (['--speculation', 'table'], ['--speculation', 'table', '--speculation-costs', costs,
+                                                   '--speculation-depths', '1:3']):
+            with self.subTest(stub=words), self.assertRaisesRegex(ValueError, 'speculation-costs'):
+                stub.options(words)
+
+        def refused(pattern, arm=None, **changes):
+            arms = [model['arms'][0], {**model['arms'][1], **(arm or {})}]
+            with self.subTest(arm=arm, changes=changes), self.assertRaisesRegex(ValueError, pattern):
+                tune.arms({'model': {**model, 'arms': arms, **changes}})
+        refused('must be table', {'speculation': 'adaptive'})
+        refused('not depth or depths', {'depth': 3})
+        refused('not depth or depths', {'depths': '1:3'})
+        for bad in (None, '', '8:1:0:0', '0:1:0:0:0', '8:0:0:0:0', '16:1:0:0:0,8:1:0:0:0', '8:1:0:0:x',
+                    ','.join(f'{i}:1:0:0:0' for i in range(1, 18)), '70000:1:0:0:0'):
+            refused('step-cost table', {'costs': bad})
+        for flag in ('--speculation', '--speculation-costs', '--speculation-depths', '--speculation-widths',
+                     '--speculation-confidence'):
+            refused('takes no mode', {'arguments': [flag, 'x']})
+        refused('takes no mode', extra_arguments=['--speculation-confidence', 'off'])
+        for mode in ('sweep', 'costs', 'exact'):
+            refused('ab job of a balanced model', mode=mode)
+        refused('ab job of a balanced model', adoption_target={'profile': 'tp4-dspark'})
+        refused('positive model max_depth', max_depth=0)
+        with self.assertRaisesRegex(ValueError, 'costs need a table arm'):
+            tune.arms({'model': {**model, 'arms': [{**model['arms'][0], 'costs': costs}]}})
+
+    def test_balanced_and_table_ab_stub_serves_each_arms_mode(self):
+        import os
+        import subprocess
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            model = frozen_fixture(root)
+            costs = '1:10000:0:500:400'
+            model['arms'] = [{'label': 'a', 'depth': 1}, {'label': 't', 'speculation': 'table', 'costs': costs}]
+            # The stub drafts five tokens, the depth bound of a table arm.
+            model['pairs'], model['max_depth'] = [['a', 't']], 5
+            path = root / 'logs/weight-content-head.json'
+            result = stage_fixture(root, model, names=('head',), proofs=[('head', path)])
+            self.assertEqual(result.returncode, 0, result.stderr)
+            staged = root / 'stage'
+            env = {k: v for k, v in os.environ.items() if not k.startswith('TUNE_')}
+            env.update(CHOPINFER_WEIGHT_KEEPER_DIR=str(root / 'synthetic-keeper'),
+                       CHOPINFER_TEST_CHECKPOINT=str(root / 'checkpoint'))
+            preflight = subprocess.run([sys.executable, '-B', str(staged / 'harness/preflight.py'), str(staged)],
+                                       env=env, text=True, capture_output=True, timeout=30)
+            self.assertEqual(preflight.returncode, 0, preflight.stdout + preflight.stderr)
+            out = root / 'run'
+            result = subprocess.run([sys.executable, '-B', str(staged / 'harness/tune.py'), '--dry-run',
+                                     '--output', str(out), '--payload-sha', stage.digest(staged / 'runtime-seal.json')],
+                                    env=env, text=True, capture_output=True, timeout=90)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            summary = json.loads((out / 'summary.json').read_text())
+            self.assertEqual(summary['windows'], {'executed': 4, 'planned': 4})
+            self.assertTrue(summary['exactness']['passed'])
+            for label, process in summary['processes'].items():
+                table = label.startswith('t-')
+                self.assertEqual(process['speculation_mode'], 'table' if table else 'balanced')
+                self.assertEqual(process.get('costs'), costs if table else None)
+                argv = json.loads((out / label / 'server/launch.json').read_text())['serve_argv']
+                self.assertEqual('--speculation-costs' in argv, table)
+                self.assertEqual('--speculation-depths' in argv, not table)
+                self.assertEqual(argv[argv.index('--speculation') + 1], 'table' if table else 'balanced')
+            self.assertIn('a/t', json.loads((out / 'ab.json').read_text())['pairs'])
+
     def test_stage_files_are_protected_from_other_writers(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory) / 'stage'

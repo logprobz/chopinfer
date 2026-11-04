@@ -183,10 +183,63 @@ def arm_environment(config, arm):
     return environment
 
 
+def arm_speculation(config, arm):
+    """The speculation mode an arm serves: its own `speculation`, else the
+    model's `speculation_mode`."""
+    return arm.get('speculation', config['model']['speculation_mode'])
+
+
+# The flags a table arm's `costs` and mode replace, and those only balanced
+# plans take.
+TABLE_REFUSED = ('--speculation', '--speculation-costs', '--speculation-depths', '--speculation-widths',
+                 '--speculation-confidence')
+
+
+def table_costs(text):
+    """An arm's `costs` in `--speculation-costs` form
+    (ITEMS:BASE:STEP:DRAFTING:ROW,... in whole microseconds), as tuples:
+    at most 16 entries with positive, strictly increasing items and a
+    positive base, as the engine's StepCosts accepts."""
+    entry = r'[0-9]+:[0-9]+:[0-9]+:[0-9]+:[0-9]+'
+    if not isinstance(text, str) or not re.fullmatch(fr'{entry}(,{entry})*', text):
+        raise ValueError(f'invalid step-cost table: {text!r}')
+    entries = [tuple(int(x) for x in part.split(':')) for part in text.split(',')]
+    if (len(entries) > 16 or any(items == 0 or items >= 1 << 16 or base == 0 for items, base, *_ in entries)
+            or any(value >= 1 << 32 for row in entries for value in row)
+            or any(b[0] <= a[0] for a, b in zip(entries, entries[1:]))):
+        raise ValueError(f'step-cost table needs 1-16 entries, increasing items and a positive base: {text!r}')
+    return entries
+
+
+def table_arm(config, arm):
+    """A validated table arm: it plans from its frozen `costs`, never from
+    depths, and only in an A/B job of a balanced model, so it never enters a
+    depth recommendation. Its depth bound is the model's deepest depth."""
+    model = config['model']
+    if arm['speculation'] != 'table':
+        raise ValueError(f"{arm['label']}: an arm's own speculation mode must be table")
+    if model.get('speculation_mode') != 'balanced' or model.get('mode') != 'ab' or model.get('adoption_target'):
+        raise ValueError(f"{arm['label']}: table arms need an ab job of a balanced model without an adoption target")
+    if 'depth' in arm or 'depths' in arm:
+        raise ValueError(f"{arm['label']}: a table arm plans from costs, not depth or depths")
+    table_costs(arm.get('costs'))
+    if any(word.split('=', 1)[0] in TABLE_REFUSED for word in [*model.get('extra_arguments', []), *arm['arguments']]):
+        raise ValueError(f"{arm['label']}: a table arm takes no mode, cost, depth, width or confidence flags")
+    depth = model.get('max_depth')
+    if type(depth) is not int or depth <= 0:
+        raise ValueError(f"{arm['label']}: a table arm needs a positive model max_depth")
+    return {**arm, 'depth': depth}
+
+
 def arm_arguments(config, arm, install=None):
     model = config['model']
-    speculation = [] if model['speculation_mode'] == 'off' else [
-        '--speculation', model['speculation_mode'], '--speculation-depths', arm.get('depths', f"1:{arm['depth']}")]
+    mode = arm_speculation(config, arm)
+    if mode == 'off':
+        speculation = []
+    elif mode == 'table':
+        speculation = ['--speculation', 'table', '--speculation-costs', arm['costs']]
+    else:
+        speculation = ['--speculation', mode, '--speculation-depths', arm.get('depths', f"1:{arm['depth']}")]
     return [*speculation,
             *model.get('extra_arguments', []), *arm['arguments'],
             *(['--weight-keeper-identity', install['weight_keeper_identity']]
@@ -500,8 +553,11 @@ def confidence_chooses(floor, items, width, drafts):
 def allocation_possible(config, arm, items, resolved=None):
     """A full cohort with executable drafts and output room can reserve
     beyond its balanced width, and confidence chooses among the reserved
-    drafts. Tail limits may reduce individual steps."""
+    drafts. Tail limits may reduce individual steps. A table arm never
+    allocates."""
     model = config['model']
+    if arm.get('speculation') == 'table':
+        return False
     args = [*model.get('serve_arguments', []), *model.get('extra_arguments', []), *arm['arguments']]
     if resolved:
         args += [word for key, value in resolved['settings'].items() for word in (f'--{key}', value)]
@@ -782,7 +838,8 @@ def windows_for(config, depth, every=False):
 
 def arms(config):
     """Server arms in run order, one server each: the model config's `arms`
-    ({label, depth, arguments}), or one per depth of `depths` (or
+    ({label, depth, arguments}, or a table arm's {label, speculation,
+    costs, arguments}), or one per depth of `depths` (or
     0..max_depth), the deepest first (it also runs the reference pass), then
     the rest ascending."""
     model = config['model']
@@ -803,6 +860,11 @@ def arms(config):
         for arm in model['arms']:
             arm_environment(config, arm)
             arm_fallbacks(config, arm)
+            if 'speculation' in arm:
+                declared.append(table_arm(config, {'arguments': [], **arm}))
+                continue
+            if 'costs' in arm:
+                raise ValueError(f"{arm['label']}: costs need a table arm")
             if 'depths' in arm:
                 # A production schedule (for example a profile's default)
                 # instead of one uniform depth; `depth` is its deepest entry.
@@ -1346,6 +1408,16 @@ def run_windows(server, arm, state, power, root, passes, reference):
             save(SEAL_RUN, state)
 
 
+def check_speculation_mode(label, config, arm, health):
+    """The speculation mode a server's /health reports, which must be its
+    arm's."""
+    mode = ((health.get('serving') or {}).get('profile') or {}).get('speculation', {}).get('mode')
+    expected = arm_speculation(config, arm)
+    if mode != expected:
+        raise RuntimeError(f'{label}: serves speculation {mode}, expected {expected}')
+    return mode
+
+
 def run_arm(run, arm, state, dry, keep, reference_pass, warmup_only=False):
     config = SEAL['config']
     model = config['model']
@@ -1391,10 +1463,10 @@ def run_arm(run, arm, state, dry, keep, reference_pass, warmup_only=False):
             record['resolved'] = depth_identity.normalized(case['resolved'])
             depth_identity.check_health(record['serving'], SEAL['capture_identity']['installs'][identity['install']],
                                         record['resolved'], model)
-        mode = ((server.health.get('serving') or {}).get('profile') or {}).get('speculation', {}).get('mode')
+        mode = check_speculation_mode(label, config, arm, server.health)
         record['speculation_mode'] = mode
-        if mode != model['speculation_mode']:
-            raise RuntimeError(f"{label}: serves speculation {mode}, expected {model['speculation_mode']}")
+        if 'costs' in arm:
+            record['costs'] = arm['costs']
         if mode == 'off' and server.health['serving']['profile']['speculation'].get('tokens') != 0:
             raise RuntimeError(f'{label}: AR profile reports draft tokens')
         log = (server.directory / 'server.log').read_text(errors='replace')

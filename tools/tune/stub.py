@@ -6,7 +6,8 @@ memory after warmup and a weight upload, tokenizes raw prompts and chat
 messages, serves batched completions (one response, or a stream for sampled
 windows), and writes one engine step record per step with drafts limited by
 `--speculation-depths` and the verify rows (`--speculative-rows`, default 32).
-With `--weight-keeper` its weights are lent. Tokens follow the prompt, sampling
+Table mode needs `--speculation-costs`, takes no balanced-only flags and
+drafts as deep as the rows allow. With `--weight-keeper` its weights are lent. Tokens follow the prompt, sampling
 and seed only, so every depth emits the same tokens; acceptance by position
 decays, so deeper drafts take fewer steps. /metrics carries the speculation
 counters by position. TUNE_STUB_PERTURB names a label whose greedy output
@@ -42,6 +43,11 @@ def options(arguments, ar=False):
             depth = [tuple(int(x) for x in part.split(':')) for part in value.split(',')]
         elif flag == '--speculative-rows':
             rows = int(value)
+    if mode == 'table' and ('--speculation-costs' not in arguments
+                            or any(flag in arguments for flag in ('--speculation-depths', '--speculation-widths',
+                                                                  '--speculation-confidence'))):
+        raise ValueError('--speculation table requires --speculation-costs; only balanced mode takes depths, '
+                         'widths and confidence')
     return mode, depth, rows
 
 

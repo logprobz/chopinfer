@@ -168,6 +168,26 @@ one item and increase; each step's depth check uses the entry for its item
 count. It needs `speculation_mode: "balanced"` and cannot be combined with
 `depth`.
 
+An arm may instead serve the fixed step-cost table mode, to compare it with
+a balanced arm in the same `mode: ab` job:
+
+```json
+{"label": "t", "speculation": "table", "costs": "8:13918:0:847:336,16:20878:0:327:395"}
+```
+
+`costs` is the `--speculation-costs` table (`ITEMS:BASE:STEP:DRAFTING:ROW`
+in whole microseconds, at most 16 entries with increasing items and a
+positive base). The arm serves `--speculation table --speculation-costs
+COSTS` without `--speculation-depths`. It takes no `depth` or `depths`. Its
+arguments and the job's `extra_arguments` must not carry the mode, costs, depth,
+width or confidence flags, which only balanced plans take. Its depth check
+bounds every step by the model's `max_depth`. It expects no allocated steps,
+and its server must report table mode on `/health`. Table arms are refused
+outside `mode: ab` and with an `adoption_target`, so they never feed a depth
+recommendation. Table and balanced arms intentionally draft differently in the
+same step shape. Their verdict is the request-rate cell `decode:cN`; give the
+shape cells (`decode_step:cN`, `verify:rN`) zero weight in `cell_weights`.
+
 Seal with `--install-dir "$ROUND" --install-name base --install-name head`.
 An arm without `install` uses the first name on the command line. Unknown
 names, unused sealed installs and multiple installs outside `mode: ab` or

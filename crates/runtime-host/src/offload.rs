@@ -112,6 +112,17 @@ pub trait KvOffloadExecutorV1 {
         Duration::from_secs(5)
     }
     fn drain(&self) -> HostDeviceResultV1<()>;
+    /// Whether [`Self::cancel`] stops demotions.
+    fn cancel_supported(&self) -> bool {
+        false
+    }
+    /// Cancels a submitted demotion: none of its remaining chunks are
+    /// issued, and it reports FailedIdle once its issued chunks drain on
+    /// every rank. Ok(false) means it had already finished. Every other
+    /// class is refused.
+    fn cancel(&self, _id: KvTransferId) -> HostDeviceResultV1<bool> {
+        Err(Status::Unsupported)
+    }
 }
 /// Copy order at chunk boundaries, lowest first: copies a waiting request
 /// or promotion needs, then swaps out, then demotions.
@@ -126,6 +137,8 @@ struct Queued {
     plan: KvTransferSubmission,
     cursor: usize,
     status: KvTransferStatus,
+    /// A cancelled demotion issues no more chunks.
+    cancelled: bool,
 }
 struct Chunk {
     bytes: usize,
@@ -187,11 +200,11 @@ impl OffloadQueue {
         // Per-link pacing issues ranks together. Include unissued pages and
         // already-issued pacing debt on both clocks, then allow another full
         // paced interval plus five seconds for event observation and queue
-        // scheduling.
+        // scheduling. A cancelled demotion issues nothing more.
         let bytes = self
             .transfers
             .values()
-            .filter(|t| !t.plan.accepted())
+            .filter(|t| !t.plan.accepted() && !t.cancelled)
             .fold(0u64, |sum, t| {
                 sum.saturating_add(
                     (t.plan.pages().len().saturating_sub(t.cursor) as u64)
@@ -229,6 +242,7 @@ impl OffloadQueue {
                 plan: plan.into_submission(),
                 cursor: 0,
                 status: KvTransferStatus::Pending,
+                cancelled: false,
             },
         );
         Ok(())
@@ -254,11 +268,12 @@ impl OffloadQueue {
         }
         let active_transfer = self.in_flight.front().map(|chunk| chunk.transfer);
         for (id, t) in &mut self.transfers {
-            if t.status == KvTransferStatus::Pending
-                && t.cursor == t.plan.pages().len()
-                && active_transfer != Some(*id)
-            {
-                t.status = KvTransferStatus::Complete;
+            if t.status == KvTransferStatus::Pending && active_transfer != Some(*id) {
+                if t.cancelled {
+                    t.status = KvTransferStatus::FailedIdle;
+                } else if t.cursor == t.plan.pages().len() {
+                    t.status = KvTransferStatus::Complete;
+                }
             }
         }
         let now = Instant::now();
@@ -268,13 +283,17 @@ impl OffloadQueue {
         {
             // Do not interleave two transfers: they can name the same shared
             // pages, and chunk completion assumes one transfer in flight. A
-            // waiting transfer of a higher class stops further chunks of the
-            // active one, and starts once the window drains on every rank.
+            // waiting transfer of a higher class, or a cancel, stops further
+            // chunks of the active one; the next starts once the window has
+            // drained on every rank.
             let chosen = if let Some(chunk) = self.in_flight.front() {
-                let active = priority(self.transfers[&chunk.transfer].plan.class());
-                if self.transfers.values().any(|t| {
-                    t.status == KvTransferStatus::Pending && priority(t.plan.class()) < active
-                }) {
+                let transfer = &self.transfers[&chunk.transfer];
+                let active = priority(transfer.plan.class());
+                if transfer.cancelled
+                    || self.transfers.values().any(|t| {
+                        t.status == KvTransferStatus::Pending && priority(t.plan.class()) < active
+                    })
+                {
                     break;
                 }
                 Some(chunk.transfer)
@@ -341,6 +360,29 @@ impl OffloadQueue {
             t.cursor = end;
         }
         Ok(())
+    }
+    /// Cancels a demotion without poisoning the queue: none of its remaining
+    /// chunks are issued, and it fails idle once its issued chunks drain on
+    /// every rank, at once when none are in flight. Ok(false) means it had
+    /// already finished. Other classes always run to completion.
+    pub fn cancel(&mut self, id: KvTransferId) -> HostDeviceResultV1<bool> {
+        let in_flight = self.in_flight.iter().any(|c| c.transfer == id);
+        let t = self
+            .transfers
+            .get_mut(&id)
+            .filter(|t| !t.plan.accepted())
+            .ok_or(Status::StaleHandle)?;
+        if t.plan.class() != KvTransferClass::Demotion {
+            return Err(Status::InvalidArgument);
+        }
+        if t.status != KvTransferStatus::Pending {
+            return Ok(false);
+        }
+        t.cancelled = true;
+        if !in_flight {
+            t.status = KvTransferStatus::FailedIdle;
+        }
+        Ok(true)
     }
     pub fn poll<D: HostDeviceBackendV1>(
         &mut self,
@@ -1480,5 +1522,148 @@ mod classes {
         assert_eq!(f.wait(demotion), KvTransferStatus::Complete);
         f.h.drop_anchor(out_anchor).unwrap();
         f.assert_idle(&[key]);
+    }
+
+    #[test]
+    fn a_cancelled_demotion_fails_idle_once_every_rank_drains_its_chunks() {
+        let mut f = Fixture::new();
+        f.device.set_offload_query_delay(f.q.arenas[0], 0);
+        f.device.set_offload_query_delay(f.q.arenas[1], 4);
+        let (key, demotion) = f.demotion(18);
+        let demotion = f.submit(demotion);
+        f.poll(demotion);
+        assert_eq!(f.q.in_flight.len(), KV_DEMOTION_CHUNKS_IN_FLIGHT);
+        assert_eq!(f.q.cancel(demotion), Ok(true));
+        assert_eq!(f.q.cancel(demotion), Ok(true));
+        // Its unissued pages leave the shutdown budget.
+        f.q.rate = Some(PB as u64);
+        assert_eq!(f.q.drain_timeout(), Duration::from_secs(5));
+        f.q.rate = None;
+        while f.poll(demotion) == KvTransferStatus::Pending {
+            // No further chunk is issued; rank 1 still copies the others.
+            assert_eq!(f.cursor(demotion), 16);
+            assert!(!f.q.in_flight.is_empty());
+        }
+        assert!(f.q.in_flight.is_empty());
+        assert!(f.q.available());
+        assert_eq!(f.finish(demotion), KvTransferStatus::FailedIdle);
+        assert_eq!(f.q.cancel(demotion), Err(Status::StaleHandle));
+        // The incomplete entry and the lease are gone, and the queue still
+        // copies: the same anchor demotes again.
+        assert_eq!(f.p.host_entry(key), None);
+        assert_eq!(f.h.used_pages(), 0);
+        let (_, again) = f.h.begin_offload(&mut f.p, key, None).unwrap();
+        let again = f.submit(again);
+        assert_eq!(f.wait(again), KvTransferStatus::Complete);
+        assert!(f.p.host_entry(key).unwrap().ready);
+        f.assert_idle(&[key]);
+    }
+
+    #[test]
+    fn a_cancelled_demotion_with_nothing_in_flight_fails_idle_at_once() {
+        let mut f = Fixture::new();
+        let (unissued, plan) = f.demotion(2);
+        let unissued_id = f.submit(plan);
+        assert_eq!(f.q.cancel(unissued_id), Ok(true));
+        assert_eq!(
+            f.q.transfers[&unissued_id].status,
+            KvTransferStatus::FailedIdle
+        );
+        assert_eq!(f.finish(unissued_id), KvTransferStatus::FailedIdle);
+        assert!(f.q.in_flight.is_empty());
+        // Queued behind a swap-out whose chunks are in flight.
+        let (out_anchor, out) = f.swap_out(8);
+        let out = f.submit(out);
+        f.poll(out);
+        let (queued, plan) = f.demotion(2);
+        let queued_id = f.submit(plan);
+        assert_eq!(f.poll(queued_id), KvTransferStatus::Pending);
+        assert_eq!(f.active(), Some(out));
+        assert_eq!(f.q.cancel(queued_id), Ok(true));
+        assert_eq!(
+            f.q.transfers[&queued_id].status,
+            KvTransferStatus::FailedIdle
+        );
+        assert_eq!(f.finish(queued_id), KvTransferStatus::FailedIdle);
+        assert_eq!(f.active(), Some(out));
+        assert_eq!(f.wait(out), KvTransferStatus::Complete);
+        f.h.drop_anchor(out_anchor).unwrap();
+        f.assert_idle(&[unissued, queued]);
+    }
+
+    #[test]
+    fn cancel_refuses_swaps_and_keeps_a_finished_demotions_result() {
+        let mut f = Fixture::new();
+        let swap = f.ready_swap(1);
+        let (out_anchor, out) = f.swap_out(1);
+        let (dest, reload) = f.swap_in(swap);
+        let (key, demotion) = f.demotion(1);
+        let ids = [f.submit(out), f.submit(reload), f.submit(demotion)];
+        f.poll(ids[0]);
+        for id in &ids[..2] {
+            assert_eq!(f.q.cancel(*id), Err(Status::InvalidArgument));
+        }
+        while f.poll(ids[2]) == KvTransferStatus::Pending {}
+        assert_eq!(f.q.cancel(ids[2]), Ok(false));
+        for id in ids {
+            assert_eq!(f.finish(id), KvTransferStatus::Complete);
+        }
+        assert!(f.p.host_entry(key).unwrap().ready);
+        assert_eq!(f.q.cancel(ids[2]), Err(Status::StaleHandle));
+        f.release_swap(swap, dest);
+        f.h.drop_anchor(out_anchor).unwrap();
+        f.assert_idle(&[key]);
+    }
+
+    #[test]
+    fn a_poison_fence_fails_demotions_idle_only_when_every_rank_is_idle() {
+        use crate::fake::FakeRefusalV1;
+        for idle in [true, false] {
+            let mut f = Fixture::new();
+            let (early, plan) = f.demotion(1);
+            let early_id = f.submit(plan);
+            assert_eq!(f.q.cancel(early_id), Ok(true));
+            let (issuing, plan) = f.demotion(16);
+            let issuing_id = f.submit(plan);
+            f.poll(issuing_id);
+            assert_eq!(f.q.in_flight.len(), KV_DEMOTION_CHUNKS_IN_FLIGHT);
+            assert_eq!(f.q.cancel(issuing_id), Ok(true));
+            let (waiting, plan) = f.demotion(1);
+            let waiting_id = f.submit(plan);
+            let (_, out) = f.swap_out(1);
+            let out = f.submit(out);
+            if idle {
+                f.device.refuse_after(FakeRefusalV1::QueryOffload, 0);
+            } else {
+                f.device.refuse(FakeRefusalV1::QueryOffload);
+                f.device.refuse(FakeRefusalV1::SynchronizeStream);
+            }
+            let fenced = if idle {
+                KvTransferStatus::FailedIdle
+            } else {
+                KvTransferStatus::Unconfirmed
+            };
+            // Cancelled or not, a demotion pending at the fence reports
+            // what the fence confirmed; the one cancelled with nothing in
+            // flight had already failed idle.
+            assert_eq!(f.poll(issuing_id), fenced);
+            assert!(!f.q.available());
+            for id in [issuing_id, waiting_id, out] {
+                assert_eq!(f.q.transfers[&id].status, fenced, "idle {idle}");
+            }
+            assert_eq!(f.q.cancel(waiting_id), Ok(false));
+            assert_eq!(f.finish(early_id), KvTransferStatus::FailedIdle);
+            for id in [issuing_id, waiting_id, out] {
+                assert_eq!(f.finish(id), fenced);
+            }
+            if idle {
+                f.q.drain(&mut f.device).unwrap();
+                f.assert_idle(&[early, issuing, waiting]);
+            } else {
+                // Unconfirmed copies keep their pages.
+                assert!(f.q.drain(&mut f.device).is_err());
+                assert_eq!(f.h.pending_transfers(), 3);
+            }
+        }
     }
 }

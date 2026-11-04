@@ -6599,6 +6599,7 @@ mod tests {
                 .unwrap(),
             None
         );
+        assert!(!backend.cancel_supported());
         assert_eq!(
             backend.with_device(FakeHostDeviceV1::live_object_count),
             before
@@ -6631,6 +6632,7 @@ mod tests {
             backend.with_device(FakeHostDeviceV1::live_object_count),
             before + 2
         );
+        assert!(backend.cancel_supported());
         assert!(backend.initialize_kv_offload(options, u64::MAX).is_err());
         backend.drain().unwrap();
     }
@@ -6641,7 +6643,7 @@ mod tests {
         use crate::offload::KvOffloadOptionsV1;
         use crate::probe::HostDeviceRankMemoryUsageV1;
         use runtime_bundle_abi::{BundleAbiError, OwnedLogitsRowV1, ResultSinkLimitsV1};
-        use runtime_engine::{Engine, EngineConfig, KvOffloadInfo};
+        use runtime_engine::{Engine, EngineConfig, KvOffloadInfo, ModelExecutor};
         use runtime_model_api::ModelVocabulary;
         use runtime_scheduler::SchedulerConfig;
         use std::rc::Rc;
@@ -6712,6 +6714,7 @@ mod tests {
             )
             .unwrap()
             .with_prefix_cache(1);
+            assert_eq!(executor.kv_transfer_cancel_v1_supported(), offload);
             let mut engine = Engine::new(config, executor).unwrap();
             let resources = || {
                 backend.with_device(|device| {
@@ -7490,6 +7493,17 @@ impl<D: HostDeviceBackendV1> crate::offload::KvOffloadExecutorV1 for HostService
             queue.drain(device)?;
         }
         Ok(())
+    }
+    fn cancel_supported(&self) -> bool {
+        self.state.borrow().offload.is_some()
+    }
+    fn cancel(&self, id: runtime_kv::KvTransferId) -> HostServiceResultV1<bool> {
+        self.state
+            .borrow_mut()
+            .offload
+            .as_mut()
+            .ok_or(BundleStatusV1::Unsupported)?
+            .cancel(id)
     }
 }
 

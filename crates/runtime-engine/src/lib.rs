@@ -1468,6 +1468,21 @@ pub trait ModelExecutor {
     fn drain_kv_transfers_v1(&mut self) -> Result<(), ExecutorError> {
         Ok(())
     }
+    /// Whether [`Self::cancel_kv_transfer_v1`] can cancel a demotion.
+    fn kv_transfer_cancel_v1_supported(&self) -> bool {
+        false
+    }
+    /// Cancels a submitted demotion without poisoning the copy queue: none
+    /// of its remaining chunks are issued, and its poll reports `FailedIdle`
+    /// once its issued chunks drain on every rank, at once when none are in
+    /// flight. `Ok(false)` means it had already finished, with the result
+    /// its poll reports. Every other transfer class is refused.
+    fn cancel_kv_transfer_v1(
+        &mut self,
+        _id: runtime_kv::KvTransferId,
+    ) -> Result<bool, ExecutorError> {
+        Err(executor_error_fixed("KV transfer cancel is unsupported"))
+    }
 
     /// Reserves per-request state after KV admission, before restore or execute.
     /// Failure must leave no resources owned by this request.

@@ -1744,6 +1744,19 @@ impl<E: BundleExecutionV1> ModelExecutor for BundleModelExecutorV1<E> {
         }
         Ok(())
     }
+    fn kv_transfer_cancel_v1_supported(&self) -> bool {
+        self.offload.as_ref().is_some_and(|o| o.cancel_supported())
+    }
+    fn cancel_kv_transfer_v1(
+        &mut self,
+        id: runtime_kv::KvTransferId,
+    ) -> Result<bool, ExecutorError> {
+        self.offload
+            .as_ref()
+            .ok_or_else(|| executor_error_v1("KV transfers are unsupported".into()))?
+            .cancel(id)
+            .map_err(|e| executor_error_v1(format!("KV copy cancel failed: {e:?}")))
+    }
 
     fn round_draft_tokens_v1(&self, proposed: usize) -> usize {
         if self.row_buckets.is_empty() || proposed == 0 {

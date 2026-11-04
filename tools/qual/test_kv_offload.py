@@ -127,6 +127,37 @@ class Offload(unittest.TestCase):
         self.assertEqual(result["status"], "fail")
         self.assertEqual(result["metrics"]["different_requests"], ["item-0"])
 
+    def test_the_prefix_pressure_pair_uses_the_rust_rule(self):
+        snapshot = dict.fromkeys((*kvo.COUNTERS, "host_pages_used", "swapped_requests"), 0)
+        snapshot["fallbacks"] = {}
+        requests = [{"name": f"item-{i}", "prompt_sha256": f"prompt-{i}", "token_ids": [1] * 32,
+                     "tokens": ["a"] * 32, "logprobs": [-0.5] * 32, "top": [{"a": -0.5}] * 32,
+                     "finish_reason": "length", "usage": {"prompt_tokens": 10, "completion_tokens": 32,
+                     "total_tokens": 42}, "observed": deepcopy(snapshot)} for i in range(36)]
+        off = {"arm": "off", "scenario": "pressure", "output_tokens": 96, "concurrency": 16,
+               "c1": requests, "c16": deepcopy(requests), "repeat": deepcopy(requests), "warm": deepcopy(requests),
+               "before": deepcopy(snapshot), "after": deepcopy(snapshot),
+               "c16_before": deepcopy(snapshot), "c16_after": deepcopy(snapshot)}
+        tier = deepcopy(off)
+        tier.update(arm="tier", scenario="prefix-pressure", repeat=[])
+        start = kvo.metrics(metric_text() + tier_text(), tier=True)["tier"]
+        end = kvo.metrics(metric_text() + tier_text(hits=30, promotions=30, missed=2), tier=True)["tier"]
+        for key, value in (("before", start), ("c16_before", start), ("c16_after", end), ("after", end)):
+            tier[key]["tier"] = deepcopy(value)
+        tier["c16_after"]["prefix_evictions"] = 3
+        reference = {"facts": FACTS["kv_offload"], "speculative": False}
+        capture = {"passed": True, "count": 36, "records": {"off": off, "tier": tier}, "policy": reference}
+        check = {"module": "kv_offload", "rules": [{"path": ["passed"], "op": "eq", "value": True}]}
+        kind = kvo.kinds.of("kv_offload")
+        self.assertTrue(kind.score(capture, check=check)["passed"])
+        result = kvo.kinds.rescore(kind, capture, reference, check)
+        self.assertEqual(result["status"], "pass", result)
+        tier["c1"][0]["logprobs"][0] = -0.5000000000000001
+        result = kvo.kinds.rescore(kind, capture, reference, check)
+        self.assertEqual(result["status"], "fail")
+        self.assertEqual(result["metrics"]["c16_equality"]["tier_identical"], 36)
+        self.assertEqual(kind.score(capture, check=check)["different_requests"], ["item-0"])
+
     def test_offload_facts_compile_without_a_preview(self):
         # Readers that drop a model's preview (the GSM8K floor fixtures)
         # still compile its declaration; the scorer reads the preview only
@@ -147,16 +178,21 @@ class Offload(unittest.TestCase):
     def test_arms_derive_stripes_for_each_parallel_size(self):
         for parallel, pages in ((1, 512), (2, 256), (4, 128)):
             arms = kvo.arms(FACTS, {"page_tokens": 64, "context_parallel_size": parallel})
-            self.assertEqual(len(arms), 4)
+            self.assertEqual(len(arms), 5)
             for name, words in arms.items():
                 options = dict(zip(words[::2], words[1::2]))
                 pressure, swap = "pressure" in name, name.endswith("swap")
-                self.assertEqual(options["--kv-offload-gib"], "16" if swap else "0")
+                tier = name == "kv-offload-prefix-pressure"
+                self.assertEqual(options["--kv-offload-gib"], "16" if swap or tier else "0")
                 self.assertEqual(options["--prefix-cache"], "on" if pressure else "off")
                 self.assertEqual(options["--speculative-tokens"], "3" if pressure else "0")
-                self.assertEqual(options["--kv-offload-prefix"], "off")
+                self.assertEqual(options["--kv-offload-prefix"], "on" if tier else "off")
                 self.assertEqual(options.get("--kv-pages"), str(pages) if pressure else None)
                 self.assertEqual(options.get("--debug-swap-every"), "16" if swap else None)
+            # The tier arm is the pressure off arm with the tier on, nothing else.
+            off, tier = arms["kv-offload-pressure-off"], arms["kv-offload-prefix-pressure"]
+            self.assertEqual([i for i, (a, b) in enumerate(zip(off, tier)) if a != b],
+                             [off.index("--kv-offload-prefix") + 1, off.index("--kv-offload-gib") + 1])
 
     def test_configuration_overrides_and_nonstandard_page_size(self):
         words = kvo.arms(FACTS, {"page_tokens": 128, "depth": 0,
@@ -168,8 +204,10 @@ class Offload(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "stripes"):
             kvo.arms(FACTS, {"page_tokens": 63})
 
-    def test_runner_records_cover_exactly_the_four_arms(self):
+    def test_runner_records_cover_exactly_the_five_arms(self):
         arms = kvo.arms(FACTS, {"page_tokens": 64})
+        self.assertEqual(kvo.RUNNER_RECORDS["kv_offload_prefix_pressure_tier"][2][3:7],
+                         ["--arm", "tier", "--scenario", "prefix-pressure"])
         self.assertEqual({record[0] for record in kvo.RUNNER_RECORDS.values()}, set(arms))
         for _, script, words in kvo.RUNNER_RECORDS.values():
             self.assertEqual(script, "kv_offload.py")
@@ -232,6 +270,94 @@ class Offload(unittest.TestCase):
         self.assertEqual(record["c1"][0]["observed"]["swap_in"], 0)
         for key in ("warm", "c16", "repeat"):
             self.assertEqual(len(record[key]), 1)
+
+
+def tier_text(hits=0, promotions=0, pending=0.0, missed=None):
+    """The RAM prefix tier's metrics, its labelled families unsampled
+    unless given."""
+    text = (f"chop_prefix_cache_ram_hits_total {hits}\nchop_prefix_cache_ram_reused_tokens_total {hits * 64}\n"
+            "chop_prefix_ram_headroom_waits_total 0\nchop_prefix_ram_evictions_total 0\n"
+            "chop_prefix_ram_anchors 4\nchop_prefix_ram_bytes 4096\nchop_kv_offload_stalled_transfers 0\n"
+            f"chop_kv_offload_oldest_pending_seconds {pending}\n")
+    for family in kvo.TIER_LABELLED.values():
+        text += f"# TYPE {family} counter\n"
+    if promotions:
+        text += f'chop_prefix_ram_promotions_total{{result="ok"}} {promotions}\n'
+    if missed:
+        text += f'chop_prefix_ram_missed_evictions_total{{reason="headroom"}} {missed}\n'
+    return text
+
+
+class TierMetrics(unittest.TestCase):
+    def test_tier_metrics_parse_labelled_families_and_pending_copies(self):
+        before = kvo.metrics(metric_text() + tier_text(), tier=True)
+        self.assertEqual(before["tier"]["promotions"], {})
+        self.assertEqual(before["tier"]["pending_micros"], 0)
+        after = kvo.metrics(metric_text() + tier_text(hits=3, promotions=2, pending=.0015, missed=1), tier=True)
+        self.assertEqual(after["tier"]["pending_micros"], 1500)
+        seen = kvo.delta(before, after)["tier"]
+        self.assertEqual((seen["ram_hits"], seen["promotions"], seen["missed_evictions"]),
+                         (3, {"ok": 2}, {"headroom": 1}))
+        self.assertFalse(kvo.idle(after))
+        self.assertTrue(kvo.idle(before))
+        # Other arms neither read nor need the tier's metrics.
+        self.assertNotIn("tier", kvo.metrics(metric_text()))
+        self.assertNotIn("tier", kvo.delta(kvo.metrics(metric_text()), kvo.metrics(metric_text())))
+
+    def test_missing_tier_evidence_never_becomes_zero(self):
+        for removed in ("chop_prefix_cache_ram_hits_total 0\n", "# TYPE chop_prefix_ram_missed_evictions_total counter\n",
+                        "chop_kv_offload_oldest_pending_seconds 0.0\n", "chop_prefix_ram_anchors 4\n"):
+            with self.subTest(removed=removed), self.assertRaisesRegex(ValueError, "missing metric"):
+                kvo.metrics(metric_text() + tier_text().replace(removed, ""), tier=True)
+        with self.assertRaisesRegex(ValueError, "invalid"):
+            kvo.metrics(metric_text() + tier_text(pending=float("nan")), tier=True)
+        before = kvo.metrics(metric_text() + tier_text(promotions=2), tier=True)
+        with self.assertRaisesRegex(ValueError, "reset"):
+            kvo.delta(before, kvo.metrics(metric_text() + tier_text(promotions=1), tier=True))
+
+    def test_the_tier_record_waits_for_the_last_copies(self):
+        scrapes = iter([dict(tier=dict(pending_micros=5, stalled_transfers=0), swapped_requests=0),
+                        dict(tier=dict(pending_micros=0, stalled_transfers=0), swapped_requests=0)])
+        with patch.object(kvo.time, "sleep") as sleep:
+            self.assertEqual(kvo.settle(lambda: next(scrapes))["tier"]["pending_micros"], 0)
+        self.assertEqual(sleep.call_count, 1)
+        busy = dict(tier=dict(pending_micros=5, stalled_transfers=0), swapped_requests=0)
+        self.assertIs(kvo.settle(lambda: busy, seconds=0), busy)
+
+    def test_the_prefix_pressure_record_runs_the_pressure_workload_with_the_tier(self):
+        evictions = {"count": 0}
+
+        class Client:
+            timeout = 0
+
+            def identity(self, model):
+                return {"model": "test"}
+
+            def request(self, path, body):
+                return {"tokens": [7] if body.get("add_special_tokens") is False else [1, 2]}, 0.0
+
+        def completion(client, model, job, tokens):
+            if job[0].startswith("fill-"):
+                evictions["count"] += 1
+            return {"name": job[0], "usage": {"prompt_tokens": 8066 if job[0] == "long" else 100}}
+
+        def metrics_text(client):
+            return pool_text(anchors=2, evictions=evictions["count"]) + tier_text(hits=evictions["count"])
+
+        args = Namespace(url="http://unused", timeout=600, model=None, arm="tier",
+                         scenario="prefix-pressure", output_tokens=96, concurrency=16)
+        with patch.object(kvo, "Client", return_value=Client()), \
+             patch.object(kvo, "prompts", return_value=[("short", "a"), ("long", "b")]), \
+             patch.object(kvo, "completion", side_effect=completion), \
+             patch.object(kvo, "metrics_text", side_effect=metrics_text), \
+             patch.object(kvo, "receipt") as receipt:
+            self.assertEqual(kvo.record(args), 0)
+        self.assertEqual(receipt.call_args.args[0], "kv-offload-prefix-pressure-tier")
+        record = receipt.call_args.args[2]
+        self.assertTrue(record["fill"]["precondition"])
+        self.assertEqual([len(record[key]) for key in ("c1", "warm", "c16", "repeat")], [2, 2, 2, 0])
+        self.assertEqual(record["after"]["tier"]["ram_hits"], 3)
+        self.assertEqual(record["c1"][0]["observed"]["tier"]["ram_hits"], 0)
 
 
 def pool_text(capacity=128, tokens=32768, used=0, cached=0, anchors=0, evictions=0, offload=True):

@@ -1,5 +1,6 @@
-//! Paired preemption swap qualification. Capture lives in tools/qual;
-//! this module owns the gates and declaration facts.
+//! Paired preemption swap qualification and the RAM prefix tier's
+//! prefix-pressure arm. Capture lives in tools/qual; this module owns the
+//! gates and declaration facts.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -347,5 +348,179 @@ pub fn judge(args: &Value) -> Result<Value, String> {
         "recomputed_requests": recomputed, "different_requests": different,
         "c16_equality": {"swap_identical": identical(c16_swap), "control_identical": identical(control),
                          "requests": 36, "informational": true}}),
+    )
+}
+
+/// Each label's change of a labelled tier counter between two snapshots.
+fn labelled(before: &Value, after: &Value, key: &str) -> Result<BTreeMap<String, u64>, String> {
+    let start = before[key]
+        .as_object()
+        .ok_or_else(|| format!("kv_offload: missing tier {key}"))?;
+    let end = after[key]
+        .as_object()
+        .ok_or_else(|| format!("kv_offload: missing tier {key}"))?;
+    let mut delta = BTreeMap::new();
+    for label in start.keys().chain(end.keys()).collect::<BTreeSet<_>>() {
+        let read = |map: &serde_json::Map<String, Value>| {
+            map.get(label)
+                .map_or(Some(0), Value::as_u64)
+                .ok_or_else(|| format!("kv_offload: invalid tier {key} count"))
+        };
+        let change = read(end)?
+            .checked_sub(read(start)?)
+            .ok_or_else(|| format!("kv_offload: tier {key} counter reset"))?;
+        delta.insert(label.clone(), change);
+    }
+    Ok(delta)
+}
+
+/// Judge the prefix-pressure arm: the pressure workload with the RAM prefix
+/// tier on and no forced swaps, against the pressure scenario's off arm.
+/// Every C1 request must be bitwise equal, the tier must promote anchors and
+/// serve RAM hits, and it must end with no transfer pending or overdue, no
+/// request swapped and no stall. Its missed demotions are reported, and C16
+/// equality is informational.
+pub fn judge_prefix(args: &Value) -> Result<Value, String> {
+    facts(&args["facts"])?;
+    let off = &args["off"];
+    let tier = &args["tier"];
+    if off["scenario"] != "pressure"
+        || off["arm"] != "off"
+        || tier["scenario"] != "prefix-pressure"
+        || tier["arm"] != "tier"
+        || count(off, "output_tokens")? != count(tier, "output_tokens")?
+        || count(off, "concurrency")? != 16
+        || count(tier, "concurrency")? != 16
+    {
+        return Err("kv_offload: incompatible arms or workload".into());
+    }
+    let speculative = args["speculative"]
+        .as_bool()
+        .ok_or("kv_offload: missing speculative fact")?;
+    let left = rows(off, "c1")?;
+    let right = rows(tier, "c1")?;
+    let identities = names(left)?;
+    let unique: BTreeSet<_> = identities.iter().map(|(name, _)| name).collect();
+    if identities != names(right)? || left.len() != 36 || unique.len() != 36 {
+        return Err("kv_offload: missing, duplicate or mismatched C1 prompts".into());
+    }
+    let mut gates = Vec::new();
+    let mut errors = 0;
+    let mut reference_activity = 0;
+    let mut different = Vec::new();
+    for (a, b) in left.iter().zip(right) {
+        errors += u64::from(!valid_row(a) || !valid_row(b));
+        for key in ["preemptions", "swap_out", "swap_in", "exact_resumes"] {
+            reference_activity += count(&a["observed"], key)?;
+        }
+        reference_activity += fallbacks(&a["observed"], false)?.0;
+        if !equal(a, b) {
+            different.push(b["name"].clone());
+        }
+    }
+    gate(&mut gates, "c1_requests", left.len() as u64, "eq", 36);
+    gate(&mut gates, "c1_errors", errors, "eq", 0);
+    gate(&mut gates, "off_activity", reference_activity, "eq", 0);
+    gate(
+        &mut gates,
+        "c1_bitwise_differences",
+        different.len() as u64,
+        "eq",
+        0,
+    );
+    let mut c16_errors = 0;
+    for record in [off, tier] {
+        for key in ["warm", "c16"] {
+            let cohort = rows(record, key)?;
+            if cohort.len() != 36 || names(cohort)? != identities {
+                return Err(format!("kv_offload: missing or mismatched {key} requests"));
+            }
+            c16_errors += cohort.iter().filter(|row| !valid_row(row)).count() as u64;
+        }
+    }
+    gate(&mut gates, "c16_errors", c16_errors, "eq", 0);
+    let before = &tier["before"];
+    let after = &tier["after"];
+    // The tier keeps its entries, so host pages stay in use; its copies must not.
+    for key in ["swapped_requests", "stalls"] {
+        gate(
+            &mut gates,
+            &format!("tier_end_{key}"),
+            count(after, key)?,
+            "eq",
+            0,
+        );
+    }
+    for key in ["pending_micros", "stalled_transfers"] {
+        gate(
+            &mut gates,
+            &format!("tier_end_{key}"),
+            count(&after["tier"], key)?,
+            "eq",
+            0,
+        );
+    }
+    gate(
+        &mut gates,
+        "tier_disallowed_fallbacks",
+        fallbacks(&fallback_delta(before, after)?, true)?.1,
+        "eq",
+        0,
+    );
+    let (start, end) = (&before["tier"], &after["tier"]);
+    let promotions = labelled(start, end, "promotions")?;
+    gate(
+        &mut gates,
+        "tier_promotions",
+        promotions.values().sum(),
+        "ge",
+        1,
+    );
+    gate(
+        &mut gates,
+        "tier_ram_hits",
+        difference(start, end, "ram_hits")?,
+        "ge",
+        1,
+    );
+    gate(
+        &mut gates,
+        "c16_prefix_evictions",
+        difference(&tier["c16_before"], &tier["c16_after"], "prefix_evictions")?,
+        "ge",
+        1,
+    );
+    if speculative {
+        gate(
+            &mut gates,
+            "c16_verified_items",
+            difference(&tier["c16_before"], &tier["c16_after"], "verified_items")?,
+            "ge",
+            1,
+        );
+    }
+    let ram = json!({
+        "promotions": promotions,
+        "demotions": labelled(start, end, "demotions")?,
+        "missed_evictions": labelled(start, end, "missed_evictions")?,
+        "ram_fallbacks": labelled(start, end, "ram_fallbacks")?,
+        "ram_hits": difference(start, end, "ram_hits")?,
+        "ram_reused_tokens": difference(start, end, "ram_reused_tokens")?,
+        "headroom_waits": difference(start, end, "headroom_waits")?,
+        "ram_evictions": difference(start, end, "ram_evictions")?,
+        "end_ram_anchors": count(end, "ram_anchors")?,
+        "end_ram_bytes": count(end, "ram_bytes")?,
+        "end_host_pages_used": count(after, "host_pages_used")?,
+    });
+    let c16_off = rows(off, "c16")?;
+    let identical = c16_off
+        .iter()
+        .zip(rows(tier, "c16")?)
+        .filter(|(a, b)| equal(a, b))
+        .count();
+    Ok(
+        json!({"passed": gates.iter().all(|g| g["passed"] == true), "count": 36,
+        "scenario": "prefix-pressure", "gates": gates, "different_requests": different, "ram": ram,
+        "c16_equality": {"tier_identical": identical, "requests": 36, "informational": true}}),
     )
 }

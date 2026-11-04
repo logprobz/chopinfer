@@ -18,6 +18,17 @@ and fewer than k + S + FILL_SLACK_PAGES free pages. The longest C16 prompt
 can hit no anchor, so with its own capture it needs L + S pages beyond them:
 more than are free, whatever swaps return meanwhile, so C16 evicts. A fill
 that reaches its bound first records `precondition: false`.
+
+The prefix-pressure arm (`kv-offload-prefix-pressure`, record `--arm tier
+--scenario prefix-pressure`) runs the pressure workload with the RAM prefix
+tier on (`--kv-offload-prefix on`) and no forced swaps. The fill evicts
+every anchor C1 and the warm cohort left, so C16 can find them only in the
+host tier. Its judge pairs it with the pressure scenario's off arm: every
+C1 request bitwise equal, promotions and RAM hits above zero, the tier's
+missed demotions recorded, no transfer pending, swapped request or stall
+at the end. The tier's counters must be exposed: missing evidence never
+becomes zero. The tier holds its entries after the run, so its host pages
+are reported, not required to drain.
 """
 
 from concurrent.futures import ThreadPoolExecutor
@@ -43,6 +54,22 @@ FILL_CHUNK_TOKENS = 2048
 # page) until it finishes.
 FILL_SLACK_PAGES = 4
 FILL_TEXT = "Fill the prefix cache with distinct anchors before the concurrent cohort. "
+# The RAM prefix tier's counters (prefix-pressure arm), plain and by label,
+# and its gauges.
+TIER_COUNTERS = {"ram_hits": "chop_prefix_cache_ram_hits_total",
+                 "ram_reused_tokens": "chop_prefix_cache_ram_reused_tokens_total",
+                 "headroom_waits": "chop_prefix_ram_headroom_waits_total",
+                 "ram_evictions": "chop_prefix_ram_evictions_total"}
+TIER_LABELLED = {"demotions": "chop_prefix_ram_demotions_total",
+                 "promotions": "chop_prefix_ram_promotions_total",
+                 "missed_evictions": "chop_prefix_ram_missed_evictions_total",
+                 "ram_fallbacks": "chop_prefix_ram_fallbacks_total"}
+TIER_GAUGES = {"ram_anchors": "chop_prefix_ram_anchors", "ram_bytes": "chop_prefix_ram_bytes",
+               "stalled_transfers": "chop_kv_offload_stalled_transfers"}
+PENDING_GAUGE = "chop_kv_offload_oldest_pending_seconds"
+# How long the prefix-pressure record waits for the tier's last copies
+# before its final snapshot.
+IDLE_SECONDS = 30
 POOL_GAUGES = {"capacity_pages": "chop_kv_block_capacity", "capacity_tokens": "chop_kv_capacity_tokens",
                "used_pages": "chop_kv_blocks_used", "cached_pages": "chop_prefix_cache_blocks",
                "anchors": "chop_prefix_cache_anchors"}
@@ -89,6 +116,11 @@ def arms(facts, configuration):
             if scenario == "pressure":
                 words += ["--kv-pages", str(pages), "--speculation", "fixed"]
             result[f"kv-offload-{scenario}-{arm}"] = words
+    # The pressure off arm's settings with the RAM prefix tier on.
+    tier = list(result["kv-offload-pressure-off"])
+    tier[tier.index("--kv-offload-prefix") + 1] = "on"
+    tier[tier.index("--kv-offload-gib") + 1] = str(policy["budget_gib"])
+    result["kv-offload-prefix-pressure"] = tier
     return result
 
 
@@ -104,19 +136,26 @@ RUNNER_RECORDS = {
         ["record", "--url", "{url}", "--arm", arm, "--scenario", scenario, "--timeout", "600"])
     for scenario in ("plain", "pressure") for arm in ("off", "swap")
 }
+RUNNER_RECORDS["kv_offload_prefix_pressure_tier"] = (
+    "kv-offload-prefix-pressure", "kv_offload.py",
+    ["record", "--url", "{url}", "--arm", "tier", "--scenario", "prefix-pressure", "--timeout", "600"])
 
 
-def metrics(text, offload=True):
-    """Required counters and gauges; missing evidence never becomes zero."""
+def metrics(text, offload=True, tier=False):
+    """Required counters and gauges, with the RAM prefix tier's under `tier`;
+    missing evidence never becomes zero."""
     samples = {}
+    wanted = {*COUNTERS.values(), "chop_kv_offload_host_pages",
+              "chop_kv_offload_swapped_requests", "chop_kv_offload_fallback_total"}
+    if tier:
+        wanted |= {*TIER_COUNTERS.values(), *TIER_LABELLED.values(), *TIER_GAUGES.values()}
     for line in text.splitlines():
         if not line or line.startswith("#"):
             continue
         match = re.fullmatch(r'([^\s{]+)(\{[^}]*\})?\s+(\S+)', line)
         if match:
             name, labels, raw = match.groups()
-            if name not in {*COUNTERS.values(), "chop_kv_offload_host_pages",
-                            "chop_kv_offload_swapped_requests", "chop_kv_offload_fallback_total"}:
+            if name not in wanted:
                 continue
             value = float(raw)
             if not math.isfinite(value) or value < 0 or not value.is_integer():
@@ -139,6 +178,31 @@ def metrics(text, offload=True):
         if match is None:
             raise ValueError("invalid offload fallback labels")
         result["fallbacks"][match[1]] = value
+    if tier:
+        result["tier"] = tier_metrics(text, samples, read)
+    return result
+
+
+def tier_metrics(text, samples, read):
+    """The RAM prefix tier's counters and gauges. A labelled family may not
+    have a sample yet, but its TYPE line must show the server exports it."""
+    result = {key: read(name) for key, name in {**TIER_COUNTERS, **TIER_GAUGES}.items()}
+    for key, name in TIER_LABELLED.items():
+        if name not in samples and f"# TYPE {name} counter" not in text.splitlines():
+            raise ValueError(f"missing metric {name}")
+        result[key] = {}
+        for labels, value in samples.get(name, []):
+            match = re.fullmatch(r'\{[a-z_]+="([^"]+)"\}', labels)
+            if match is None:
+                raise ValueError(f"invalid {name} labels")
+            result[key][match[1]] = value
+    rows = [line.split()[-1] for line in text.splitlines() if line.startswith(PENDING_GAUGE + " ")]
+    if len(rows) != 1:
+        raise ValueError(f"missing metric {PENDING_GAUGE}")
+    pending = float(rows[0])
+    if not math.isfinite(pending) or pending < 0:
+        raise ValueError(f"invalid metric {PENDING_GAUGE}: {rows[0]}")
+    result["pending_micros"] = math.ceil(pending * 1e6)
     return result
 
 
@@ -209,7 +273,40 @@ def delta(before, after):
     if any(value < 0 for key, value in result.items() if key != "fallbacks") or any(
             value < 0 for value in result["fallbacks"].values()):
         raise ValueError("metrics reset during capture")
+    if "tier" in before and "tier" in after:
+        result["tier"] = tier_delta(before["tier"], after["tier"])
     return result
+
+
+def tier_delta(before, after):
+    """The tier counters' changes; gauges have none."""
+    result = {key: after[key] - before[key] for key in TIER_COUNTERS}
+    for key in TIER_LABELLED:
+        result[key] = {label: after[key].get(label, 0) - before[key].get(label, 0)
+                       for label in before[key].keys() | after[key].keys()
+                       if after[key].get(label, 0) != before[key].get(label, 0)}
+    if any(value < 0 for key, value in result.items() if key in TIER_COUNTERS) or any(
+            value < 0 for key in TIER_LABELLED for value in result[key].values()):
+        raise ValueError("tier metrics reset during capture")
+    return result
+
+
+def idle(snapshot):
+    """Whether the host tier has finished its copies: no transfer pending or
+    overdue and no request swapped out."""
+    tier = snapshot["tier"]
+    return not tier["pending_micros"] and not tier["stalled_transfers"] and not snapshot["swapped_requests"]
+
+
+def settle(snapshot, seconds=IDLE_SECONDS):
+    """The first snapshot that finds the host tier idle, or the last one
+    taken within `seconds`, which the judge then finds busy."""
+    end = time.monotonic() + seconds
+    while True:
+        value = snapshot()
+        if idle(value) or time.monotonic() >= end:
+            return value
+        time.sleep(.5)
 
 
 def completion(client, model, job, output_tokens):
@@ -239,7 +336,7 @@ def record(args):
         client.timeout = max(0.001, deadline - time.monotonic())
         if time.monotonic() >= deadline:
             raise TimeoutError("offload capture timed out")
-        return metrics(metrics_text(client), offload=args.arm == "swap")
+        return metrics(metrics_text(client), offload=args.arm != "off", tier=args.arm == "tier")
     before = snapshot()
     c1 = []
     for job in jobs:
@@ -252,13 +349,15 @@ def record(args):
         snapshot()
         with ThreadPoolExecutor(args.concurrency) as pool:
             return list(pool.map(lambda job: completion(client, server["model"], job, args.output_tokens), jobs))
-    warm = concurrent() if args.scenario == "pressure" else []
-    filled = fill(client, server["model"], c1, snapshot) if args.scenario == "pressure" else None
+    pressure = args.scenario in ("pressure", "prefix-pressure")
+    warm = concurrent() if pressure else []
+    filled = fill(client, server["model"], c1, snapshot) if pressure else None
     c16_before = snapshot()
     c16 = concurrent()
     c16_after = snapshot()
     repeat = concurrent() if args.arm == "off" else []
-    after = snapshot()
+    # The tier's last demotions may still be copying when C16 ends.
+    after = settle(snapshot) if args.arm == "tier" else snapshot()
     failed = any("error" in row for rows in (c1, warm, (filled or {}).get("rows", []), c16, repeat)
                  for row in rows)
     # No timed work, so no host load samples: the receipt's timing reads informational.
@@ -272,10 +371,18 @@ def record(args):
 
 
 def report(args):
-    off, swap = (json.loads(path.read_text()) for path in (args.off, args.swap))
+    off = json.loads(args.off.read_text())
     config = qualification_config()
     speculative = config["preview"]["speculation"]["tokens"] > 0
     policy = {"facts": config["kv_offload"], "speculative": speculative}
+    if args.tier:
+        # The prefix-pressure arm, judged against the pressure scenario's off arm.
+        tier = json.loads(args.tier.read_text())
+        value = limits.one("kv_offload_prefix", off=off, tier=tier, **policy)
+        receipt(f"kv-offload-{tier['scenario']}", tier.get("server"),
+                {**value, "records": {"off": off, "tier": tier}, "policy": policy})
+        return 0 if value["passed"] else 1
+    swap = json.loads(args.swap.read_text())
     value = limits.one("kv_offload", off=off, swap=swap, **policy)
     # Judges saved records. No timed work, so no host load samples: the receipt's timing reads informational.
     receipt(f"kv-offload-{off['scenario']}", swap.get("server"),
@@ -288,15 +395,19 @@ def main():
     sub = parser.add_subparsers(dest="command", required=True)
     capture = sub.add_parser("record")
     capture.add_argument("--url", required=True)
-    capture.add_argument("--arm", choices=("off", "swap"), required=True)
-    capture.add_argument("--scenario", choices=("plain", "pressure"), required=True)
+    capture.add_argument("--arm", choices=("off", "swap", "tier"), required=True)
+    capture.add_argument("--scenario", choices=("plain", "pressure", "prefix-pressure"), required=True)
     capture.add_argument("--timeout", type=float, default=600)
     capture.add_argument("--output-tokens", type=int, default=OUTPUT_TOKENS)
     capture.add_argument("--concurrency", type=int, default=CONCURRENCY)
     score = sub.add_parser("report")
     score.add_argument("--off", type=Path, required=True)
-    score.add_argument("--swap", type=Path, required=True)
+    against = score.add_mutually_exclusive_group(required=True)
+    against.add_argument("--swap", type=Path)
+    against.add_argument("--tier", type=Path, help="the prefix-pressure arm, judged against the pressure off arm")
     args = parser.parse_args()
+    if args.command == "record" and (args.arm == "tier") != (args.scenario == "prefix-pressure"):
+        parser.error("the tier arm records the prefix-pressure scenario, and only it")
     return record(args) if args.command == "record" else report(args)
 
 

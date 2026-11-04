@@ -1168,6 +1168,10 @@ pub fn call(rule: &str, args: &Value) -> Result<Value, RuleError> {
             arguments(args, &["off", "swap", "facts", "speculative"], &[])?;
             crate::kv_offload::judge(args).map_err(RuleError)?
         }
+        "kv_offload_prefix" => {
+            arguments(args, &["off", "tier", "facts", "speculative"], &[])?;
+            crate::kv_offload::judge_prefix(args).map_err(RuleError)?
+        }
         "constants" => {
             if !args.is_null() {
                 arguments(args, &[], &[])?;

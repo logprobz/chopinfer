@@ -249,9 +249,14 @@
    "FILL_CHUNK_TOKENS": "int",
    "FILL_SLACK_PAGES": "int",
    "FILL_TEXT": "str",
+   "IDLE_SECONDS": "int",
    "OUTPUT_TOKENS": "int",
+   "PENDING_GAUGE": "str",
    "POOL_GAUGES": "dict",
-   "RUNNER_RECORDS": "number"
+   "RUNNER_RECORDS": "number",
+   "TIER_COUNTERS": "dict",
+   "TIER_GAUGES": "dict",
+   "TIER_LABELLED": "dict"
   },
   "kvo_resume": {
    "HELPERS": "dict",

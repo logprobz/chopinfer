@@ -1044,7 +1044,9 @@ class KvOffload(Kind):
         admit(value, mechanics)
         import limits
         policy = value["policy"] if reference is None else reference
-        return limits.one("kv_offload", **value["records"], **policy)
+        # The prefix-pressure arm pairs a tier record with the pressure off arm.
+        rule = "kv_offload_prefix" if "tier" in value["records"] else "kv_offload"
+        return limits.one(rule, **value["records"], **policy)
 
 
 RECEIPT = Kind()

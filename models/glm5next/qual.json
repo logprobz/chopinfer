@@ -34,7 +34,8 @@
         "preemption_exact",
         "determinism",
         "kv_offload_plain",
-        "kv_offload_pressure"
+        "kv_offload_pressure",
+        "kv_offload_prefix_pressure"
       ]
     }
   },
@@ -67,7 +68,8 @@
       "preemption_exact",
       "determinism",
       "kv_offload_plain",
-      "kv_offload_pressure"
+      "kv_offload_pressure",
+      "kv_offload_prefix_pressure"
     ],
     "speculation": [
       "spec_verify",
@@ -2848,6 +2850,32 @@
       "files": [
         "kv_offload_pressure_off",
         "kv_offload_pressure_swap"
+      ],
+      "rules": [
+        {
+          "path": [
+            "passed"
+          ],
+          "op": "eq",
+          "value": true,
+          "source": "docs/numerics.md#kv-offload-and-prefix-state"
+        }
+      ]
+    },
+    "kv_offload_prefix_pressure": {
+      "module": "kv_offload",
+      "args": [
+        "report",
+        "--off",
+        "{kv_offload_pressure_off}",
+        "--tier",
+        "{kv_offload_prefix_pressure_tier}"
+      ],
+      "timeout_seconds": 600,
+      "receipt": "*-kv-offload-prefix-pressure.json",
+      "files": [
+        "kv_offload_pressure_off",
+        "kv_offload_prefix_pressure_tier"
       ],
       "rules": [
         {

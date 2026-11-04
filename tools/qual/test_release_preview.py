@@ -193,6 +193,8 @@ class PlanTests(unittest.TestCase):
         if facts.get('kv_offload'):
             expected.update({'kv-offload-plain-off', 'kv-offload-plain-swap',
                              'kv-offload-pressure-off', 'kv-offload-pressure-swap'})
+        if 'kv_offload_prefix_pressure' in facts['full']:
+            expected.add('kv-offload-prefix-pressure')
         self.assertEqual(set(by_arm), expected)
         records = [step for arm in arms for step in arm['steps'] if step['kind'] == 'record']
         inputs = [step['input'] for step in records]

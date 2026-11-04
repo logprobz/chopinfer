@@ -31,8 +31,10 @@ import verify_exact
 # values (the exact media reference digest and the mixed case count 5)
 # reproduces the spec_continuation pin,
 # a9e05356ce8fb010e310000560e5471d6e3aeefc73683d5b3c64a45c39697b1e.
-POLICY_HASHES = {'mimo26': 'd8280c1ab2804d3da4f40f93dae0cb54e7ec225a1928bebc0550978b8fe27cab',
-                 'qwen38': 'f84f7167b4f7c41613d224afe55e23dec288788acaa671a50f20befd07596462'}
+# The full cohorts gained kv_offload_prefix_pressure on 2026-11-04; without it
+# the gates hash to the release pins d8280c1a (MiMo) and f84f7167 (Qwen3.8).
+POLICY_HASHES = {'mimo26': '7e8388962cc9bf0e51677834667d9f90a7d0c49b7b53cb419bc5fdda8173c2a2',
+                 'qwen38': 'af105b32a524a8520b3b099d17c63235402b575ecbbf2578456d6e45f958002e'}
 # The cohort budgets the hashes were pinned with, before cohorts lost their
 # overall deadline (budget_seconds). Restored only to compare with the pins.
 RETIRED_BUDGETS = {'quick': 900, 'full': 172800}

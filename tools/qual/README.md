@@ -404,6 +404,14 @@ GPU-hit arm's gate, drafter acceptance included, and each request that
 reports cached tokens must raise `chop_prefix_cache_ram_hits_total` once,
 as it raises the all-hit counter. Report the two arms' records separately.
 
+`kv_offload.py`'s `kv-offload-prefix-pressure` arm runs the pressure
+workload with the tier on (`--kv-offload-prefix on`) and no forced swaps,
+so C16 finds the anchors the fill evicted only in RAM. `report --off
+PRESSURE_OFF --tier TIER` judges it against the pressure off arm: every C1
+request bitwise equal, promotions and RAM hits above zero, missed demotions
+recorded, and no pending transfer, swapped request or stall at the end.
+MiMo, Qwen3.8 and GLM declare it as `kv_offload_prefix_pressure`.
+
 ## KV layout equality
 
 A comparison layout storing exactly the values the native KV formats decode

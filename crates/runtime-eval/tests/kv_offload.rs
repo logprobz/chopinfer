@@ -1,4 +1,4 @@
-use runtime_eval::kv_offload::{facts, judge};
+use runtime_eval::kv_offload::{facts, judge, judge_prefix};
 use serde_json::{Value, json};
 
 fn fixture(pressure: bool) -> Value {
@@ -274,4 +274,150 @@ fn facts_require_all_positive_typed_fields_and_bounded_coverage() {
     assert!(facts(&value).is_err());
     assert!(facts(&json!(false)).is_err());
     assert!(facts(&Value::Null).is_err());
+}
+
+/// The pressure off arm and a prefix-pressure tier arm whose C16 promoted
+/// anchors from RAM and whose tier ended idle.
+fn prefix_fixture() -> Value {
+    let pressure = fixture(true);
+    let off = pressure["off"].clone();
+    let mut tier = off.clone();
+    tier["arm"] = json!("tier");
+    tier["scenario"] = json!("prefix-pressure");
+    tier["repeat"] = json!([]);
+    let idle = json!({"ram_hits": 0, "ram_reused_tokens": 0, "headroom_waits": 0, "ram_evictions": 0,
+        "demotions": {}, "promotions": {}, "missed_evictions": {}, "ram_fallbacks": {},
+        "ram_anchors": 0, "ram_bytes": 0, "stalled_transfers": 0, "pending_micros": 0});
+    let mut end = idle.clone();
+    end["ram_hits"] = json!(30);
+    end["ram_reused_tokens"] = json!(3000);
+    end["demotions"] = json!({"ok": 40});
+    end["promotions"] = json!({"ok": 30});
+    end["missed_evictions"] = json!({"headroom": 4});
+    end["ram_anchors"] = json!(40);
+    end["ram_bytes"] = json!(1 << 30);
+    for key in ["before", "c16_before"] {
+        tier[key]["tier"] = idle.clone();
+    }
+    for key in ["c16_after", "after"] {
+        tier[key]["tier"] = end.clone();
+    }
+    tier["c16_after"]["prefix_evictions"] = json!(3);
+    tier["c16_after"]["verified_items"] = json!(30);
+    tier["after"]["host_pages_used"] = json!(4096);
+    json!({"off": off, "tier": tier, "speculative": true, "facts": pressure["facts"]})
+}
+
+fn prefix_fails(value: Value, gate: &str) {
+    let result = judge_prefix(&value).unwrap();
+    assert_eq!(result["passed"], false, "{result}");
+    assert!(
+        result["gates"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|row| row["name"] == gate && row["passed"] == false),
+        "{result}"
+    );
+}
+
+#[test]
+fn prefix_pressure_passes_and_reports_the_tier() {
+    let result = judge_prefix(&prefix_fixture()).unwrap();
+    assert_eq!(result["passed"], true, "{result}");
+    assert_eq!(result["scenario"], "prefix-pressure");
+    assert_eq!(result["ram"]["promotions"], json!({"ok": 30}));
+    assert_eq!(result["ram"]["missed_evictions"], json!({"headroom": 4}));
+    assert_eq!(result["ram"]["end_host_pages_used"], 4096);
+    assert_eq!(result["c16_equality"]["tier_identical"], 36);
+}
+
+#[test]
+fn prefix_pressure_requires_every_c1_request_bitwise_equal() {
+    let mut value = prefix_fixture();
+    value["tier"]["c1"][35]["logprobs"][0] = json!(-0.5000000000000001);
+    prefix_fails(value.clone(), "c1_bitwise_differences");
+    assert_eq!(
+        judge_prefix(&value).unwrap()["different_requests"],
+        json!(["request-35"])
+    );
+    let mut value = prefix_fixture();
+    value["tier"]["c1"][0]["error"] = json!("failed");
+    prefix_fails(value, "c1_errors");
+    let mut value = prefix_fixture();
+    value["off"]["c1"][0]["observed"]["preemptions"] = json!(1);
+    prefix_fails(value, "off_activity");
+}
+
+#[test]
+fn prefix_pressure_requires_promotions_and_ram_hits() {
+    let mut value = prefix_fixture();
+    value["tier"]["after"]["tier"]["promotions"] = json!({});
+    prefix_fails(value, "tier_promotions");
+    let mut value = prefix_fixture();
+    value["tier"]["after"]["tier"]["ram_hits"] = json!(0);
+    prefix_fails(value, "tier_ram_hits");
+    let mut value = prefix_fixture();
+    value["tier"]["c16_after"]["prefix_evictions"] = json!(0);
+    prefix_fails(value, "c16_prefix_evictions");
+    let mut value = prefix_fixture();
+    value["tier"]["c16_after"]["verified_items"] = json!(0);
+    prefix_fails(value.clone(), "c16_verified_items");
+    value["speculative"] = json!(false);
+    assert_eq!(judge_prefix(&value).unwrap()["passed"], true);
+}
+
+#[test]
+fn prefix_pressure_requires_an_idle_tier_and_no_stalls_at_the_end() {
+    for key in ["pending_micros", "stalled_transfers"] {
+        let mut value = prefix_fixture();
+        value["tier"]["after"]["tier"][key] = json!(1);
+        prefix_fails(value, &format!("tier_end_{key}"));
+    }
+    for key in ["swapped_requests", "stalls"] {
+        let mut value = prefix_fixture();
+        value["tier"]["after"][key] = json!(1);
+        prefix_fails(value, &format!("tier_end_{key}"));
+    }
+    let mut value = prefix_fixture();
+    value["tier"]["after"]["fallbacks"] = json!({"restore": 1});
+    prefix_fails(value.clone(), "tier_disallowed_fallbacks");
+    value["tier"]["after"]["fallbacks"] = json!({"tier_full": 1});
+    assert_eq!(judge_prefix(&value).unwrap()["passed"], true);
+}
+
+#[test]
+fn prefix_pressure_refuses_missing_tier_evidence_and_other_arms() {
+    for key in [
+        "missed_evictions",
+        "promotions",
+        "ram_hits",
+        "pending_micros",
+    ] {
+        let mut value = prefix_fixture();
+        value["tier"]["after"]["tier"]
+            .as_object_mut()
+            .unwrap()
+            .remove(key);
+        assert!(judge_prefix(&value).is_err(), "{key}");
+    }
+    let mut value = prefix_fixture();
+    value["tier"]["after"]["tier"]["missed_evictions"] = json!({"headroom": 2});
+    value["tier"]["before"]["tier"]["missed_evictions"] = json!({"headroom": 3});
+    assert!(judge_prefix(&value).unwrap_err().contains("reset"));
+    let pressure = fixture(true);
+    for (arm, record) in [
+        ("off", pressure["swap"].clone()),
+        ("tier", pressure["off"].clone()),
+    ] {
+        let mut value = prefix_fixture();
+        value[arm] = record;
+        assert!(
+            judge_prefix(&value).unwrap_err().contains("incompatible"),
+            "{arm}"
+        );
+    }
+    let mut value = prefix_fixture();
+    value["tier"]["c16"] = json!([]);
+    assert!(judge_prefix(&value).is_err());
 }

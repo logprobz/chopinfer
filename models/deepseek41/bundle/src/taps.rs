@@ -20,11 +20,20 @@
 //! `tools/qual/tapdiff.py` compares the steps with the reference runner's
 //! taps (`models/deepseek41/reference.py`, `taps`).
 //!
+//! KV-state taps (`kv`): while the sites filter selects one, every
+//! prefill also runs stage by stage, and a request's window rings,
+//! compressed latents and index keys are read back on every rank after
+//! each of its prefill chunks and decode steps, and before the first step
+//! of a request restored from a prefix hit, into steps of their own. An
+//! instance with the DSpark drafter loaded writes none.
+//!
 //! One tap step per tapped phase: a prefill's encoder rows are written into
 //! its text step when text taps are on, else into a step of their own. A
 //! commit publishes the steps, and a cancel or a failed execute removes
 //! them. A serving bundle refuses to create while a taps variable is set.
 
+#[cfg(feature = "diagnostic-taps")]
+pub mod kv;
 #[cfg(feature = "diagnostic-taps")]
 mod prefill_selected;
 #[cfg(feature = "diagnostic-taps")]
@@ -104,7 +113,7 @@ mod serving {
 #[cfg(feature = "diagnostic-taps")]
 mod enabled {
     use bundle_runtime::taps as shared;
-    use std::collections::BTreeMap;
+    use std::collections::{BTreeMap, BTreeSet};
 
     use bundle_runtime::encoder::Encoder;
     use bundle_runtime::inputs::PhaseInputs;
@@ -118,20 +127,26 @@ mod enabled {
     use crate::encoders::ARENA;
     use crate::program::Stage;
     use crate::shape::Shape;
+    use model_deepseek41_contract::state::KvStorage;
+
+    use super::kv;
 
     /// The tower's output rows.
     const OUTPUT: &str = "enc.vision.out";
 
     /// The taps the environment configures, the encoder's taps, whether the
-    /// filter selects a text tap, the image occurrences of every prompt and
-    /// the cell grid of every encode they read, a prefill's encoder rows
-    /// waiting for its text step, the phase step being captured and the
-    /// steps a commit or cancel ends.
+    /// filter selects a text tap and a KV-state tap, the requests restored
+    /// from a prefix hit whose restored state is still to be read, the
+    /// image occurrences of every prompt and the cell grid of every encode
+    /// they read, a prefill's encoder rows waiting for its text step, the
+    /// phase step being captured and the steps a commit or cancel ends.
     #[derive(Default)]
     pub struct StepTaps {
         taps: Option<Taps>,
         specs: Vec<TapSpec>,
         text: bool,
+        kv: bool,
+        restored: BTreeSet<u64>,
         prefill_selected: bool,
         kinds: Vec<(u32, &'static str)>,
         side: u32,
@@ -251,12 +266,17 @@ mod enabled {
             } else {
                 Vec::new()
             };
-            let text = super::text::specs(&config.shape);
+            let kv = super::kv::specs(config.shape.geometry, config.kv.storage);
+            let mut text = super::text::specs(&config.shape);
+            text.extend(kv.iter().cloned());
+            // A selected KV-state tap runs prefills stage by stage too.
             let text = shared::selects_text(&taps, &specs, &text)?;
+            let kv = kv.iter().any(|spec| taps.selected(spec));
             Ok(Self {
                 taps: Some(taps),
                 specs,
                 text: text || prefill_selected,
+                kv,
                 prefill_selected,
                 kinds: vec![(config.shape.geometry.shape.tokens.image, "image")],
                 side: crate::encoders::tap_shape()
@@ -269,6 +289,113 @@ mod enabled {
         /// Whether prefills are tapped, running stage by stage.
         pub fn text(&self) -> bool {
             self.text
+        }
+
+        /// Whether a KV-state tap is selected.
+        pub fn kv(&self) -> bool {
+            self.kv
+        }
+
+        /// Marks `request` restored from a prefix hit: the first step that
+        /// carries it reads the restored state before it runs.
+        pub fn restored(&mut self, request: u64) {
+            if self.kv {
+                self.restored.insert(request);
+            }
+        }
+
+        /// Writes the KV-state taps of `inputs`' items in `phase` from
+        /// `ranks` (`kv`): for each item and axis with a selected tap, a
+        /// step of the axis' rows from `CHOPINFER_TAPS_FROM` on, pending
+        /// until `finish`. A restore readback reads only the items of
+        /// requests `restored` marked, once each. Returns a note for each
+        /// step left incomplete at a native row that does not decode.
+        pub fn kv_state(
+            &mut self,
+            services: &HostServicesV1,
+            ranks: &[kv::RankState],
+            layout: &kv::Layout,
+            inputs: &PhaseInputs,
+            phase: kv::Phase,
+        ) -> Result<Vec<String>, TapError> {
+            let Some(taps) = self.taps.as_mut().filter(|_| self.kv) else {
+                return Ok(Vec::new());
+            };
+            let restored = &mut self.restored;
+            let items = kv::items(inputs, phase, |request| restored.remove(&request))
+                .map_err(|error| TapError::Io(std::io::Error::other(error)))?;
+            let g = layout.geometry;
+            let mut notes = Vec::new();
+            for item in &items {
+                for axis in kv::axes(g) {
+                    let selected: Vec<kv::KvTap> = kv::taps(g, layout.storage, axis)
+                        .into_iter()
+                        .filter(|tap| taps.selected(&tap.spec))
+                        .collect();
+                    let rows = axis.rows(g, item.end);
+                    // Each row's first token, which CHOPINFER_TAPS_FROM
+                    // filters.
+                    let tokens = rows
+                        .clone()
+                        .map(|row| i32::try_from(row * u64::from(axis.ratio())))
+                        .collect::<Result<Vec<_>, _>>()
+                        .map_err(|_| TapError::Io(std::io::Error::other("KV position overflow")))?;
+                    let count = tokens.len() as u32;
+                    let (first, end) = taps.rows(count, &tokens);
+                    if selected.is_empty() || first == end {
+                        continue;
+                    }
+                    let dir = taps.next_step()?;
+                    // Pending from the start: a finish ends it, whatever
+                    // happens below.
+                    self.pending.push(taps.begin(
+                        &dir,
+                        kv::PROGRAM,
+                        ranks.len() as u32,
+                        count,
+                        &tokens,
+                    )?);
+                    let step = self.pending.last_mut().expect("the step just pushed");
+                    for tap in &selected {
+                        step.declare(&tap.spec)?;
+                    }
+                    step.open(&serde_json::json!({
+                        "program": kv::PROGRAM,
+                        "rows": count,
+                        "dump_rows": [first, end],
+                        "dump_from": taps.from(),
+                        "kv": {
+                            "phase": phase.name(),
+                            "axis": axis.name(),
+                            "ratio": axis.ratio(),
+                            "storage": match layout.storage {
+                                KvStorage::Native => "native",
+                                KvStorage::Bf16 => "bf16",
+                            },
+                            "end": item.end,
+                            "positions": rows.clone().collect::<Vec<_>>(),
+                        },
+                        "items": [{
+                            "request": item.request,
+                            "slot": item.slot,
+                            "start": 0,
+                            "rows": count,
+                        }],
+                    }))?;
+                    let kept = rows.start + u64::from(first)..rows.start + u64::from(end);
+                    if let Err(note) =
+                        kv::write(services, ranks, layout, step, &selected, item, kept)?
+                    {
+                        notes.push(format!(
+                            "request {} {} {} step left incomplete: {note}",
+                            item.request,
+                            phase.name(),
+                            axis.name()
+                        ));
+                    }
+                }
+            }
+            Ok(notes)
         }
 
         /// Whether a block tap is selected: the encoder runtime reads its
@@ -375,7 +502,8 @@ mod enabled {
         /// `ranks` ranks, whose stages, in order, are `stages`: the
         /// prefill's encoder rows (`step`), then every selected text tap of
         /// each stage, its inputs before its outputs, declared in the order
-        /// `capture_inputs` and `capture` write them.
+        /// `capture_inputs` and `capture` write them. A phase with none of
+        /// these, as when only KV-state taps are selected, opens no step.
         pub fn begin(
             &mut self,
             program: &str,
@@ -395,6 +523,12 @@ mod enabled {
                     .iter()
                     .flat_map(|&stage| super::text::stage_specs(stage, shape))
             };
+            if self.encoders.is_empty()
+                && !self.prefill_selected
+                && !specs().any(|spec| taps.selected(&spec))
+            {
+                return Ok(());
+            }
             let capture = shared::begin(taps, program, ranks, inputs, &mut self.encoders, specs())?;
             self.open = Some(capture);
             Ok(())
@@ -485,9 +619,11 @@ mod enabled {
             shared::finish(&mut self.open, &mut self.pending, false)
         }
 
-        /// Forgets a retired request's occurrences.
+        /// Forgets a retired request's occurrences and any restored state
+        /// still to be read.
         pub fn retire(&mut self, request: u64) {
             self.occurrences.retire(request);
+            self.restored.remove(&request);
         }
     }
 }

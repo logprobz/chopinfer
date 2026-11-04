@@ -254,6 +254,7 @@ mod tests {
 
     use bundle_runtime::geometry::Ranks;
     use model_deepseek41_contract::geometry::{FLASH, GEOMETRIES};
+    use model_deepseek41_contract::state::KvStorage;
     use runtime_bundle_sdk::taps::{Declaration, TapFilter, Taps};
 
     use super::*;
@@ -350,8 +351,9 @@ mod tests {
     }
 
     /// Every tap's entry declares its dtype, sharding and comparison, and
-    /// every entry declares a tap. The text entries leave the columns to
-    /// the geometry, which is the only difference `check` may report; the
+    /// every entry declares a tap, the KV-state taps of both layouts
+    /// included. The text and KV entries leave the columns to the
+    /// geometry, which is the only difference `check` may report; the
     /// encoder entries (`crate::encoders::taps`) declare theirs.
     #[test]
     fn taps_json_declares_every_tap() {
@@ -366,7 +368,10 @@ mod tests {
         }
         for g in GEOMETRIES {
             let shape = Shape::new(g, Ranks::TP1).unwrap();
-            for spec in specs(&shape) {
+            let kv = [KvStorage::Native, KvStorage::Bf16]
+                .into_iter()
+                .flat_map(|storage| crate::taps::kv::specs(g, storage));
+            for spec in specs(&shape).into_iter().chain(kv) {
                 let index = match declaration.check(&spec, 1) {
                     Ok(index) => index,
                     Err(error) => {

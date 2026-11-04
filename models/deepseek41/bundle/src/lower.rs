@@ -25,6 +25,9 @@ mod routes;
 
 pub use compressor::{TailUpload, tail_upload};
 pub(crate) use latent::spare_ring;
+// The KV-state taps read the rings as the lowering addresses them.
+#[cfg(feature = "diagnostic-taps")]
+pub(crate) use latent::ring;
 
 use bundle_runtime::state::Extent;
 use bundle_runtime::upload::DeviceInputs;

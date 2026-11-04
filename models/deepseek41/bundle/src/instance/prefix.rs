@@ -218,6 +218,11 @@ impl PrefixInstance for Instance {
             .restore(request.request_id, request.tokens, Some(slot))
             .map(|_| ())
             .map_err(|_| BundleStatusV1::InternalError);
+        // The KV-state taps read the restored state before its first step.
+        #[cfg(feature = "diagnostic-taps")]
+        if restored.is_ok() {
+            self.taps.restored(request.request_id);
+        }
         if restored.is_err() {
             self.dspark_forget(request.request_id);
             if let Some(engram) = &mut self.engram {

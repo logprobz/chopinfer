@@ -1028,6 +1028,16 @@ fn create(services: HostServicesV1, bytes: &[u8]) -> Result<Instance, Failed<Ins
     } else {
         None
     };
+    #[cfg(feature = "diagnostic-taps")]
+    if dspark.is_some() && taps.kv() {
+        let _ = services.log(
+            format!(
+                "{NAME}: the DSpark drafter is loaded, so no KV-state taps are written \
+                 (unresolved coverage); serve with --speculative-tokens 0 to read them"
+            )
+            .as_bytes(),
+        );
+    }
     verify.bundle_drafter = has_drafter;
     let media = config.media;
     let engram = engram::Engram::new(shape.geometry, media).map_err(|error| {

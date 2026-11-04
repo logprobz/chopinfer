@@ -1757,9 +1757,13 @@ impl Instance {
                     Ok(())
                 },
             )?;
+            #[cfg(feature = "diagnostic-taps")]
+            self.kv_taps(run, false)?;
             measure(times.as_deref_mut().map(|t| &mut t.submit_us), || {
                 self.launch(run)
             })?;
+            #[cfg(feature = "diagnostic-taps")]
+            self.kv_taps(run, true)?;
             if run.media.is_some() {
                 self.clear_flags()?;
             }
@@ -1876,6 +1880,60 @@ impl Instance {
 
 #[cfg(feature = "diagnostic-taps")]
 impl Instance {
+    /// Reads the KV state of `run`'s items into KV-state taps
+    /// (`crate::taps::kv`): before it is `launched`, the restored state of
+    /// each item restored from a prefix hit; after, every item's state
+    /// through its last row of a prefill or decode phase. Verify phases and
+    /// an instance with the DSpark drafter loaded are not read.
+    fn kv_taps(&mut self, run: &Run, launched: bool) -> Result<(), BundleAbiError> {
+        use crate::taps::kv;
+        if self.dspark.is_some() || !self.taps.kv() {
+            return Ok(());
+        }
+        let phase = match (launched, run.inputs.decode, run.inputs.verify) {
+            (false, ..) => kv::Phase::Restore,
+            (true, false, _) => kv::Phase::Prefill,
+            (true, true, false) => kv::Phase::Decode,
+            (true, true, true) => return Ok(()),
+        };
+        let ranks = self
+            .ranks
+            .iter()
+            .zip(&self.buffers)
+            .map(|(&(_, _, stream), buffers)| {
+                Some(kv::RankState {
+                    stream,
+                    ring: buffers.state.named("window.ring")?,
+                    pool: buffers.kv_pool,
+                })
+            })
+            .collect::<Option<Vec<_>>>()
+            .ok_or(BundleAbiError::InvalidRange("deepseek41 window rings"))?;
+        let layout = kv::Layout {
+            geometry: self.config.shape.geometry,
+            storage: self.config.kv.storage,
+            extent: self.extent,
+            page_bytes: self.config.page_bytes,
+            pages: self.kv_pages,
+        };
+        match self
+            .taps
+            .kv_state(&self.services, &ranks, &layout, &run.inputs, phase)
+        {
+            Ok(notes) => {
+                for note in notes {
+                    self.log(&format!("taps: KV state: {note}"));
+                }
+                Ok(())
+            }
+            Err(runtime_bundle_sdk::taps::TapError::Host(error)) => Err(error),
+            Err(runtime_bundle_sdk::taps::TapError::Io(error)) => {
+                self.log(&format!("taps: KV state: {error}"));
+                Err(BundleAbiError::Status(BundleStatusV1::InternalError))
+            }
+        }
+    }
+
     /// Issues an eager prefill stage by stage across the ranks, each
     /// stage's launches collective by collective as `launch_eager` queues
     /// a program, and copies the stage's selected input taps once the

@@ -58,6 +58,101 @@ class TraceTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             trace.validate(bad)
 
+    def test_cyclic_returns_park_no_session_and_validate(self):
+        workload = trace.generate(4, 8, 'cyclic', [100000], 4096, returns='cyclic')
+        self.assertEqual(workload['returns'], 'cyclic')
+        self.assertNotIn('prefill_chunk_tokens', workload)
+        self.assertEqual(workload, trace.validate(copy.deepcopy(workload)))
+        self.assertTrue(all(t['idle_pages'] == 0 for s in workload['sessions'] for t in s['turns']))
+        # Apart from parking, the turns are the default generator's.
+        default = trace.generate(4, 8, 'cyclic', [100000], 0)
+        self.assertEqual(workload['sessions'], default['sessions'])
+        self.assertNotIn('returns', default)
+        chunked = trace.generate(1, 1, 'chunk', [64], 0, prefill_chunk_tokens=8192)
+        self.assertEqual(trace.validate(copy.deepcopy(chunked))['prefill_chunk_tokens'], 8192)
+        for key, value in (('returns', 'random'), ('returns', None), ('prefill_chunk_tokens', 0),
+                           ('prefill_chunk_tokens', 65537), ('prefill_chunk_tokens', 2048.0), ('order', 'cyclic')):
+            with self.subTest(key=key, value=value):
+                bad = copy.deepcopy(workload)
+                bad[key] = value
+                with self.assertRaises(ValueError):
+                    trace.validate(bad)
+        with self.assertRaises(ValueError):
+            trace.generate(1, 1, 'x', [64], 0, returns='random')
+
+    def test_cyclic_admission_takes_the_least_advanced_session_first(self):
+        states = [dict(name=name, next=index) for name, index in (('a', 2), ('b', 1), ('c', 1), ('d', 0))]
+        self.assertEqual([s['name'] for s in trace.admission_order({'returns': 'cyclic'}, states)],
+                         ['d', 'b', 'c', 'a'])
+        self.assertIs(trace.admission_order({}, states), states)
+
+    def replay_order(self, returns):
+        workload = trace.generate(3, 2, 'order', [64], 0, returns=returns)
+        for session in workload['sessions']:
+            for turn in session['turns']:
+                turn.update(think_seconds=0, append_tokens=20, output_tokens=4)
+        profile = vars(parser().parse_args([]))
+        profile.update(seconds=10, min_samples=3, trace_history='canonical', cache_salt='session',
+                       arm='fixed', seed='order', run_id='test', session_timeout_seconds=10)
+        with fake_server({}) as url:
+            level = trace.run_level(Transport(url, 2), 'fake-agentic', profile, workload, 1)
+        self.assertTrue(level['verdict']['passed'], level['verdict'])
+        rows = sorted((t['started'], s['index'], t['turn_index']) for s in level['sessions'] for t in s['turns'])
+        return [(session, turn) for _, session, turn in rows]
+
+    def test_cyclic_returns_visit_every_session_before_any_returns_again(self):
+        self.assertEqual(self.replay_order('cyclic'), [(0, 0), (1, 0), (2, 0), (0, 1), (1, 1), (2, 1)])
+        # The declared order keeps serving the first ready session.
+        self.assertEqual(self.replay_order(None), [(0, 0), (0, 1), (1, 0), (1, 1), (2, 0), (2, 1)])
+
+    def warm_replay(self, cached):
+        """A one-session, three-turn replay whose server reports cached(turn,
+        previous) tokens: `previous` is the session's previous prompt."""
+        workload = trace.generate(1, 3, 'warm', [64], 0, prefill_chunk_tokens=8)
+        # Appends longer than the priming turn, so every prompt outgrows the previous one.
+        for turn in workload['sessions'][0]['turns']:
+            turn.update(think_seconds=0, append_tokens=64, output_tokens=2)
+        profile = vars(parser().parse_args([]))
+        profile.update(seed='warm', run_id='test', arm='fixed', seconds=5, min_samples=1, session_timeout_seconds=5)
+        original, calls = trace.request, []
+
+        def request(client, body, deadline, expected=None, previous=None, **kwargs):
+            row, answer, response = original(client, body, deadline, expected, previous, **kwargs)
+            if previous is not None:
+                # The first return's previous prompt is its primer's.
+                row['cached_tokens'] = cached(len(calls), calls[-1] if calls else len(previous))
+                calls.append(row['prompt_tokens'])
+            return row, answer, response
+
+        with fake_server({}) as url, patch.object(trace, 'request', side_effect=request):
+            level = trace.run_level(Transport(url, 2), 'fake-agentic', profile, workload, 1)
+        self.assertTrue(level['verdict']['passed'], level['verdict'])
+        return level['sessions'][0]['turns']
+
+    def test_a_zero_first_hit_is_a_cold_return_not_a_missing_baseline(self):
+        # Before, a zero first hit left the baseline unset, so every later
+        # return read None.
+        turns = self.warm_replay(lambda turn, previous: (0, previous, previous - 8)[turn])
+        self.assertEqual([row['warm'] for row in turns], [False, True, True])
+        self.assertTrue(all(row['warm_threshold_tokens'] == row['previous_prompt_tokens'] - 8 for row in turns))
+        self.assertNotIn('first_prefix_retained', turns[0])
+
+    def test_an_evicted_primer_is_recorded_as_a_miss(self):
+        # The primer's anchors are gone; only a short shared prefix hits.
+        turns = self.warm_replay(lambda turn, previous: (previous - 9, previous - 9, 1)[turn])
+        self.assertEqual([row['warm'] for row in turns], [False, False, False])
+        warm = self.warm_replay(lambda turn, previous: previous - 8)
+        self.assertEqual([row['warm'] for row in warm], [True, True, True])
+        # The threshold comes from the workload alone: both arms judge alike.
+        self.assertEqual([row['warm_threshold_tokens'] for row in turns],
+                         [row['warm_threshold_tokens'] for row in warm])
+
+    def test_warm_threshold_is_one_chunk_short_and_never_below_one_token(self):
+        self.assertEqual(trace.warm_threshold({}, 100000), 100000 - trace.PREFILL_CHUNK_TOKENS)
+        self.assertEqual(trace.warm_threshold({'prefill_chunk_tokens': 8192}, 100000), 100000 - 8192)
+        self.assertEqual(trace.warm_threshold({}, 2048), 1)
+        self.assertEqual(trace.warm_threshold({}, 10), 1)
+
     def test_http_refusal_retains_bounded_body(self):
         with fake_server({}) as url:
             with self.assertRaises(HTTPStatusError) as caught:

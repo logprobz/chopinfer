@@ -25,6 +25,14 @@ from agentic_server import mode_evidence, observe_startup, verify_arm
 SCHEMA = 'chopinfer.agentic-trace.v1'
 CLASSES = ('1-63', '64-511', '512-2047', '2048-8191', '8192+')
 RANGES = ((1, 63), (64, 511), (512, 2047), (2048, 8191), (8192, 12288))
+# The profiles' prefill chunk, unless a trace declares `prefill_chunk_tokens`.
+# A warm return resumes an anchor at most one chunk before its session's
+# previous prompt end (the previous request's final-chunk anchor).
+PREFILL_CHUNK_TOKENS = 2048
+# Optional trace fields: `returns: cyclic` admits the least advanced session
+# first, so each session returns only after every other ready session had
+# its turn (`admission_order`).
+OPTIONAL_FIELDS = ('returns', 'prefill_chunk_tokens')
 
 
 def digest(value):
@@ -46,10 +54,15 @@ def integer(value, low, high):
 
 
 def validate(trace):
-    fields(trace, 'schema seed groups sessions page_tokens')
+    optional = [name for name in OPTIONAL_FIELDS if isinstance(trace, dict) and name in trace]
+    fields(trace, ' '.join(['schema seed groups sessions page_tokens', *optional]))
     if trace['schema'] != SCHEMA or not isinstance(trace['seed'], str) or not 1 <= len(trace['seed']) <= 128:
         raise ValueError('invalid trace schema or seed')
     integer(trace['page_tokens'], 1, 65536)
+    if 'returns' in trace and trace['returns'] != 'cyclic':
+        raise ValueError('trace returns must be cyclic when declared')
+    if 'prefill_chunk_tokens' in trace:
+        integer(trace['prefill_chunk_tokens'], 1, 65536)
     if not isinstance(trace['groups'], list) or not 1 <= len(trace['groups']) <= 64:
         raise ValueError('trace needs 1 to 64 groups')
     groups = set()
@@ -102,7 +115,13 @@ def append_range(value):
 
 
 def generate(sessions=8, turns=100, seed='agentic-trace-v1', contexts=(100000, 250000), idle_pages=4096,
-             append_tokens=None):
+             append_tokens=None, returns=None, prefill_chunk_tokens=None):
+    """A trace of SESSIONS sessions of TURNS turns. With `returns='cyclic'`
+    every session returns in turn (`admission_order`) and no turn waits for
+    page pressure, so the sessions' contexts, not one parked session, set the
+    footprint a pool must hold for returns to stay warm."""
+    if returns not in (None, 'cyclic'):
+        raise ValueError('returns must be cyclic or None')
     rng = random.Random(seed)
     classes = [index for index, count in enumerate((31, 40, 12, 7, 10)) for _ in range(count)]
     rng.shuffle(classes)
@@ -116,10 +135,34 @@ def generate(sessions=8, turns=100, seed='agentic-trace-v1', contexts=(100000, 2
                                 output_tokens=(128, 256, 550, 1266)[(turn + session) % 4],
                                 seed=mixed.request_seed(seed, sessions, session, turn),
                                 think_seconds=(0, 2, 10, 60)[(turn + session) % 4],
-                                idle_pages=idle_pages if session == 0 and turn and turn % 4 == 0 else 0))
+                                idle_pages=idle_pages if returns is None and session == 0 and turn and turn % 4 == 0
+                                else 0))
         rows.append(dict(id=session, group=session % len(contexts), turns=planned))
-    return validate(dict(schema=SCHEMA, seed=seed, page_tokens=64,
-                         groups=[dict(id=i, context_tokens=n) for i, n in enumerate(contexts)], sessions=rows))
+    trace = dict(schema=SCHEMA, seed=seed, page_tokens=64,
+                 groups=[dict(id=i, context_tokens=n) for i, n in enumerate(contexts)], sessions=rows)
+    if returns is not None:
+        trace['returns'] = returns
+    if prefill_chunk_tokens is not None:
+        trace['prefill_chunk_tokens'] = prefill_chunk_tokens
+    return validate(trace)
+
+
+def admission_order(trace, states):
+    """The order in which ready turns take free slots: the declared session
+    order, or with cyclic returns the least advanced session first (ties in
+    session order), so a session's next turn waits for every other ready
+    session's turn and its reuse distance spans the other sessions."""
+    if trace.get('returns') != 'cyclic':
+        return states
+    return sorted(states, key=lambda state: state['next'])
+
+
+def warm_threshold(trace, previous_prompt):
+    """The cached tokens a return must reach to count as warm: its session's
+    previous prompt length less one prefill chunk, and at least one token.
+    It depends on the workload alone, so every arm judges the same return
+    alike."""
+    return max(1, previous_prompt - trace.get('prefill_chunk_tokens', PREFILL_CHUNK_TOKENS))
 
 
 def synthetic(seed, characters, kind='code'):
@@ -271,7 +314,7 @@ def run_level(client, model, profile, trace, concurrency):
                           ('patch', 'result', 'code')[i % 3]) for i, t in enumerate(session['turns'])]
         states.append(dict(spec=session, messages=messages, appends=appends, salt=cache_salt,
                            previous=primed[key][0], previous_prompt=len(primed[key][0]), next=0,
-                           rows=[], end=None, pages=0, failure=None, baseline_cached=None))
+                           rows=[], end=None, pages=0, failure=None))
     before = client.scrape()
     startup_before = observe_startup(client.url) if hasattr(client, 'url') else None
     load = [common.host_load_sample()]
@@ -297,7 +340,9 @@ def run_level(client, model, profile, trace, concurrency):
                    append_tokens=turn['append_tokens'], requested_output_tokens=turn['output_tokens'],
                    submitted=at, idle_seconds=at - state['end'], intervening_token_pages=page_clock - state['pages'],
                    requested_idle_pages=turn['idle_pages'],
-                   lost_before_previous_answer_tokens=max(0, state['previous_prompt'] - lcp(state['previous'], ids)))
+                   lost_before_previous_answer_tokens=max(0, state['previous_prompt'] - lcp(state['previous'], ids)),
+                   previous_prompt_tokens=state['previous_prompt'],
+                   warm_threshold_tokens=warm_threshold(trace, state['previous_prompt']))
         if index:
             kept = tokenize(client, {**body, 'chat_template_kwargs': {**body.get('chat_template_kwargs', {}), 'preserve_thinking': True}}, request_deadline)
             row['preserved_thinking_lcp_tokens'] = lcp(state['previous'], kept)
@@ -310,7 +355,7 @@ def run_level(client, model, profile, trace, concurrency):
     pool = ThreadPoolExecutor(max_workers=concurrency)
     try:
         while time.monotonic() < deadline:
-            for state in states:
+            for state in admission_order(trace, states):
                 if len(pending) == concurrency:
                     break
                 if state['failure'] or state['next'] == len(state['spec']['turns']) or any(s is state for s in pending.values()):
@@ -340,10 +385,9 @@ def run_level(client, model, profile, trace, concurrency):
                 if not row['failure']:
                     used = row['prompt_tokens'] - row['cached_tokens'] + row['output_tokens']
                     pages += math.ceil(used / trace['page_tokens'])
-                if state['baseline_cached'] is None:
-                    state['baseline_cached'] = row['cached_tokens']
-                row['first_prefix_retained'] = (row['cached_tokens'] >= state['baseline_cached']
-                                          if state['baseline_cached'] and row['cached_tokens'] is not None else None)
+                # Warm against the workload's threshold, so a miss in either
+                # arm, an evicted primer included, is recorded as false.
+                row['warm'] = row['cached_tokens'] >= row['warm_threshold_tokens'] if not row['failure'] else None
                 # Usage and rendered LCP do not reveal which frontier the server captured.
                 row['anchor_survived'] = None
                 row['anchor_survival_unavailable'] = 'served capture frontier and granularity unavailable'
@@ -446,12 +490,20 @@ if __name__ == '__main__':
     p.add_argument('--turns', type=int, default=100)
     p.add_argument('--seed', default='agentic-trace-v1')
     p.add_argument('--contexts', default='100000,250000')
-    p.add_argument('--idle-pages', type=int, default=4096)
+    p.add_argument('--idle-pages', type=int, help='pages session 0 waits for every fourth turn (default 4096)')
     p.add_argument('--append-tokens', type=append_range, metavar='LOW:HIGH',
                    help='draw append tokens uniformly from this inclusive range (1 to 32768)')
+    p.add_argument('--returns', choices=('cyclic',),
+                   help='every session returns in turn, least advanced first; no turn waits for idle pages')
+    p.add_argument('--prefill-chunk-tokens', type=int,
+                   help=f'the chunk a warm return may fall short of its previous prompt (default {PREFILL_CHUNK_TOKENS})')
     a = p.parse_args()
-    workload = generate(a.sessions, a.turns, a.seed, [int(n) for n in a.contexts.split(',')], a.idle_pages,
-                        append_tokens=a.append_tokens)
+    if a.returns and a.idle_pages:
+        p.error('--returns cyclic parks no session on idle pages')
+    idle = 4096 if a.idle_pages is None else a.idle_pages
+    workload = generate(a.sessions, a.turns, a.seed, [int(n) for n in a.contexts.split(',')], idle,
+                        append_tokens=a.append_tokens, returns=a.returns,
+                        prefill_chunk_tokens=a.prefill_chunk_tokens)
     with a.out.open('x') as out:
         json.dump(workload, out, indent=2)
         out.write('\n')

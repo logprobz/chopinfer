@@ -46,6 +46,8 @@
   },
   "agentic_trace": {
    "CLASSES": "list",
+   "OPTIONAL_FIELDS": "list",
+   "PREFILL_CHUNK_TOKENS": "int",
    "RANGES": "list",
    "SCHEMA": "str"
   },

@@ -465,8 +465,20 @@ Balanced output budgets 128/256/550/1266 average 550 tokens. Think times
 0/2/10/60 seconds are declared assumptions. Source files, patches and test
 results are synthesized from seeds, then fitted with the served `/tokenize`.
 Newest-anchor survival is unavailable without served capture frontier and
-granularity evidence. `first_prefix_retained` only compares a return with
-the first measured cache hit; it cannot prove retention of a newer frontier.
+granularity evidence. Each turn instead records `warm`: whether its cached
+tokens reach `warm_threshold_tokens`, its session's previous prompt length
+(the primer's for the first turn) less one prefill chunk and at least one
+token. The chunk is the trace's `prefill_chunk_tokens`, 2,048 when not
+declared. The threshold depends on the workload alone, so both arms judge a
+return alike, and a cold return, an evicted primer's included, is false.
+Rendering loss before the previous answer can also make a return cold.
+
+`--returns cyclic` declares cyclic returns: a free slot goes to the least
+advanced ready session, so every session returns only after each other
+ready session had its turn, and no session parks on idle pages. The
+sessions' contexts and histories, with per-session salts, then set the
+footprint the server must hold for returns to stay warm; size it beyond a
+GPU pool to measure eviction and a host tier.
 
 No trace field accepts prompt text. The page size is explicit in the trace
 and must match the served model's logical KV page size.

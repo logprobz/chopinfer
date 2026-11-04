@@ -91,7 +91,9 @@ class TraceReviewTests(unittest.TestCase):
         self.assertEqual([row['cached_tokens'] for row in turns], [10, 30, 10])
         self.assertEqual([row['anchor_survived'] for row in turns], [None, None, None])
         self.assertTrue(all(row['anchor_survival_unavailable'] for row in turns))
-        self.assertEqual([row['first_prefix_retained'] for row in turns], [True, True, True])
+        # Prompts shorter than a prefill chunk are warm with any cached token.
+        self.assertEqual([row['warm_threshold_tokens'] for row in turns], [1, 1, 1])
+        self.assertEqual([row['warm'] for row in turns], [True, True, True])
 
     def test_coding_profile_pairs_with_pre_trace_receipt(self):
         from agentic_compare import compare

@@ -484,9 +484,11 @@ granularity evidence. Each turn instead records `warm`: whether its cached
 tokens reach `warm_threshold_tokens`, its session's previous prompt length
 (the primer's for the first turn) less one prefill chunk and at least one
 token. The chunk is the trace's `prefill_chunk_tokens`, 2,048 when not
-declared. The threshold depends on the workload alone, so both arms judge a
-return alike, and a cold return, an evicted primer's included, is false.
-Rendering loss before the previous answer can also make a return cold.
+declared. With canonical history the threshold depends on the workload
+alone, so both arms judge a return alike, and a cold return, an evicted
+primer's included, is false; generated history adds each arm's own answers
+to the previous prompt. Rendering loss before the previous answer can also
+make a return cold.
 
 `--returns cyclic` declares cyclic returns: a free slot goes to the least
 advanced ready session, so every session returns only after each other

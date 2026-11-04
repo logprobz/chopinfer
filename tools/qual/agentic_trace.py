@@ -160,8 +160,9 @@ def admission_order(trace, states):
 def warm_threshold(trace, previous_prompt):
     """The cached tokens a return must reach to count as warm: its session's
     previous prompt length less one prefill chunk, and at least one token.
-    It depends on the workload alone, so every arm judges the same return
-    alike."""
+    With canonical history it depends on the workload alone, so every arm
+    judges the same return alike; generated history adds each arm's own
+    answers to the previous prompt."""
     return max(1, previous_prompt - trace.get('prefill_chunk_tokens', PREFILL_CHUNK_TOKENS))
 
 

@@ -101,6 +101,9 @@ pub(super) fn validate(row: &Row) -> Result<(), TuningError> {
             (&["tiled"], &[], &[])
         }
         "indexer.hierarchy.decode" => (&["hierarchical"], &[], &[]),
+        "indexer.long_candidate_scores.prefill" | "indexer.long_compressed_scores.prefill" => {
+            (&["tile4"], &["ctas"], &[])
+        }
         "indexer.query.verify" | "latent.query.decode" | "latent.query.verify" => {
             (&["parallel"], &[], &[])
         }
@@ -290,6 +293,10 @@ fn validate_values(row: &Row) -> Result<(), TuningError> {
         "hc.finish_twin.verify" => [8, 16, 32].contains(&count("warps")),
         // The fused entries are prepared for the decode batch's rows.
         "latent.row_fusions.verify" => row.key.bucket == crate::serving::DECODE_BATCH,
+        // The tile4 scorer's x grid: the counts its remap accepts.
+        "indexer.long_candidate_scores.prefill" | "indexer.long_compressed_scores.prefill" => {
+            [4, 8, 16, 32, 192].contains(&count("ctas"))
+        }
         "latent.cache.decode" => count("head_group") == 0,
         "latent.cache.verify" => [0, 1, 2, 4, 8].contains(&count("head_group")),
         "latent.staging.decode" | "latent.staging.verify" => {

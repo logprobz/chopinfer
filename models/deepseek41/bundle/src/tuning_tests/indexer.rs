@@ -22,7 +22,12 @@ fn pin_untuned_served_keys() {
             ));
         }
     }
-    for (site, capacity) in [("candidate_scores", 512), ("compressed_scores", 4096)] {
+    for (site, capacity) in [
+        ("candidate_scores", 512),
+        ("compressed_scores", 4096),
+        ("long_candidate_scores", 512),
+        ("long_compressed_scores", 4096),
+    ] {
         domain.insert(key(
             &format!("indexer.{site}.prefill"),
             "fp4",
@@ -40,7 +45,7 @@ fn pin_untuned_served_keys() {
             ));
         }
     }
-    assert_eq!(domain.len(), 8299);
+    assert_eq!(domain.len(), 8301);
     assert_untuned(
         Family::Indexer,
         domain,
@@ -50,6 +55,7 @@ fn pin_untuned_served_keys() {
             ("parallel", &[]),
             ("cached", &[]),
             ("tiled", &[]),
+            ("tile4", &["ctas"]),
         ],
     );
 }
@@ -61,6 +67,8 @@ const UNTUNED: &[&str] = &[
     "indexer.cached.prefill f32 top_k=512,width=65536 buckets=32..4096 rows=1..31",
     "indexer.candidate_scores.prefill fp4 top_k=512 buckets=512 rows=1..511",
     "indexer.compressed_scores.prefill fp4 top_k=512 buckets=4096 rows=1..4095",
+    "indexer.long_candidate_scores.prefill fp4 top_k=512 buckets=512 rows=1..31",
+    "indexer.long_compressed_scores.prefill fp4 top_k=512 buckets=4096 rows=1..31,4033..4096",
     "indexer.query.verify f32 ranks=1 buckets=32..64,192 rows=all",
     "indexer.query.verify f32 ranks=2 buckets=32..64,192 rows=all",
     "indexer.query.verify f32 ranks=4 buckets=192 rows=1..64",

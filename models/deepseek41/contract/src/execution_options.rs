@@ -45,6 +45,11 @@ pub const DSPARK_MOE_DIRECT: &str = "dspark_moe_direct";
 /// the drafter table (`hc.draft_admit.verify`), so their stage boundaries
 /// fuse as the measured rows' do.
 pub const DSPARK_HC_DRAFT_ROWS: &str = "dspark_hc_draft_rows";
+/// Candidate: Flash TP4 eager prefill full-index batches whose positions
+/// reach past the short tile band, up to a 256K extent, score with the tile4
+/// scorer at the CTA count the indexer table gives their rows
+/// (`indexer.long_*_scores.prefill`) and select with the early-stop selector.
+pub const INDEXER_PREFILL_LONG: &str = "indexer_prefill_long";
 /// Maximum prompt-ending items whose interior grid anchor one step retains.
 pub const MAX_ANCHOR_ITEMS: u32 = 8;
 pub const DEFAULT_PLANS: usize = 16;
@@ -67,9 +72,10 @@ pub struct Options {
     pub dspark_confidence_staged: bool,
     pub dspark_moe_direct: bool,
     pub dspark_hc_draft_rows: bool,
+    pub indexer_prefill_long: bool,
 }
 
-pub fn declarations() -> [ModelOptionV1; 13] {
+pub fn declarations() -> [ModelOptionV1; 14] {
     [
         (
             DIAGNOSTIC_STEP_LOGS,
@@ -101,6 +107,10 @@ pub fn declarations() -> [ModelOptionV1; 13] {
         ),
         (
             DSPARK_MOE_DIRECT,
+            OptionDefinitionV1::Boolean { default: false },
+        ),
+        (
+            INDEXER_PREFILL_LONG,
             OptionDefinitionV1::Boolean { default: false },
         ),
         (
@@ -185,6 +195,7 @@ impl Options {
             dspark_confidence_staged: flag(DSPARK_CONFIDENCE_STAGED),
             dspark_hc_fusion: flag(DSPARK_HC_FUSION),
             dspark_markov_staged: flag(DSPARK_MARKOV_STAGED),
+            indexer_prefill_long: flag(INDEXER_PREFILL_LONG),
         })
     }
 }
@@ -304,6 +315,7 @@ mod tests {
             dspark_confidence_staged: false,
             dspark_hc_fusion: false,
             dspark_markov_staged: false,
+            indexer_prefill_long: false,
         };
         assert_eq!(Options::read(&defaults).unwrap(), expected);
         assert_eq!(Options::read(&BTreeMap::new()).unwrap(), expected);
@@ -327,6 +339,7 @@ mod tests {
             (DSPARK_CONFIDENCE_STAGED.into(), "true".into()),
             (DSPARK_HC_FUSION.into(), "true".into()),
             (DSPARK_MARKOV_STAGED.into(), "true".into()),
+            (INDEXER_PREFILL_LONG.into(), "true".into()),
         ]);
         let resolved = declaration.resolve(&overrides).unwrap();
         assert_eq!(
@@ -345,6 +358,7 @@ mod tests {
                 dspark_confidence_staged: true,
                 dspark_hc_fusion: true,
                 dspark_markov_staged: true,
+                indexer_prefill_long: true,
             }
         );
         assert!(!declaration.is_qualified(&resolved));
@@ -369,6 +383,7 @@ mod tests {
             (DSPARK_CONFIDENCE_STAGED, "1"),
             (DSPARK_HC_FUSION, "1"),
             (DSPARK_MARKOV_STAGED, "1"),
+            (INDEXER_PREFILL_LONG, "1"),
             (DSPARK_GRAPH_HANDLES_PER_RANK, "-1"),
             (DSPARK_GRAPH_HANDLES_PER_RANK, "9223372036854775808"),
         ] {

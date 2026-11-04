@@ -47,6 +47,7 @@ mod prefill_cache;
 mod prefill_cache_capacity;
 mod prefill_dma;
 mod prefill_gate_journal;
+mod prefill_long;
 mod prefill_matrix;
 mod prefill_plan_cache;
 mod prefill_plan_templates;

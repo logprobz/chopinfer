@@ -52,6 +52,11 @@ pub struct Shape {
     /// route through the drafter table (the `dspark_hc_draft_rows`
     /// candidate option, which takes effect with `dspark_hc_fusion`).
     pub dspark_hc_draft_rows: bool,
+    /// Whether eager prefill full-index batches past the short tile band, up
+    /// to a 256K extent, take the long-band tile4 scorer and early-stop
+    /// selector at the rows the indexer table admits (the
+    /// `indexer_prefill_long` candidate option).
+    pub indexer_prefill_long: bool,
 }
 
 impl Shape {
@@ -71,6 +76,7 @@ impl Shape {
             dspark_confidence_staged: false,
             dspark_hc_fusion: false,
             dspark_markov_staged: false,
+            indexer_prefill_long: false,
         })
     }
 
@@ -104,6 +110,13 @@ impl Shape {
         let widest = self.wide_verify_rows().last().copied()?;
         self.wide_draft
             .then(|| (widest / MAX_DRAFT_TOKENS).min(DECODE_BATCH))
+    }
+
+    /// This shape with the long-band prefill indexer routes on or off
+    /// (`model_deepseek41_contract::execution_options::INDEXER_PREFILL_LONG`).
+    pub fn with_indexer_prefill_long(mut self, enabled: bool) -> Shape {
+        self.indexer_prefill_long = enabled;
+        self
     }
 
     /// This shape with the phased decode reduction on or off

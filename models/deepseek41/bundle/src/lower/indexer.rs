@@ -156,6 +156,10 @@ impl Lowering<'_> {
         // beside the bounded scoring tiles, under the same admission.
         let fused_candidates = phase.prefill()
             && crate::Kernels::prefill_tile_enabled(self.shape, self.kv.storage, positions);
+        // The long band takes full-source batches past the short band, at
+        // the table's row ranges; every batch of a phase shares its extent.
+        let long_band = factory.is_some()
+            && crate::Kernels::prefill_long_enabled(self.shape, self.kv.storage, positions);
         let select = |mut calls| {
             if phase.prefill()
                 && crate::Kernels::prefill_tile_enabled(self.shape, self.kv.storage, positions)
@@ -246,7 +250,16 @@ impl Lowering<'_> {
                     )?);
                 }
                 let op = &prepared[&(n, width)];
-                launches.extend(select(op.select(n, width, &views).map_err(error)?)?);
+                let ctas = long_band
+                    .then(|| {
+                        crate::Kernels::prefill_long_selected(layer == g.shape.candidates.source, n)
+                    })
+                    .flatten();
+                let mut calls = op.select(n, width, &views, ctas.is_none()).map_err(error)?;
+                if let Some(ctas) = ctas {
+                    calls = crate::Kernels::prefill_long_route(calls, ctas).map_err(error)?;
+                }
+                launches.extend(select(calls)?);
                 if layer == g.shape.candidates.source {
                     let calls = op
                         .produce(

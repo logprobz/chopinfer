@@ -122,14 +122,19 @@ impl BatchOps {
         self.cached
     }
 
+    /// The batch's served launches. `cached` admits the measured 128K cached
+    /// selector; a batch the long band takes passes false, so exactly one
+    /// remap acts on its live selector.
     pub(crate) fn select(
         &self,
         rows: u32,
         width: u32,
         views: &SelectViews,
+        cached: bool,
     ) -> Result<Vec<Lowered>, Refusal> {
         let calls = SelectOps::select_prepared(&self.select, rows, width, views)?;
-        if self.cached
+        if cached
+            && self.cached
             && crate::Kernels::cached_prefill_indexer_rows(
                 self.cached_width,
                 self.cached_capacity,

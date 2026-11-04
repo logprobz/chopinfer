@@ -45,7 +45,7 @@ fn eager_launches_replace_only_the_measured_local_selector() {
                     output: span(12, n * 2048),
                 };
                 let batch = factory.prepare(layer, rows, width, 1 << 30).unwrap();
-                let calls = batch.select(rows, width, &views).unwrap();
+                let calls = batch.select(rows, width, &views, true).unwrap();
                 assert_eq!(calls.len(), 4);
                 assert!(calls[0].launch.symbol.ends_with("_pack_fp4_guard_v1"));
                 assert!(calls[1].launch.symbol.ends_with("_mma_fp4_guard_fast_v1"));

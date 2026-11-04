@@ -13,6 +13,8 @@ use runtime_kv::{
 
 mod offload;
 pub use offload::{OffloadConfig, ResumePlan};
+mod ram;
+pub use ram::PrefixRamConfig;
 
 const MAX_TRACKED_REQUESTS: usize = 1 << 20;
 /// Steps a started prompt may go without a chunk on the uncapped prefill
@@ -407,6 +409,7 @@ pub struct SchedulerConfig {
     prefill_granule: usize,
     rewrites_last_page: bool,
     prefix_ancestry: bool,
+    prefix_ram: Option<PrefixRamConfig>,
     anchor_items: usize,
     grid_anchor_items: usize,
 }
@@ -464,6 +467,7 @@ impl SchedulerConfig {
             prefill_granule: 1,
             rewrites_last_page: false,
             prefix_ancestry: false,
+            prefix_ram: None,
             anchor_items: 0,
             grid_anchor_items: 0,
         })
@@ -474,6 +478,20 @@ impl SchedulerConfig {
     pub const fn with_prefix_ancestry(mut self, enabled: bool) -> Self {
         self.prefix_ancestry = enabled;
         self
+    }
+
+    /// The RAM prefix tier behind the prefix cache: the pool keeps public
+    /// host entries, which admission promotes while offload is enabled
+    /// ([`Scheduler::configure_offload`]). It indexes every public capture.
+    #[must_use]
+    pub const fn with_prefix_ram(mut self, tier: Option<PrefixRamConfig>) -> Self {
+        self.prefix_ram = tier;
+        self
+    }
+
+    #[must_use]
+    pub const fn prefix_ram(self) -> Option<PrefixRamConfig> {
+        self.prefix_ram
     }
 
     /// Allows a lone unscored prefill to use the step budget instead of the
@@ -1620,6 +1638,7 @@ pub struct Scheduler {
     backlog_steps: u64,
     offload: Option<OffloadConfig>,
     resumes: BTreeMap<RequestId, ResumePlan>,
+    ram: ram::PrefixRamState,
 }
 
 impl Clone for Scheduler {
@@ -1646,6 +1665,7 @@ impl Clone for Scheduler {
             backlog_steps: self.backlog_steps,
             offload: self.offload,
             resumes: self.resumes.clone(),
+            ram: self.ram.clone(),
         }
     }
 }
@@ -1672,6 +1692,7 @@ impl PartialEq for Scheduler {
             && self.backlog_steps == other.backlog_steps
             && self.offload == other.offload
             && self.resumes == other.resumes
+            && self.ram == other.ram
     }
 }
 
@@ -1691,6 +1712,10 @@ impl Scheduler {
             .map_err(ScheduleError::Kv)?
             .with_last_page_rewrites(config.rewrites_last_page)
             .with_prefix_ancestry(config.prefix_ancestry);
+        let kv = match config.prefix_ram {
+            Some(tier) => kv.with_prefix_ram(true).with_prefix_ram_forced(tier.forced),
+            None => kv,
+        };
         let mut requests = Vec::new();
         requests
             .try_reserve_exact(config.tracking_capacity)
@@ -1729,6 +1754,7 @@ impl Scheduler {
             backlog_steps: 0,
             offload: None,
             resumes: BTreeMap::new(),
+            ram: ram::PrefixRamState::default(),
         })
     }
 
@@ -3108,7 +3134,9 @@ impl Scheduler {
                         tokens,
                         key,
                         chain,
-                        ancestry: self.config.prefix_ancestry.then(|| prefix.chain.clone()),
+                        // The RAM tier demotes only indexed anchors.
+                        ancestry: (self.config.prefix_ancestry || self.config.prefix_ram.is_some())
+                            .then(|| prefix.chain.clone()),
                         handle,
                         deferred: false,
                     });

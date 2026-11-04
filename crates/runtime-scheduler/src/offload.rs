@@ -47,6 +47,7 @@ impl Scheduler {
 
     pub fn audit_host_tier(&self, tier: &HostTier) -> Result<(), ScheduleError> {
         tier.audit(&self.kv).map_err(ScheduleError::Kv)?;
+        self.audit_prefix_ram_transfers(tier)?;
         for (&id, plan) in &self.resumes {
             let record = self.record(id)?;
             let anchor = plan
@@ -129,6 +130,7 @@ impl Scheduler {
                     record.own_anchor_transfer = None;
                 }
             }
+            self.finish_demotion(id);
         }
         for plan in self.resumes.values_mut() {
             plan.ready = plan

@@ -66,3 +66,54 @@ fn prefill_partials_reset_only_their_protocol_after_join_at_bf16_kv() {
     drop(journal);
     instance.destroy().unwrap();
 }
+
+/// A prefill whose BF16-partial collective one rank has submitted and the
+/// next rank's launches fail to reach poisons the instance at both KV
+/// layouts: capture and destroy refuse it and submit nothing more.
+#[test]
+fn prefill_partials_partial_rank_failure_poisoning_is_terminal() {
+    const PARTIALS: &str = "chop_comm_allreduce_phased_";
+    let partial =
+        |s: &String| s.starts_with("launch ") && s.contains(PARTIALS) && s.contains("bf16_v1");
+    for kv in KV_LAYOUTS {
+        let reference = FakeHost::new(Shape::new(&FLASH, Ranks::TP4).unwrap(), kv);
+        let mut instance = create(&reference, 4);
+        reference.device.journal.borrow_mut().clear();
+        step(
+            &mut instance,
+            &prompt(7, 0, 0, 1024, true),
+            &mut Views::default(),
+        );
+        let lines = reference.device.journal.borrow().clone();
+        instance.destroy().unwrap();
+        let at = lines.iter().position(partial).unwrap();
+        let stream = |s: &str| s.split_whitespace().nth(1).map(str::to_owned);
+        // Its peers' parts of the same collective follow on other streams.
+        let next = lines[at + 1..].iter().position(partial).unwrap() + at + 1;
+        assert_ne!(stream(&lines[at]), stream(&lines[next]), "{:?}", kv.storage);
+        let before = lines[..at]
+            .iter()
+            .filter(|s| s.starts_with("launch "))
+            .count();
+        let host = FakeHost::new(Shape::new(&FLASH, Ranks::TP4).unwrap(), kv);
+        let mut instance = create(&host, 4);
+        host.device.fail_launch.set(Some(before as u32 + 1));
+        assert_eq!(
+            instance.execute(&prompt(7, 0, 0, 1024, true), &mut Views::default()),
+            Err(BundleAbiError::Status(BundleStatusV1::HostError)),
+            "{:?}",
+            kv.storage
+        );
+        let submitted = host.device.journal.borrow().clone();
+        assert!(submitted.iter().any(partial), "{:?}", kv.storage);
+        assert_eq!(
+            instance.capture_prefix_state(7, 1024, &[200]),
+            Err(BundleAbiError::Status(BundleStatusV1::InvalidState))
+        );
+        assert_eq!(
+            instance.destroy(),
+            Err(BundleAbiError::Status(BundleStatusV1::InvalidState))
+        );
+        assert_eq!(*host.device.journal.borrow(), submitted);
+    }
+}

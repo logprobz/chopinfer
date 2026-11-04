@@ -491,6 +491,27 @@ class TapsTests(unittest.TestCase):
                                                          r"L00\.x\.kv\.window\.codes rank 0"):
             self.compare(comparison=relabeled)
 
+    def test_logical_kv_values_must_be_bf16_rows(self):
+        # Both captures declare L00.x.kv.window rank 0 of the primer's first
+        # window readback F32, each row its BF16 bytes followed by others.
+        roots = [self.capture(layout, f"{layout}-f32") for layout in ("native", "bf16")]
+        for root in roots:
+            step = root / tap_binding.STEPS / "step0001"
+            tap = step / "L00.x.kv.window.r0.bin"
+            data, row = tap.read_bytes(), PLANES["window"][3] * 2
+            tap.write_bytes(b"".join(data[at:at + row] + struct.pack("<f", 1.0) * (row // 4)
+                                     for at in range(0, len(data), row)))
+            for name in ("index.jsonl", "capture.json"):
+                text = (step / name).read_text()
+                entry = '"name": "L00.x.kv.window", "rank": 0, '
+                at = text.index(entry)
+                self.assertIn('"dtype": "bf16"', text[at:at + 120])
+                (step / name).write_text(text[:at] + text[at:at + 120].replace('"bf16"', '"f32"') + text[at + 120:])
+            reseal(root)
+        with self.assertRaisesRegex(tap_binding.Unbound, r"step0001: L00\.x\.kv\.window rank 0 has dtype f32; a "
+                                                         "KV-state tap's logical values are bf16"):
+            self.compare(*roots)
+
     def test_rows_kept_from_a_position_compare_at_their_positions_and_steps_that_kept_none_pair(self):
         # From token 4 on: the primer's first chunk keeps no row and writes
         # no tensor, and its first readback no KV step.

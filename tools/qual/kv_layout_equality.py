@@ -358,6 +358,10 @@ class Step:
         if self.kv is not None:
             if end > len(self.kv.get("positions") or []):
                 raise tap_binding.Unbound(f"{where} holds rows {first} .. {end - 1}, past its KV positions")
+            part = self.kv_tap(entry["name"])[2]
+            if entry["dtype"] != ("bf16" if part is None else "u32"):
+                raise tap_binding.Unbound(f"{where} has dtype {entry['dtype']}; a KV-state tap's "
+                                          + ("logical values are bf16" if part is None else "stored bytes are u32"))
         elif unowned := [row for row in range(first, end) if row not in self.positions]:
             raise tap_binding.Unbound(f"{where} holds row {unowned[0]}, which no item owns")
 
@@ -443,10 +447,13 @@ def native_row(plane, codes, scales, values):
     """None when a native row's stored codes and scales decode exactly to
     its logical BF16 `values`; ("inexact", channel, product) for the first
     channel whose product is not exactly a finite BF16; ("differs",) when
-    the products are not `values`."""
+    the products are not every byte of `values`, or the row's codes, scales
+    and values are not whole rows of one another."""
     element, scale_format, block = NATIVE_KV_FORMATS[plane]
     per_byte = 2 if element == "e2m1" else 1
     span = block // per_byte
+    if len(codes) != span * len(scales) or len(values) != 2 * block * len(scales):
+        return ("differs",)
     for at, scale in enumerate(scales):
         tables, valid = products(element, scale_format, scale)
         chunk = codes[at * span:(at + 1) * span]

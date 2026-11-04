@@ -115,11 +115,12 @@ fn prefill_keeps_its_reductions_with_the_option() {
     assert_eq!(launches(&journals[0]), launches(&journals[1]));
 }
 
-/// Without proven residency, create refuses Flash TP4 at both KV layouts
-/// with the option on. Both layouts' prefills require the BF16 partials,
-/// whose admission grids have the phased F32 entries' shape, so no report
-/// admits them and leaves decode on the composed form: the phased decode
-/// fallback can no longer be reached through create.
+/// Without proven residency for every entry, create refuses Flash TP4 at
+/// both KV layouts with the option on: both layouts' prefills require the
+/// BF16 partials, whose admission fails on the same report. Residency is
+/// queried per entry, so a report that holds the BF16 partials but not a
+/// phased F32 entry still leaves decode on the composed form
+/// (`decode_falls_back_on_an_unproven_phased_entry`).
 #[test]
 fn unproven_residency_refuses_create_at_both_layouts() {
     for kv in KV_LAYOUTS {
@@ -150,6 +151,52 @@ fn unproven_residency_refuses_create_at_both_layouts() {
                 host.logs.borrow()
             );
             assert_eq!(host.acquired.get(), host.released.get());
+        }
+    }
+}
+
+/// When one phased F32 entry alone lacks proven residency, create admits
+/// the BF16 prefill partials at both KV layouts and decode keeps the
+/// composed form with the option on.
+#[test]
+fn decode_falls_back_on_an_unproven_phased_entry() {
+    for kv in KV_LAYOUTS {
+        for symbol in [ONE_SHOT.trim_end(), TWO_SHOT.trim_end()] {
+            for kind in 0..4 {
+                let host = FakeHost::new(Shape::new(&FLASH, Ranks::TP4).unwrap(), kv);
+                let mut value = report();
+                match kind {
+                    0 => value = BundleRawClusterResidencyV1::unreported(),
+                    1 => value.max_active_clusters = 0,
+                    2 => value.flags |= BUNDLE_CLUSTER_RESIDENCY_V1_MPS_CLIENT,
+                    _ => value.usable_multiprocessors = 1,
+                }
+                host.device
+                    .residency_by_symbol
+                    .borrow_mut()
+                    .insert(symbol.into(), value);
+                let mut instance = instance(&host, 1, true);
+                {
+                    let logs = host.logs.borrow();
+                    let case = format!("{:?} {symbol} {kind}: {logs:?}", kv.storage);
+                    assert!(
+                        logs.iter()
+                            .any(|line| line.contains("phased decode reduction admission: Err")),
+                        "{case}"
+                    );
+                    assert!(
+                        logs.iter()
+                            .any(|line| line.contains("BF16 partials admitted")),
+                        "{case}"
+                    );
+                }
+                let journal = decode_step(&host, &mut instance, 1);
+                assert_eq!(count(&journal, ONE_SHOT) + count(&journal, TWO_SHOT), 0);
+                assert_eq!(count(&journal, SCATTER), 4 * REDUCTIONS);
+                assert_eq!(count(&journal, ROUND), 4 * (REDUCTIONS - DEFERRED));
+                instance.destroy().unwrap();
+                assert_eq!(host.acquired.get(), host.released.get());
+            }
         }
     }
 }

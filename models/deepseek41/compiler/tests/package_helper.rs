@@ -37,7 +37,7 @@ mod native;
 
 /// A native module that exports the bundle API symbol and runs nothing.
 fn native_fixture() -> std::path::PathBuf {
-    native::compile_native_fixture(
+    native::cached_native_fixture(
         "deepseek41-package-module",
         "deepseek41_package_fixture",
         "libbundle_deepseek41.so",

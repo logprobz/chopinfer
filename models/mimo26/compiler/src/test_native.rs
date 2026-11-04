@@ -3,7 +3,7 @@
 // support sources (outside its module tree).
 #[path = "../../../../crates/model-compiler-sdk/test-support/native.rs"]
 mod native;
-use native::{compile_native_fixture, native_root_module};
+use native::{cached_native_fixture, native_root_module};
 use std::{path::PathBuf, sync::OnceLock};
 
 /// The kernel contract identity the fixture's note publishes.
@@ -46,7 +46,7 @@ pub extern "C" fn chop_bundle_get_api_v1() -> *const core::ffi::c_void {{
 "#,
                 note.len()
             );
-            compile_native_fixture(
+            cached_native_fixture(
                 "mimo-package-module",
                 "mimo_package_fixture",
                 &name(),

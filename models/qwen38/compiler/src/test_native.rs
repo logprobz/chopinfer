@@ -3,7 +3,7 @@
 // support sources (outside its module tree).
 #[path = "../../../../crates/model-compiler-sdk/test-support/native.rs"]
 mod native;
-use native::{compile_native_fixture, native_root_module};
+use native::{cached_native_fixture, native_root_module};
 use std::{path::PathBuf, sync::OnceLock};
 
 pub(crate) fn module() -> PathBuf {
@@ -28,7 +28,7 @@ pub extern "C" fn chop_bundle_get_api_v1() -> *const core::ffi::c_void {{
 "#,
                 note.len()
             );
-            compile_native_fixture(
+            cached_native_fixture(
                 "qwen-package-module",
                 "qwen_package_fixture",
                 "libbundle_qwen38.so",

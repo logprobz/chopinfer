@@ -303,10 +303,6 @@ class StructuredKeepTests(unittest.TestCase):
         self.assertFalse(report["passed"])
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class MemoryRule(unittest.TestCase):
     def samples(self, host, device=lambda t: 0, end=1200):
         return [{"elapsed_seconds": t, "mib": 1000 + device(t), "host_rss_mib": 4000 + host(t)}
@@ -340,3 +336,7 @@ class MemoryRule(unittest.TestCase):
                                   (0, {"host": 0}), (0, {"host": -1, "device": 0}), (0, [0, 0])):
             with self.subTest(warmup=warmup, allowance=allowance), self.assertRaises(ValueError):
                 soak.memory_rule(self.samples(lambda t: 0), 1200, {"device": 512, "host": 512}, warmup, allowance)
+
+
+if __name__ == "__main__":
+    unittest.main()

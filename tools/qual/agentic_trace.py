@@ -434,8 +434,8 @@ def main(args, levels):
     result['passed'] = not result['aborted'] and bool(result['levels']) and all(l['verdict']['passed'] for l in result['levels'])
     result['replica_spread'] = replica_spread(result['levels'])
     windows = [l['host_load']['samples'] for l in result['levels']]
-    path = common.receipt('agentic-mixed', identity, result, args.dry_run, load_windows=windows)
-    path.with_suffix('.md').write_text(mixed.markdown(result, common.host_load_windows(windows)))
+    path = common.receipt('agentic-mixed', identity, result, args.dry_run, load_windows=windows, compressed=True)
+    common.receipt_summary(path).write_text(mixed.markdown(result, common.host_load_windows(windows)))
     return 0 if result['passed'] else 1
 
 

@@ -30,7 +30,7 @@ def policy_readers(receipt):
     if identity != 'prefill-policy':
         raise ValueError('unknown prefill identity')
     return identity, arm_mode, mode_evidence, verify_arm
-from common import compared_timing
+from common import compared_timing, read_receipt
 
 
 def validate_pair(left, right):
@@ -293,7 +293,7 @@ def main(argv=None):
     parser.add_argument('candidate', type=Path)
     args = parser.parse_args(argv)
     try:
-        result = compare(json.loads(args.baseline.read_text()), json.loads(args.candidate.read_text()))
+        result = compare(read_receipt(args.baseline), read_receipt(args.candidate))
     except (ValueError, KeyError, TypeError, OSError) as error:
         parser.exit(1, f'Comparison refused: {error}\n')
     print(json.dumps(result, indent=2, allow_nan=False))

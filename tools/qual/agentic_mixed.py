@@ -1468,8 +1468,8 @@ def main(argv=None):
         # and the summary carries the receipt's verdict.
         windows = [level['host_load']['samples'] for level in snapshot['levels']
                    if level.get('host_load', {}).get('samples')]
-        path = common.receipt('agentic-mixed', identity, snapshot, args.dry_run, load_windows=windows)
-        with path.with_suffix('.md').open('x') as summary:
+        path = common.receipt('agentic-mixed', identity, snapshot, args.dry_run, load_windows=windows, compressed=True)
+        with common.receipt_summary(path).open('x') as summary:
             summary.write(markdown(snapshot, common.host_load_windows(windows)))
         return path, snapshot['passed']
 

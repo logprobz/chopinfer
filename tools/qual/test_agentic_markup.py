@@ -5,6 +5,7 @@ from qual_test_config import setUpModule
 import argparse
 from contextlib import redirect_stderr, redirect_stdout
 import copy
+import gzip
 import hashlib
 import io
 import json
@@ -404,7 +405,7 @@ class ReParserSelection(unittest.TestCase):
             code = agentic_mixed.main(['--dry-run', '--frontend', str(self.frontend), '--model-root', str(self.root),
                                        '--levels', '1', '--seconds', '.3', '--warmup-waves', '0', '--no-decode',
                                        '--min-samples', '2'])
-            receipts = [p.read_text() for p in Path(directory).glob('*.json')]
+            receipts = [gzip.decompress(p.read_bytes()).decode() for p in Path(directory).glob('*.json.gz')]
         self.assertEqual(code, 0)
         sweep = next(json.loads(r) for r in receipts if json.loads(r)['receipt_kind'] == 'sweep')
         self.assertEqual(sweep['frontend'], {'sha256': hashlib.sha256(self.frontend.read_bytes()).hexdigest(),
@@ -426,7 +427,7 @@ class ReParserSelection(unittest.TestCase):
                     redirect_stderr(io.StringIO()) as stderr:
                 code = agentic_mixed.main(['--dry-run', '--frontend', str(self.frontend), '--model-root', str(self.root),
                                            '--levels', '1', '--seconds', '.3', '--warmup-waves', '0', '--no-decode'])
-                receipts = [p.read_text() for p in Path(directory).glob('*.json')]
+                receipts = [gzip.decompress(p.read_bytes()).decode() for p in Path(directory).glob('*.json.gz')]
                 self.assertEqual(code, 1)
                 for expected in (['is a symlink'] if linked else
                                  ['no library tool grammar', 'format.parser.tool_grammar', 'agentic_markup.py']):

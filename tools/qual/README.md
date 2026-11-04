@@ -446,6 +446,13 @@ python3 -B tools/qual/agentic_mixed.py --workload trace \
   --min-samples 8 --cache-salt group --arm fixed --label baseline
 ```
 
+Both workloads write each receipt as compact, sorted JSON in one gzip
+member, `<stamp>-agentic-mixed.json.gz`, beside its `<stamp>-agentic-mixed.md`
+summary. The JSON and its schemas are unchanged. `agentic_compare.py` and
+`agentic_trace_analysis.py` read this form and the plain `.json` receipts
+written before it, as `common.read_receipt` does for other readers;
+`gzip -dc RECEIPT` prints the JSON.
+
 This four-turn example declares 72 seconds of think time per session,
 leaving the rest of the 600-second measured window for requests. It disables
 page-pressure parking; longer traces can enable it when sufficient other

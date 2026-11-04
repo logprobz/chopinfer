@@ -8,6 +8,7 @@ import unittest
 from unittest.mock import patch
 
 import agentic_mixed
+import common
 from agentic_fake import FakeClock
 from agentic_mixed import Markup, parser, session, stream_request
 from agentic_workload import STAGED_TASKS, Workspace, load_corpus
@@ -283,7 +284,7 @@ class DurabilityAndComparisonTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             with patch.object(common, 'RECEIPTS', Path(directory)), patch.object(agentic_mixed, 'run_level', side_effect=fail_second), redirect_stdout(io.StringIO()):
                 code = agentic_mixed.main(['--dry-run', '--levels', '1,2', '--seconds', '.3', '--warmup-waves', '0', '--no-decode'])
-            receipts = [json.loads(p.read_text()) for p in Path(directory).glob('*.json')]
+            receipts = [common.read_receipt(p) for p in Path(directory).glob('*.json.gz')]
             self.assertEqual(code, 1)
             # One checkpoint per replica of the completed level.
             self.assertEqual([r['receipt_kind'] for r in receipts].count('level'), 3)
@@ -313,9 +314,9 @@ class DurabilityAndComparisonTests(unittest.TestCase):
                 until = time.monotonic() + 20
                 completed_path = None
                 while time.monotonic() < until:
-                    for path in Path(directory).glob('*.json'):
+                    for path in Path(directory).glob('*.json.gz'):
                         try:
-                            receipt = json.loads(path.read_text())
+                            receipt = common.read_receipt(path)
                         except ValueError:
                             continue
                         if receipt['receipt_kind'] == 'level':
@@ -333,7 +334,7 @@ class DurabilityAndComparisonTests(unittest.TestCase):
                 stdout, stderr = proc.communicate(timeout=15)
                 self.assertEqual(proc.returncode, 130, (stdout + stderr).decode())
                 self.assertEqual(completed_path.read_bytes(), original)
-                receipts = [json.loads(p.read_text()) for p in Path(directory).glob('*.json')]
+                receipts = [common.read_receipt(p) for p in Path(directory).glob('*.json.gz')]
                 partials = [r for r in receipts if r['receipt_kind'] == 'partial']
                 self.assertTrue(partials)
                 self.assertTrue(all(not r['passed'] and r['aborted'] == 'KeyboardInterrupt' for r in partials))
@@ -358,7 +359,7 @@ class DurabilityAndComparisonTests(unittest.TestCase):
                 for arm in ('tbt', 'fixed'):
                     self.assertEqual(main(['--dry-run', '--levels', '1', '--seconds', '.4', '--warmup-waves', '0', '--min-samples', '2',
                                            '--no-decode', '--arm', arm, '--fake-prefill-policy', arm, '--label', 'review']), 0)
-            receipts = [json.loads(p.read_text()) for p in Path(directory).glob('*.json')]
+            receipts = [common.read_receipt(p) for p in Path(directory).glob('*.json.gz')]
             a, b = [r for r in receipts if r['receipt_kind'] == 'sweep']
             self.assertTrue(all(r['host_load']['rule'] == common.HOST_LOAD_RULE for r in (a, b)))
             compared = compare(a, b)
@@ -425,7 +426,7 @@ class DurabilityAndComparisonTests(unittest.TestCase):
                 code = main(['--dry-run', '--levels', '1', '--seconds', '.3', '--warmup-waves', '0',
                              '--no-decode', '--arm', 'tbt', '--fake-prefill-policy', 'fixed'])
             self.assertEqual(code, 1)
-            receipt = next(json.loads(p.read_text()) for p in Path(directory).glob('*.json') if json.loads(p.read_text())['receipt_kind'] == 'sweep')
+            receipt = next(r for r in map(common.read_receipt, Path(directory).glob('*.json.gz')) if r['receipt_kind'] == 'sweep')
             self.assertFalse(receipt['levels'][0]['arm_verification']['passed'])
             self.assertEqual(receipt['levels'][0]['prefill_budget']['mode'], 'fixed')
 

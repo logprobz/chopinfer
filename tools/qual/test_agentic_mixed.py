@@ -249,7 +249,8 @@ class FakeIntegrationTests(unittest.TestCase):
     def test_arm_identity_does_not_change_comparison_digest(self):
         results = []
         with tempfile.TemporaryDirectory() as name:
-            def receipt(check, identity, result, mechanics_only, load_windows=None):
+            def receipt(check, identity, result, mechanics_only, load_windows=None, compressed=False):
+                self.assertTrue(compressed)
                 self.assertEqual(check, 'agentic-mixed')
                 self.assertTrue(mechanics_only)
                 self.assertEqual(identity['model'], 'fake-agentic')
@@ -355,7 +356,8 @@ class FakeIntegrationTests(unittest.TestCase):
             return offset()
         results = []
         with tempfile.TemporaryDirectory() as name:
-            def receipt(check, identity, result, mechanics_only, load_windows=None):
+            def receipt(check, identity, result, mechanics_only, load_windows=None, compressed=False):
+                self.assertTrue(compressed)
                 results.append((result, common.host_load_windows(load_windows or [])))
                 return Path(name) / f'{len(results)}.json'
             with patch('agentic_mixed.common.startup'), patch('agentic_mixed.common.receipt', side_effect=receipt), \
@@ -438,7 +440,8 @@ class ReplicaTests(unittest.TestCase):
         """Fake sweeps of each (arm label, fake server mode) in ARMS, by label."""
         receipts = {}
         with tempfile.TemporaryDirectory() as name:
-            def receipt(check, identity, result, mechanics_only, load_windows=None):
+            def receipt(check, identity, result, mechanics_only, load_windows=None, compressed=False):
+                self.assertTrue(compressed)
                 if result['receipt_kind'] == 'sweep':
                     receipts[result['arm']] = json.loads(json.dumps({**result, 'server': identity}))
                 return Path(name) / f"{result['arm']}-{result['receipt_kind']}-{len(result['level_receipts'])}.json"
@@ -732,7 +735,8 @@ class PressureTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as name:
             _, commit, out, manifest = self.staged(Path(name))
             receipts = []
-            def receipt(check, identity, result, mechanics_only, load_windows=None):
+            def receipt(check, identity, result, mechanics_only, load_windows=None, compressed=False):
+                self.assertTrue(compressed)
                 receipts.append(json.dumps({k: v for k, v in result.items() if k != 'level_receipts'}))
                 return Path(name) / f'{len(receipts)}.json'
             with patch('agentic_mixed.common.startup'), patch('agentic_mixed.common.receipt', side_effect=receipt), \

@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 
 from agentic_metrics import TAIL_SAMPLES, burst_intervals, distribution, stall_stats, tail
+from common import read_receipt
 
 
 def union(intervals):
@@ -145,13 +146,13 @@ def analyze(level, steps=(), power=()):
                 energy=energy(power, start, end, output))
 
 
-def main():
+def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('receipt', type=Path)
     p.add_argument('--steps', type=Path)
     p.add_argument('--power', type=Path, help='JSON samples: at (monotonic seconds), watts/limits/sm_clocks by rank')
-    args = p.parse_args()
-    receipt = json.loads(args.receipt.read_text())
+    args = p.parse_args(argv)
+    receipt = read_receipt(args.receipt)
     steps = []
     if args.steps:
         for line in args.steps.read_text().splitlines():

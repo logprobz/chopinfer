@@ -176,30 +176,46 @@ class TraceTests(unittest.TestCase):
         self.assertIsNotNone(level['insufficient'])
 
     def test_trace_receipts_compare_and_bind_declaration(self):
-        from agentic_compare import compare
+        """Each run writes one compressed receipt and its summary; the
+        comparator and the offline analysis read the files themselves."""
+        import common
+        from agentic_compare import compare, main as compare_main
         from agentic_mixed import main
+        from agentic_trace_analysis import main as analysis_main
         workload = trace.generate(1, 1, 'receipts', [32], 0)
         workload['sessions'][0]['turns'][0].update(think_seconds=0, append_tokens=4, output_tokens=2)
-        results = []
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / 'trace.json'
             path.write_text(json.dumps(workload))
-            def receipt(check, identity, result, dry, **_):
-                results.append(dict(result, schema='chopinfer-qualification/v1', check=check,
-                                    server=identity, mechanics_only=dry))
-                return Path(directory) / f'{len(results)}.json'
-            with patch('common.startup'), patch('common.receipt', side_effect=receipt), redirect_stdout(io.StringIO()):
+            receipts = Path(directory) / 'receipts'
+            with patch('common.startup'), patch.object(common, 'RECEIPTS', receipts), redirect_stdout(io.StringIO()):
                 for arm in ('fixed-base', 'fixed-next'):
                     self.assertEqual(main(['--workload', 'trace', '--trace', str(path), '--dry-run',
                                            '--arm', arm, '--label', 'pair', '--levels', '1', '--replicas', '1',
                                            '--min-samples', '1', '--seconds', '2']), 0)
+            written = sorted(receipts.glob('*.json.gz'))
+            self.assertEqual(len(written), 2)
+            self.assertEqual(sorted(p.name for p in receipts.iterdir()),
+                             sorted([p.name for p in written] + [common.receipt_summary(p).name for p in written]))
+            results = [common.read_receipt(p) for p in written]
+            for raw, value in zip((p.read_bytes() for p in written), results):
+                self.assertEqual(raw[4:8], bytes(4))
+                self.assertEqual(gzip.decompress(raw).decode(),
+                                 json.dumps(value, sort_keys=True, separators=(',', ':')) + '\n')
+                self.assertEqual((value['schema'], value['workload_schema'], value['mechanics_only']),
+                                 ('chopinfer-qualification/v1', 'chopinfer.agentic-mixed.v3', True))
+            with redirect_stdout(io.StringIO()) as compared:
+                self.assertEqual(compare_main([str(p) for p in written]), 0)
+            self.assertEqual(json.loads(compared.getvalue()), compare(*results))
+            with redirect_stdout(io.StringIO()) as analyzed:
+                analysis_main([str(written[0])])
+            self.assertEqual(len(json.loads(analyzed.getvalue())), 1)
         report = compare(*results)
         self.assertEqual(report['levels'][0]['replicas'][0]['trajectories']['equal_requests'], 1)
         changed = copy.deepcopy(results[1])
         changed['workload_digest'] = 'different'
         with self.assertRaisesRegex(ValueError, 'workload_digest'):
             compare(results[0], changed)
-
 
 
 class ReceiptFormTests(unittest.TestCase):

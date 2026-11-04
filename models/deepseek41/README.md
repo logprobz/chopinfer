@@ -1024,7 +1024,9 @@ power-of-two concurrencies below, its AR control forms C decode rows. Each
 `verify_exact` check requires exactly those capacities in both its records
 and its report. The default full cohort runs the profile's balanced pair at
 C1. Each `verify-bN` configuration fixes its draft budget with
-`--speculation fixed`, so the scheduler cannot avoid its capacity.
+`--speculation fixed`, so adaptive depth selection cannot change it; a
+partly filled batch or a short request tail can still form fewer rows, and
+the observed-capacity coverage rule is what requires each shape to occur.
 `tests/test_verify_capacities.py` holds the declaration to this rule.
 
 | Configuration | Check | Draft budget | Concurrency | Verify capacity | AR capacity |

@@ -963,6 +963,45 @@ fn an_abandoned_restore_releases_a_forced_promoted_anchor_no_one_else_holds() {
 }
 
 #[test]
+fn a_restore_removes_only_the_forced_anchor_generation_it_resumed() {
+    let mut h = Harness::new(64, tier(true, 64));
+    let key = forced_host_only(&mut h, 1);
+    // A waits for promotion P1, and B restores it as a late follower.
+    let (a, b, c) = (RequestId::new(2), RequestId::new(3), RequestId::new(4));
+    h.submit(2, &extended(1, 17, 7, 0));
+    assert_eq!(h.admit().ram_waits().len(), 1);
+    publish(&mut h);
+    h.submit(3, &extended(1, 17, 7, 1));
+    assert_eq!(h.admit().admitted(), [a, b]);
+    // A's restore completes first and removes P1.
+    h.s.complete_prefix_restore(a).unwrap();
+    h.check();
+    assert_eq!(h.anchors(), 0);
+    // C promotes the same entry again: promotion P2 of the same key.
+    h.submit(4, &extended(1, 17, 7, 2));
+    assert_eq!(h.admit().ram_waits().len(), 1);
+    publish(&mut h);
+    assert_eq!(h.anchors(), 1);
+    // B's restore of P1 counts its RAM hit and leaves P2 to C.
+    h.s.complete_prefix_restore(b).unwrap();
+    h.check();
+    assert_eq!(h.anchors(), 1, "P2 stays for C");
+    assert_eq!(h.admit().admitted(), [c]);
+    h.restore_all();
+    assert_eq!(h.anchors(), 0, "C's restore removes P2");
+    let mut hits = h.s.take_prefix_ram_hits();
+    hits.sort_by_key(|hit| hit.request_id);
+    assert_eq!(
+        hits.iter()
+            .map(|hit| (hit.request_id, hit.key, hit.tokens))
+            .collect::<Vec<_>>(),
+        [(a, key, 17), (b, key, 17), (c, key, 17)]
+    );
+    h.finish(false);
+    assert_forced_repeat_hits_ram(&mut h, 5);
+}
+
+#[test]
 fn forced_mode_turns_each_repeat_into_a_ram_hit() {
     let mut h = Harness::new(24, tier(true, 64));
     let tokens = prompt(1, 17);

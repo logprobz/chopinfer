@@ -96,17 +96,25 @@ pub struct PrefixRamHitV1 {
     pub tokens: usize,
 }
 
+/// One lifetime of an anchor: its key and serial, which no later capture
+/// or promotion of the key shares.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub(super) struct AnchorLife {
+    key: PrefixCacheKeyV1,
+    serial: u64,
+}
+
 /// A request's progress through the RAM tier.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(super) struct RequestRam {
     /// The promotion the queued request waits for.
     pub(super) promotion: Option<PendingAnchorId>,
-    /// The key of the promotion it waited for, published and not yet used
-    /// by its next admission.
-    pub(super) promoted: Option<PrefixCacheKeyV1>,
+    /// The anchor the promotion it waited for published, not yet used by
+    /// its next admission.
+    pub(super) promoted: Option<AnchorLife>,
     /// The promoted anchor its pending restore resumes, with its tokens:
     /// the restore counts a RAM hit.
-    pub(super) restore: Option<(PrefixCacheKeyV1, usize)>,
+    pub(super) restore: Option<(AnchorLife, usize)>,
     /// Keys whose promotion failed for it; it never chooses them again.
     pub(super) refused: Vec<PrefixCacheKeyV1>,
     /// Why it last gave up a preferred host entry, reported when it admits.
@@ -286,11 +294,19 @@ impl Scheduler {
             };
             let promotion = self.ram.promotions.remove(&id).expect("promotion listed");
             self.reserved_blocks -= promotion.pages;
-            if forced
-                && outcome == PrefixPublishV1::Published
-                && let Some(serial) = self.kv.anchor_serial(id.key())
-            {
-                self.ram.forced.insert(id.key(), serial);
+            let published = (outcome == PrefixPublishV1::Published)
+                .then(|| {
+                    self.kv
+                        .anchor_serial(id.key())
+                        .map(|serial| AnchorLife {
+                            key: id.key(),
+                            serial,
+                        })
+                        .ok_or(ScheduleError::InvariantViolation)
+                })
+                .transpose()?;
+            if let Some(life) = published.filter(|_| forced) {
+                self.ram.forced.insert(life.key, life.serial);
             }
             let fallback = PrefixRamFallbackV1::of(outcome);
             for record in &mut self.requests {
@@ -299,7 +315,7 @@ impl Scheduler {
                 }
                 record.ram.promotion = None;
                 match fallback {
-                    None => record.ram.promoted = Some(id.key()),
+                    None => record.ram.promoted = published,
                     Some(reason) => {
                         record.ram.refused.push(id.key());
                         record.ram.fallback = Some(reason);
@@ -610,42 +626,48 @@ impl Scheduler {
 
     /// Marks a prompt-lookup restore from `hit`, its key and tokens, as a
     /// RAM hit: its request waited for the promotion that published the
-    /// anchor, or in forced mode the anchor is a promoted one the tier
-    /// still owns, which a late follower restores too.
+    /// anchor lifetime it resumes, or in forced mode that lifetime is a
+    /// promoted one the tier still owns, which a late follower restores too.
     pub(super) fn mark_prefix_ram_restore(
         &mut self,
         index: usize,
         hit: Option<(PrefixCacheKeyV1, usize)>,
     ) {
         let promoted = self.requests[index].ram.promoted.take();
-        let marked = hit.filter(|(key, _)| promoted == Some(*key) || self.owns_forced_anchor(*key));
+        let marked = hit.and_then(|(key, tokens)| {
+            let life = AnchorLife {
+                key,
+                serial: self.kv.anchor_serial(key)?,
+            };
+            (promoted == Some(life) || self.owns_forced_anchor(life)).then_some((life, tokens))
+        });
         self.requests[index].ram.restore = marked;
     }
 
-    /// Whether `key`'s anchor is a forced promoted anchor the tier owns.
-    fn owns_forced_anchor(&self, key: PrefixCacheKeyV1) -> bool {
-        self.ram
-            .forced
-            .get(&key)
-            .is_some_and(|serial| self.kv.anchor_serial(key) == Some(*serial))
+    /// Whether `life` is the current anchor of its key and a forced
+    /// promoted anchor the tier owns.
+    fn owns_forced_anchor(&self, life: AnchorLife) -> bool {
+        self.ram.forced.get(&life.key) == Some(&life.serial)
+            && self.kv.anchor_serial(life.key) == Some(life.serial)
     }
 
     /// Ends a restore: one marked by [`Self::mark_prefix_ram_restore`]
     /// counts a RAM hit, and the first from a forced promoted anchor
-    /// removes it, so the key's next hit is a RAM hit again. Restores that
-    /// resumed it before then keep their pages.
+    /// removes that anchor lifetime, so the key's next hit is a RAM hit
+    /// again. Restores that resumed it before then keep their pages, and
+    /// their completions leave a later promotion of the key alone.
     pub(super) fn finish_prefix_ram_restore(&mut self, index: usize) -> Result<(), ScheduleError> {
-        let Some((key, tokens)) = self.requests[index].ram.restore.take() else {
+        let Some((life, tokens)) = self.requests[index].ram.restore.take() else {
             return Ok(());
         };
         self.ram.hits.push(PrefixRamHitV1 {
             request_id: self.requests[index].spec.id,
-            key,
+            key: life.key,
             tokens,
         });
-        if self.owns_forced_anchor(key) {
-            self.ram.forced.remove(&key);
-            self.kv.remove_anchor(key).map_err(ScheduleError::Kv)?;
+        if self.owns_forced_anchor(life) {
+            self.ram.forced.remove(&life.key);
+            self.kv.remove_anchor(life.key).map_err(ScheduleError::Kv)?;
         }
         Ok(())
     }
@@ -666,21 +688,21 @@ impl Scheduler {
                     .ram
                     .promoted
                     .into_iter()
-                    .chain(record.ram.restore.map(|(key, _)| key))
+                    .chain(record.ram.restore.map(|(life, _)| life))
             })
             .collect();
         let released: Vec<_> = self
             .ram
             .forced
-            .keys()
-            .copied()
-            .filter(|key| !held.contains(key) || !self.owns_forced_anchor(*key))
+            .iter()
+            .map(|(&key, &serial)| AnchorLife { key, serial })
+            .filter(|life| !held.contains(life) || !self.owns_forced_anchor(*life))
             .collect();
-        for key in released {
-            if self.owns_forced_anchor(key) {
-                self.kv.remove_anchor(key).map_err(ScheduleError::Kv)?;
+        for life in released {
+            if self.owns_forced_anchor(life) {
+                self.kv.remove_anchor(life.key).map_err(ScheduleError::Kv)?;
             }
-            self.ram.forced.remove(&key);
+            self.ram.forced.remove(&life.key);
         }
         Ok(())
     }
@@ -845,7 +867,11 @@ mod tests {
             }),
             ("ram hit without a restore", |s, _| {
                 let index = s.record_index(RequestId::new(3)).unwrap();
-                s.requests[index].ram.restore = Some((PrefixCacheKeyV1::new([1; 32]), 17));
+                let life = AnchorLife {
+                    key: PrefixCacheKeyV1::new([1; 32]),
+                    serial: 1,
+                };
+                s.requests[index].ram.restore = Some((life, 17));
             }),
             ("unknown demotion", |s, tier| {
                 // A finished copy's transfer is no longer the tier's.

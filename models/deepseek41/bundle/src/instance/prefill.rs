@@ -29,6 +29,13 @@ pub(crate) fn describe_anchors(handle: BundleHandleV1) -> BundlePrefillAnchorsV2
     let status = Instance::instances().with(|table| {
         with_instance(table, handle, |instance| {
             anchors = anchor_allowance(&instance.config);
+            // Text and KV-state taps run every prefill stage by stage,
+            // which keeps no anchor (`skip_prefill`), so a tapped instance
+            // offers none.
+            #[cfg(feature = "diagnostic-taps")]
+            if instance.taps.text() {
+                anchors = 0;
+            }
             BundleStatusV1::Success
         })
     });

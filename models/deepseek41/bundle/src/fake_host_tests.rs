@@ -73,6 +73,8 @@ mod selected_cache;
 mod shared_overlap;
 mod short_prefill;
 mod startup_memory;
+#[cfg(feature = "diagnostic-taps")]
+mod tapped_anchors;
 mod verify_hc;
 mod wide_hc;
 use crate::shape::Shape;

@@ -161,6 +161,15 @@ impl<E: ModelExecutor> ModelExecutor for PromptLookupExecutor<E> {
     fn drain_kv_transfers_v1(&mut self) -> Result<(), ExecutorError> {
         self.inner.drain_kv_transfers_v1()
     }
+    fn kv_transfer_cancel_v1_supported(&self) -> bool {
+        self.inner.kv_transfer_cancel_v1_supported()
+    }
+    fn cancel_kv_transfer_v1(
+        &mut self,
+        id: runtime_kv::KvTransferId,
+    ) -> Result<bool, ExecutorError> {
+        self.inner.cancel_kv_transfer_v1(id)
+    }
 
     fn admit_request_v1(&mut self, id: RequestId) -> Result<(), ExecutorError> {
         self.inner.admit_request_v1(id)

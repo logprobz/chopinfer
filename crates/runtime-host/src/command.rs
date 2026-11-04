@@ -4296,6 +4296,15 @@ impl<E: BundleExecutionV1> ModelExecutor for ServedExecutorV1<E> {
     fn drain_kv_transfers_v1(&mut self) -> Result<(), ExecutorError> {
         self.executor.drain_kv_transfers_v1()
     }
+    fn kv_transfer_cancel_v1_supported(&self) -> bool {
+        self.executor.kv_transfer_cancel_v1_supported()
+    }
+    fn cancel_kv_transfer_v1(
+        &mut self,
+        id: runtime_kv::KvTransferId,
+    ) -> Result<bool, ExecutorError> {
+        self.executor.cancel_kv_transfer_v1(id)
+    }
     fn admit_request_v1(&mut self, id: RequestId) -> Result<(), ExecutorError> {
         self.executor.admit_request_v1(id)
     }
@@ -9301,6 +9310,7 @@ mod tests {
             reject: Cell<bool>,
             fail_poll: Cell<bool>,
             fail_drain: Cell<bool>,
+            fail_cancel: Cell<bool>,
             calls: RefCell<Vec<&'static str>>,
         }
         impl crate::offload::KvOffloadExecutorV1 for Copies {
@@ -9333,6 +9343,16 @@ mod tests {
             fn drain_timeout(&self) -> std::time::Duration {
                 std::time::Duration::from_secs(77)
             }
+            fn cancel_supported(&self) -> bool {
+                true
+            }
+            fn cancel(&self, id: KvTransferId) -> Result<bool, Status> {
+                self.calls.borrow_mut().push("cancel");
+                if self.fail_cancel.get() {
+                    return Err(Status::InvalidArgument);
+                }
+                Ok(self.submissions.borrow().contains_key(&id))
+            }
             fn drain(&self) -> Result<(), Status> {
                 self.calls.borrow_mut().push("drain");
                 if self.fail_drain.get() {
@@ -9342,6 +9362,15 @@ mod tests {
                 }
             }
         }
+        let bare = crate::BundleModelExecutorV1::new(
+            RetirementExecution {
+                trace: Rc::new(RefCell::new(Vec::new())),
+                fail_retirement: false,
+            },
+            3,
+            1,
+        );
+        assert!(!bare.kv_transfer_cancel_v1_supported());
         let copies = Rc::new(Copies::default());
         let info = KvOffloadInfo {
             host_page_capacity: 16,
@@ -9387,6 +9416,12 @@ mod tests {
         assert!(!error.is_fatal());
         copies.reject.set(false);
         executor.offload_pages_v1(plan).unwrap();
+        assert!(executor.kv_transfer_cancel_v1_supported());
+        assert!(executor.cancel_kv_transfer_v1(id).unwrap());
+        copies.fail_cancel.set(true);
+        assert!(!executor.cancel_kv_transfer_v1(id).unwrap_err().is_fatal());
+        copies.fail_cancel.set(false);
+        assert_eq!(copies.calls.borrow().last(), Some(&"cancel"));
         copies.fail_poll.set(true);
         assert!(executor.poll_kv_transfer_v1(id).is_err());
         copies.fail_poll.set(false);

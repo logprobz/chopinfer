@@ -1701,6 +1701,7 @@ print('CLEANUP_COMPLETE', flush=True)
         # --served-model-name takes every word up to the next option; valueless flags take none.
         self.assertEqual(runner.server_drain(['--served-model-name', 'a', 'b', drain, '7'])['milliseconds'], 7)
         self.assertEqual(runner.server_drain(['--allow-credentials', drain, '7'])['milliseconds'], 7)
+        self.assertEqual(runner.server_drain(['--debug-prefix-ram', drain, '7'])['milliseconds'], 7)
         self.assertEqual(runner.server_drain(['--model', 'm', '--served-model-name', 'a', '7'])['source'],
                          'default')
         for arguments in ([drain, '1000', drain, '1000'], [drain], ['--api-key', 'k', drain],

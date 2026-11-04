@@ -301,6 +301,40 @@ class TapBindingTests(unittest.TestCase):
             self.capture("qualified", serving=SERVING | OPTIONS,
                          experimental_pin=self.sealed(OPTIONS["model_options"]))
 
+    def test_an_offline_reader_keeps_a_captures_experimental_status(self):
+        self.assertIsNone(tap_binding.experimental_marker(self.capture("defaults", serving=SERVING | OPTIONS)))
+        options = dict(OPTIONS["model_options"], fast_route=False)
+        serving = SERVING | {"model_options": options, "model_options_qualified": False}
+        manifest = self.capture(serving=serving, experimental_pin=self.sealed(options))
+        self.assertEqual(tap_binding.experimental_marker(manifest), manifest[experimental_determinism.MARKER])
+        marker = experimental_determinism.MARKER
+
+        def changed(change):
+            value = copy.deepcopy(manifest)
+            change(value)
+            return value
+        for name, value, error in (
+                # Without its pin and mark, the capture still reports unqualified options.
+                ("unmarked", changed(lambda m: [m.pop(marker), m.pop("qualified")]),
+                 "no experimental pin, and no qualified default options"),
+                ("marked", changed(lambda m: m.pop(marker)), "no experimental pin, and no qualified default options"),
+                ("legacy", changed(lambda m: [m.pop(marker), m.pop("qualified"),
+                                              [m["server"].pop(key) for key in tap_binding.OPTIONS]]),
+                 "no experimental pin, and no qualified default options"),
+                ("no canonical digest", changed(lambda m: m[marker].pop("pin_sha256")),
+                 "does not hold its canonical digest"),
+                ("no file digest", changed(lambda m: m[marker].pop("file_sha256")), "records no sealed file digest"),
+                ("short file digest", changed(lambda m: m[marker].update(file_sha256="0" * 63)),
+                 "records no sealed file digest"),
+                ("edited pin", changed(lambda m: m[marker]["pin"]["model_options"].update(fast_route=True)),
+                 "does not hold its canonical digest"),
+                ("invalid pin", changed(lambda m: m[marker]["pin"].pop("startup_nonce")),
+                 "experimental pin needs the complete options, checkpoint and startup nonce"),
+                ("qualified", changed(lambda m: m.update(qualified=True)),
+                 "does not name its recorded options, checkpoint and process")):
+            with self.subTest(name), self.assertRaisesRegex(tap_binding.Unbound, error):
+                tap_binding.experimental_marker(value)
+
     def test_the_command_takes_a_sealed_pin_only_with_experimental(self):
         pin = self.sealed(OPTIONS["model_options"])
         body = self.root / "body.json"

@@ -324,8 +324,7 @@ def write_capture(root, layout, corrupt=None, omit=(), first_request=1, experime
         options = dict(OPTIONS["model_options"], fast_route=False)
         server.update(model_options=options, model_options_qualified=False)
         pin = {key: server[key] for key in ("model_options", "checkpoint_identity", "startup_nonce")}
-        manifest |= {experimental_determinism.MARKER: {"pin": pin, "pin_sha256": "0" * 64, "file_sha256": "0" * 64,
-                                                       "qualified": False}, "qualified": False}
+        manifest |= {experimental_determinism.MARKER: sealed(pin), "qualified": False}
     (root / tap_binding.MANIFEST).write_text(json.dumps(manifest))
     return reseal(root)
 
@@ -336,6 +335,12 @@ def reseal(root):
     edit_manifest(root, lambda manifest: manifest.update(files={
         step.name: tap_binding.step_files(step) for step in sorted((root / tap_binding.STEPS).glob("step*"))}))
     return root
+
+
+def sealed(pin):
+    """The marker experimental_determinism.Pin.marker records for `pin`."""
+    return {"pin": pin, "pin_sha256": hashlib.sha256(experimental_determinism.canonical(pin)).hexdigest(),
+            "file_sha256": hashlib.sha256(json.dumps(pin, indent=2).encode()).hexdigest(), "qualified": False}
 
 
 def edit_manifest(root, change):
@@ -543,10 +548,17 @@ class TapsTests(unittest.TestCase):
         # An experimental and a qualified capture differ in their options.
         self.assertIn("the captures differ in model_options_qualified", self.compare(native=native)["errors"])
         # A pin must name the capture's recorded options.
-        edit_manifest(comparison, lambda m: m[experimental_determinism.MARKER]["pin"]["model_options"].update(
-            fast_route=True))
+        renamed = self.capture("bf16", "bf16-renamed", experimental=True)
+        edit_manifest(renamed, lambda m: m.update({experimental_determinism.MARKER: sealed(dict(
+            m[experimental_determinism.MARKER]["pin"], model_options=OPTIONS["model_options"]))}))
         self.assertIn("the comparison capture: the capture's experimental pin does not name its recorded options, "
-                      "checkpoint and process", self.compare(native, comparison, experimental=True)["errors"])
+                      "checkpoint and process", self.compare(native, renamed, experimental=True)["errors"])
+        # Without its pin and mark, an experimental capture still reports
+        # unqualified options.
+        unmarked = self.capture("bf16", "bf16-unmarked", experimental=True)
+        edit_manifest(unmarked, lambda m: [m.pop(experimental_determinism.MARKER), m.pop("qualified")])
+        self.assertIn("the comparison capture: the capture records no experimental pin, and no qualified default "
+                      "options", self.compare(native, unmarked, experimental=True)["errors"])
 
 
 class CommandTests(unittest.TestCase):

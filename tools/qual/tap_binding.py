@@ -55,6 +55,7 @@ Usage:
 """
 
 import argparse
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -319,18 +320,32 @@ def recorded(directory):
 
 def experimental_marker(manifest):
     """The experimental pin a capture records, or None for a capture of the
-    qualified defaults. Refuses a capture marked unqualified without a pin,
-    or whose pin does not name its recorded options, checkpoint and process."""
+    qualified defaults: its server reports model_options_qualified true and
+    it is not marked unqualified. A pin must pass experimental_determinism's
+    schema check, record its canonical digest (`pin_sha256`, as
+    Pin.marker writes it) and its sealed file's digest (`file_sha256`), and
+    name the capture's recorded options, checkpoint and process, with the
+    capture and its server marked unqualified. Anything else is refused."""
     marker = manifest.get(experimental_determinism.MARKER)
+    server = manifest.get("server") or {}
     if marker is None:
-        if manifest.get("qualified", True) is not True:
-            raise Unbound("the capture is marked unqualified without an experimental pin")
+        if server.get("model_options_qualified") is not True or manifest.get("qualified", True) is not True:
+            raise Unbound("the capture records no experimental pin, and no qualified default options")
         return None
-    server, pin = manifest.get("server") or {}, marker.get("pin") if isinstance(marker, dict) else None
-    if (manifest.get("qualified") is not False or marker.get("qualified") is not False or not isinstance(pin, dict)
+    if not isinstance(marker, dict):
+        raise Unbound("the capture's experimental pin is not a marker")
+    try:
+        pin = experimental_determinism.document(experimental_determinism.canonical(marker.get("pin")))
+    except (TypeError, ValueError) as error:
+        raise Unbound(f"the capture's experimental pin is invalid: {error}") from error
+    if marker.get("pin_sha256") != hashlib.sha256(experimental_determinism.canonical(pin)).hexdigest():
+        raise Unbound("the capture's experimental pin does not hold its canonical digest")
+    if not isinstance(marker.get("file_sha256"), str) or not re.fullmatch("[0-9a-f]{64}", marker["file_sha256"]):
+        raise Unbound("the capture's experimental pin records no sealed file digest")
+    if (manifest.get("qualified") is not False or marker.get("qualified") is not False
             or server.get("model_options_qualified") is not False
-            or any(server.get(key) != pin.get(key) for key in ("model_options", "checkpoint_identity",
-                                                               "startup_nonce"))):
+            or any(experimental_determinism.canonical(server.get(key)) != experimental_determinism.canonical(pin[key])
+                   for key in pin)):
         raise Unbound("the capture's experimental pin does not name its recorded options, checkpoint and process")
     return marker
 

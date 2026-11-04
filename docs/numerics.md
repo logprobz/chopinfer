@@ -1119,44 +1119,80 @@ ranks complete; swap-in restores newly reserved pages before admission.
 Resume tries GPU state, host state, then recomputation. A refused capture or
 restore may fall back only after confirmed device completion. Host copies
 cannot be deduplicated by device allocation identity: an anchor's shared
-tail can change without that identity changing. Reusable host prefix caching
-(`--kv-offload-prefix on`) remains refused.
+tail can change without that identity changing.
 
-A reusable RAM prefix tier is deferred, not rejected: no model has one
-today. MiMo, Qwen and GLM already qualify request offload
-(`chop.kv-offload.v1`) and do not read Engram images through the page cache,
-so they are the natural first consumers when the work resumes. A 2026-10-30
-study of DeepSeek V4.1 Flash TP4 DSpark found little benefit for that model
-today. Its native KV pool holds 318,100 pages of 64 tokens per rank, about
-20M tokens. A RAM tier is process memory, so a restart, worker restart or
-deploy clears it with the GPU cache. It cannot shorten the cold prefill
-after a restart: about 31 s for a 250K-token prompt, about 168 s for five
-250K and five 30K sessions. GPU capacity is not the limit either: those ten
-frontiers use 7.3% of the pool, or 13.8% right after cold prefill while its
-grid anchors remain. The observed losses came from eviction order: under
+A bounded RAM prefix tier behind the GPU prefix cache
+(`--kv-offload-prefix on`) was decided on 2026-11-02 as a feature to build,
+not an experiment: measurements size its defaults and prove it correct but
+do not decide whether it exists. The tier lives in the pinned offload arena
+that request swaps use, with no staging buffer, and copies through the same
+queue: swaps and promotions go first, demotions last. Demotion is
+copy-ahead. At step boundaries the engine
+copies a public frontier anchor near the head of the GPU eviction order into
+the arena, so its later eviction loses nothing and no allocation waits on
+PCIe for it. At most one demotion is outstanding, from its plan to its
+confirmed completion, so its whole-anchor device lease and host pages stay
+bounded by one anchor; it keeps at most 4 copy chunks of up to 8 MiB in
+flight per rank and yields at the next chunk to a waiting swap or promotion.
+A demotion starts only when free and evictable pages cover the anchor and
+the pages one step may allocate, measured over the last 16 steps. An
+allocation that finds only the anchor under demotion left cancels the copy,
+waits for its issued chunks to drain, and evicts the anchor as a counted
+miss. RAM entries keep the time of their anchor's last GPU use and are
+evicted oldest first; a swap may evict any of them, never the reverse. Only
+frontiers are kept: an entry whose prefix gains a resident descendant in
+either tier is dropped.
+
+A request whose ready RAM match exceeds its GPU match by at least the
+offload minimum and a sixteenth of the RAM match is promoted, not restored
+in place: the host copy reloads into a pending GPU anchor that admission
+counts against its pages, is published once every rank confirms the copy,
+and the waiting request, and any other waiting for the same prefix, resumes
+it through the GPU-hit path. A RAM hit is therefore a GPU hit on
+byte-identical pages. Every demotion copies every page of its anchor; no
+copy is reused by allocation identity. Resume order stays GPU state, host
+state, recomputation: a promotion that fails or is invalidated, for example
+by a recapture of its prefix, falls back to the GPU match or recomputes. The
+tier is process memory, so a restart, worker restart or deploy clears it
+with the GPU cache. `--debug-prefix-ram` is an exactness mode in which every
+public capture is demoted and leaves the GPU, so every hit is a RAM hit; the
+`prefix_exact.py` RAM-hit arm and the `kv_offload` prefix-pressure arm run
+the tier ([checks](../tools/qual/README.md#prefix-caching)).
+
+The tier can run for MiMo, Qwen and GLM, whose bundles declare
+`chop.kv-offload.v1`. As of 2026-11-04 its GPU exactness runs for them, and
+stateful replay acceptance against the tier off, have not run. The option
+stays default off, no profile enables it, and it is not a qualified serving
+path until that evidence exists
+([option](serving-profiles.md#kv-offload-and-the-ram-prefix-tier),
+[metrics](operations-observability.md#kv-offload-and-the-ram-prefix-tier)).
+
+DeepSeek V4.1 Flash does not declare `chop.kv-offload.v1`, so the tier stays
+off for it. A 2026-10-30 study of its TP4 DSpark profile bounds what a tier
+can add there. Its native KV pool holds 318,100 pages of 64 tokens per rank,
+about 20M tokens. A tier cannot shorten the cold prefill after a restart:
+about 31 s for a 250K-token prompt, about 168 s for five 250K and five 30K
+sessions. GPU capacity was not the limit in that load either: those ten
+frontiers used 7.3% of the pool, or 13.8% right after cold prefill while its
+grid anchors remained. The observed losses came from eviction order: under
 LRU, superseded snapshots filled the pool and idle sessions lost their
 newest anchor. In a simulation at this geometry, ancestry eviction raised
 the share of idle-return prompt tokens served from cache from 79.7% to
-98.4%. Adding a 64 GiB RAM tier raised it to 98.9%. Transfer is not the
+98.4%, and adding a 64 GiB RAM tier raised it to 98.9%. Transfer is not the
 obstacle: a 250K anchor is 229.7 MB per rank, milliseconds of PCIe against
-31 s of prefill. Pinned RAM is the obstacle. DeepSeek reads its two Engram
-images (203 GB) through the page cache, and a 65 GiB page-cache loss once
-cut their residency from about 15% to 5%. It raised major faults per
-measured window from about 14 to 358-1,172. Offload preflight checks
-MemAvailable, which counts that cache. DeepSeek also does not declare
-`chop.kv-offload.v1`.
-For DeepSeek it becomes worthwhile only if both of these hold, with ancestry
-eviction on:
+31 s of prefill. Pinned RAM is. DeepSeek reads its two Engram images
+(203 GB) through the page cache, and a 65 GiB page-cache loss once cut their
+residency from about 15% to 5% and raised major faults per measured window
+from about 14 to 358-1,172. Offload preflight checks MemAvailable, which
+counts that cache. A DeepSeek tier therefore needs offload qualification and
+a host budget that keeps Engram's working set resident, and pays off only if
+both of these hold, with ancestry eviction on:
 - maximal evictions of frontiers that are later requested again cost more
   than about 5% of computed prefill (watch
   `chop_prefix_cache_evictions_total{class="maximal"}` and
   `chop_prefix_cache_recomputed_seen_tokens_total`);
 - the load keeps more returning long sessions than the GPU holds: about 40
   at 250K tokens or 60 at 146K.
-
-Such a tier would need DeepSeek offload qualification, a host budget that
-reserves Engram's working set, frontier-only admission and content-versioned
-deduplication.
 
 The full `kv_offload` check compares offload-off and forced-swap servers in
 plain AR and prefix-pressure scenarios. C1 compares 36 prompts' token IDs,
@@ -1166,7 +1202,11 @@ fallback; pressure runs list and exclude capacity fallbacks. Concurrent runs
 must complete, transfer both ways, leave the host tier idle and avoid stalls.
 Pressure must exercise prefix eviction and, with speculation, verified items.
 Concurrent equality and off/off controls are informational. The reference
-host arena is 16 GiB; the check does not enable offload by default.
+host arena is 16 GiB; the check does not enable offload by default. Its
+`kv-offload-prefix-pressure` arm runs the pressure workload with the RAM
+prefix tier on and no forced swaps: every C1 request must equal the off arm
+bitwise, promotions and RAM hits must be above zero, and the host tier must
+end idle without stalls.
 
 ### Context parallelism
 

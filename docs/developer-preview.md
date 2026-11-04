@@ -65,9 +65,11 @@ checksums. Model-specific service examples are in [deploy/systemd](../deploy/sys
 ### Pinned host memory
 
 Qwen TP2 pins 51.2 GB of host memory for n-grams until exit. KV offload adds
-the configured host arena across ranks, and weight loading pins two 64 MiB
-upload buffers per rank. A model with checkpoint-mapped views also pins a
-64 MiB gather ring per gathering stream; the mapped bytes stay in the page
+the configured host arena across ranks (`--kv-offload-gib`); the RAM prefix
+tier (`--kv-offload-prefix on`) lives in that arena and pins nothing more.
+Weight loading pins two 64 MiB upload buffers per rank. A model with
+checkpoint-mapped views also pins a 64 MiB gather ring per gathering
+stream; the mapped bytes stay in the page
 cache and count toward host RAM, not memlock. Set Docker memlock or systemd
 `LimitMEMLOCK` for that total with headroom. Container memory limits must also cover the
 resident process. A failed pinned allocation stops startup; it does not

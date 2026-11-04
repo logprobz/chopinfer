@@ -347,6 +347,73 @@ has no drained boundary, so its allocator retention still needs separate
 soak evidence. Report anonymous memory, file-backed RSS and live heap bytes
 separately when judging stability.
 
+## KV offload and the RAM prefix tier
+
+`--kv-offload-gib N` (profile field `kv_offload_gib`) pins N GiB of host
+memory, split evenly across the ranks, as an arena for KV pages copied off
+the GPU; 0, the default, turns offload off. It needs optimistic admission,
+and only a bundle that declares `chop.kv-offload.v1` and the prefix cache
+copies through it; without the capability, startup logs that victims
+recompute and allocates no arena. Startup logs
+`host KV capacity: P pages per rank, B bytes across R ranks, T tokens per rank`.
+A preempted request swaps its state into the arena and resumes from it.
+`--kv-offload-min-tokens N` (default 64) is the fewest tokens a request
+swaps or the tier keeps, and `--kv-offload-gbps F` caps the copy rate per
+link.
+
+Memory preflight requires the arena plus a 16 GiB reserve to fit within
+MemAvailable, before the model loads and again immediately before pinning;
+startup refuses otherwise. The arena counts toward the memlock limit
+([pinned host memory](developer-preview.md#pinned-host-memory)).
+
+`--kv-offload-prefix on` (profile field `kv_offload_prefix`, default off)
+keeps prefix anchors the GPU evicts in a RAM tier and restores them from
+there ([design](numerics.md#kv-offload-and-prefix-state)). It needs a
+positive `--kv-offload-gib`, `--prefix-cache on` and optimistic admission;
+serve refuses it otherwise. The tier lives in the same arena as swaps, so it
+pins no more memory, has no staging buffer and needs no budget of its own:
+the preflight above covers it. Swaps keep priority: a swap may evict the
+tier's entries, and a demotion evicts only entries older than its anchor.
+Its bounds are:
+
+- copies in flight, of every kind, at most 1 GiB per rank;
+- one demotion outstanding at a time, with at most 4 copy chunks of up to
+  8 MiB each (32 MiB) in flight per rank;
+- the promotions one step starts take together at most a sixteenth of the
+  pool's pages per rank; a larger single promotion starts alone, with no
+  demotion outstanding.
+
+For GLM `tp4-mtp`, whose 64-token page is 454,656 bytes per rank, a 64 GiB
+arena holds about 37,800 pages (2.4M tokens) per rank. Its latent KV is
+replicated on every rank, so a 64K-token anchor takes about 492 MB per rank,
+1.97 GB across four ranks. The tier is process memory: a restart, worker
+restart or deploy clears it.
+
+With the tier asked for, startup logs one line: its bounds,
+
+```
+prefix RAM tier: on; B pinned bytes across R ranks in the KV offload arena it shares with swaps, P pages and T tokens per rank, no staging buffer; copies in flight at most 1073741824 bytes per rank, demotions at most 4 chunks (D bytes) per rank; promotions at most N pages per step
+```
+
+or why it is off: `prefix RAM tier: off, because` prefix caching is off, the
+bundle does not declare `chop.kv-offload.v1`, or the executor cannot cancel
+a demotion. A server whose tier is off serves as without the option.
+
+`--debug-prefix-ram` is for exactness runs only, and needs the tier: every
+public capture is demoted and leaves the GPU, so every hit is a RAM hit.
+The startup line names it.
+
+No profile sets `kv_offload_gib` or `kv_offload_prefix`. The tier has no GPU
+exactness or stateful replay acceptance evidence yet
+([status](numerics.md#kv-offload-and-prefix-state)), and each profile's
+default is set with the operator from that profile's evidence. An explicit
+flag overrides each field. An explicit setting that turns off what a
+profile's field needs drops that field: `--admission reserved` drops the
+profile's arena, and `--kv-offload-gib 0`, `--prefix-cache off` or
+`--admission reserved` drop its tier. `serve --check` and `models --json`
+report `kv-offload-gib` and `kv-offload-prefix` among the effective
+settings. See the [offload and tier metrics](operations-observability.md#kv-offload-and-the-ram-prefix-tier).
+
 ## Qualification scope
 
 Qualification is tied to actual checkpoint tensors, package, host, topology,
@@ -358,8 +425,9 @@ Qwen TP2 needs 51.2 GB of pinned host memory; see [setup](developer-preview.md#p
 Text and image are default inputs. MiMo can also serve video/audio with all
 modalities, but audio is not qualified in-tree: there is no end-to-end audio
 reference input. Preprocessing tests alone do not qualify audio serving.
-Offload is opt-in; reusable host prefix caching remains refused. Different
-batch buckets can change output bits under concurrency; see
+Offload and the RAM prefix tier are opt-in, and the tier is not qualified
+yet ([KV offload](#kv-offload-and-the-ram-prefix-tier)). Different batch
+buckets can change output bits under concurrency; see
 [numerics](numerics.md#batch-shape). Single-request and fixed-batch guarantees
 do not extend to arbitrary concurrent batches.
 

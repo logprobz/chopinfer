@@ -149,6 +149,45 @@ counts unique pages held only by anchors; class snapshot counts do not
 partition physical occupancy. Live sequences, restore pins and transfer
 leases can retain pages after an anchor disappears.
 
+### KV offload and the RAM prefix tier
+
+The `chop_kv_offload_*` series below, but for the byte counter, appear only
+when the server copies through an offload arena (`--kv-offload-gib` above 0
+with a bundle that declares `chop.kv-offload.v1`). The RAM prefix tier's
+series and `chop_kv_offload_bytes_total` are exported from startup; the
+tier's stay zero while it is off, and the byte counter counts swaps too
+([option and bounds](serving-profiles.md#kv-offload-and-the-ram-prefix-tier)).
+`chop_prefix_cache_hits_total` and `chop_prefix_cache_reused_tokens_total`
+count every hit, RAM hits included; recomputation stays
+`chop_prefix_cache_recomputed_seen_tokens_total`.
+
+| Series | Meaning |
+|---|---|
+| `chop_kv_offload_swap_out_total`, `chop_kv_offload_swap_in_total` | Completed swap copies out of and into the GPU |
+| `chop_kv_offload_copy_seconds{direction}` | Histogram of every completed copy's time, swaps and the tier's demotions (`out`) and promotions (`in`); bounds 0.0001, 0.001, 0.01, 0.1, 1 and infinity seconds |
+| `chop_kv_offload_fallback_total{reason}` | Swaps that fell back to recomputation: `tier_full` (no host room), `capture` (no swap capture), `out_refused` and `in_refused` (the executor refused the copy), `out_failed` and `in_failed` (the copy failed with every rank idle), `restore` (the bundle refused a reloaded state), `unconfirmed` (a copy's completion could not be confirmed, which poisons the instance), `staging_capacity` (the restore needs more pages than the pool holds) and `unsupported` (counted by nothing now) |
+| `chop_kv_offload_host_pages{kind}` | Host pages per rank: `used` and `capacity` |
+| `chop_kv_offload_swapped_requests` | Requests whose state is swapped to the arena |
+| `chop_kv_offload_oldest_pending_seconds` | Age of the oldest copy still pending |
+| `chop_kv_offload_stalled_transfers`, `chop_kv_offload_stalls_total` | Copies pending past twice the drain timeout now, and copies that ever became overdue; an overdue copy keeps its leases and makes the worker `kv_stalled` until it completes |
+| `chop_kv_offload_bytes_total{direction,kind}` | Bytes completed copies moved across every rank, `direction` `out` or `in`, `kind` `swap` or `prefix` (the tier's demotions and promotions) |
+| `chop_prefix_cache_ram_hits_total`, `chop_prefix_cache_ram_reused_tokens_total` | Hits restored from an anchor promoted from RAM, and their reused tokens |
+| `chop_prefix_ram_demotions_total{result}` | Demotions by result: `ok`, `failed` (the copy failed), `cancelled` (an allocation needed the pages its lease held), `refused` (the executor refused the copy) and `tier_full` (no host room older than the anchor) |
+| `chop_prefix_ram_promotions_total{result}` | Settled promotions: `ok` (published), `failed` (copy failed or never started), `invalidated` (a recapture, resume or descendant of the prefix made the copy stale) and `gpu_resident` (a GPU anchor of the prefix appeared first) |
+| `chop_prefix_ram_missed_evictions_total{reason}` | Public GPU evictions without a ready RAM copy: `headroom` (the demotion start rule refused it, or its demotion was cancelled for an allocation), `in_flight` (another demotion was outstanding), `tier_full`, `failed`, `below_minimum` (shorter than `--kv-offload-min-tokens`), `not_frontier` (it had a resident descendant) and `unplanned` (outside the demotion lead when last planned) |
+| `chop_prefix_ram_eviction_log_discarded_total` | Evictions the pool's bounded eviction log dropped before the engine read them, so counted neither covered nor missed |
+| `chop_prefix_ram_headroom_waits_total` | Waits for a demotion's cancel that an allocation needed; the demotion counts `cancelled` when the cancel took effect and `ok` when its copy finished first |
+| `chop_prefix_ram_cancel_timeouts_total` | Of those waits, cancels still pending at the executor's drain timeout; their pages stay leased until the copy drains |
+| `chop_prefix_ram_fallbacks_total{reason}` | Requests that preferred a ready RAM match and resumed from their GPU match or recomputed: `pool_exhausted`, `capacity`, `failed`, `invalidated` and `gpu_resident` |
+| `chop_prefix_ram_evictions_total` | RAM entries the tier evicted to make room |
+| `chop_prefix_ram_anchors`, `chop_prefix_ram_bytes` | RAM entries now, and the bytes they hold across every rank |
+| `chop_prefix_ram_restore_seconds` | Histogram of a RAM hit's time from the admission decision to its restore; bounds 0.001, 0.01, 0.1, 1, 10 and infinity seconds |
+
+A covered eviction is one whose anchor had a ready RAM copy; the misses
+above are the rest of the public evictions. Headroom waits and cancel
+timeouts measure what demotion cost the foreground; acceptance reports them
+beside event gaps and stalls.
+
 ### Generated reply observations
 
 `serve --reply-history-observer on` enables bounded digest accounting. The

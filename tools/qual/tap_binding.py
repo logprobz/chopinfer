@@ -15,20 +15,32 @@ prompt tokens, reads the challenge's engine request ID from the bound log,
 and admits only the new steps whose producer nonce is the live one and
 whose items are all that request's. It copies them, numbered in order,
 into OUT/engine and writes OUT/tap-capture.json: the server's identity
-(IDENTITY), each request's challenge, engine request ID and steps, and the
-digests of every copied file.
+(IDENTITY) and, beside it, its complete model option map and whether the
+host marks it qualified (OPTIONS, as /health reports them; a server from
+before the report has neither), each request's challenge, engine request ID
+and steps, and the digests of every copied file.
+
+The server's options must be its qualified defaults
+(common.bind_checkpoint). With --experimental and a sealed pin
+(experimental_determinism.py: the complete option map, checkpoint identity
+and startup nonce, as determinism.py --experimental takes one) it captures
+a server serving exactly the pinned diagnostic options instead, and the
+manifest records the pin and `qualified: false`: the capture is
+experimental, and no gate admits it.
 
 `admit` (used by the tap gates, qwen38_layers and encoder_parity) re-checks
 a capture against the live candidate: every IDENTITY field must equal the
 candidate's /health serving identity, startup nonce included, so the
 candidate is the process that wrote the steps; each step's files must
 hold their recorded digests (read without following links) and its own
-producer nonce and engine request IDs must be the recorded ones. A
-missing or differing binding raises Unbound: the evidence is insufficient.
+producer nonce and engine request IDs must be the recorded ones. An
+experimental capture is refused. A missing or differing binding raises
+Unbound: the evidence is insufficient.
 
 Usage:
   python3 tools/qual/tap_binding.py capture --url URL --server-log LOG \\
-      --taps-dir DIR --out OUT --request NAME=PATH=BODY.json [...]
+      --taps-dir DIR --out OUT --request NAME=PATH=BODY.json [...] \\
+      [--experimental --experimental-pin PIN --experimental-pin-sha256 SHA256]
 """
 
 import argparse
@@ -45,6 +57,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "tools/qual"))
 import common  # noqa: E402
+import experimental_determinism  # noqa: E402
 from tools.model_sdk import diagnostic as wire  # noqa: E402
 
 SCHEMA = "chopinfer.tap-capture.v1"
@@ -54,6 +67,9 @@ TRACE = "chopinfer.request.v1"
 # The serving identity a capture and its candidate must share.
 IDENTITY = ("bundle_id", "package_identity", "checkpoint_identity", "metadata_identity", "startup_nonce",
             "profile", "version", "source_commit")
+# The model options a capture records beside IDENTITY: the complete option
+# map /health reports and whether the host marks it qualified.
+OPTIONS = ("model_options", "model_options_qualified")
 HEX = {"package_identity": 64, "metadata_identity": 64, "checkpoint_identity": 64, "startup_nonce": 32,
        "source_commit": 40}
 # How long a finished request's trace record may take to reach the log.
@@ -75,12 +91,18 @@ def identity_of(serving):
     return identity
 
 
-def live(url, config, log=None):
+def options_of(serving):
+    """The OPTIONS fields a /health serving identity reports."""
+    return {key: serving[key] for key in OPTIONS if key in serving}
+
+
+def live(url, config, log=None, experimental_pin=None):
     """(client, server, identity) of the live server at `url`, bound to the
-    gate's checkpoint pin (and to its startup `log` when given)."""
+    gate's checkpoint pin (and to its startup `log` when given): its model
+    options are its qualified defaults, or exactly `experimental_pin`'s."""
     client = common.Client(url, retries=0)
     server = client.identity(common.checkpoint_pin(config)["served_model_name"])
-    common.bind_checkpoint(server, log, url, config)
+    common.bind_checkpoint(server, log, url, config, experimental_pin=experimental_pin)
     return client, server, identity_of(common.live_identity(server))
 
 
@@ -137,11 +159,13 @@ def engine_requests(log, url, challenge, nonce):
     return found
 
 
-def capture(url, log, taps, requests, out, config, subject=None):
+def capture(url, log, taps, requests, out, config, subject=None, experimental_pin=None):
     """Sends `requests` ((name, path, body) each) once to the bound server at
     `url` and writes the capture of their new steps in `out`. `subject` is
-    recorded beside them (what the steps were captured against)."""
-    client, server, identity = live(url, config, log)
+    recorded beside them (what the steps were captured against). With
+    `experimental_pin` the server serves the pinned options, and the capture
+    is experimental."""
+    client, server, identity = live(url, config, log, experimental_pin)
     taps = wire.external(Path(taps).absolute())
     out = Path(out).absolute()
     out.mkdir(parents=True)
@@ -153,7 +177,7 @@ def capture(url, log, taps, requests, out, config, subject=None):
         challenge = f"tap-capture-{uuid.uuid4().hex}"
         body = {"model": server["model"], **body, "cache_salt": f"tap-capture/{uuid.uuid4().hex}"}
         response, _ = client.request(path, body, headers={"X-Client-Request-Id": challenge})
-        common.confirm_live(client, server)
+        common.confirm_live(client, server, experimental_pin=experimental_pin)
         usage = response.get("usage") or {}
         cached = (usage.get("prompt_tokens_details") or {}).get("cached_tokens")
         if cached != 0:
@@ -176,9 +200,11 @@ def capture(url, log, taps, requests, out, config, subject=None):
         records.append({"name": name, "path": path, "challenge": challenge, "engine_request_id": engine.pop(),
                         "response_id": response.get("id"), "prompt_tokens": usage.get("prompt_tokens"),
                         "cached_tokens": cached, "steps": steps})
-    manifest = {"schema": SCHEMA, "server": identity,
+    manifest = {"schema": SCHEMA, "server": identity | options_of(common.live_identity(server)),
                 "server_log_sha256": server["checkpoint"]["server_log_sha256"], "url": url,
                 "requests": records, "files": files, "subject": subject}
+    if experimental_pin is not None:
+        manifest |= {experimental_determinism.MARKER: experimental_pin.marker(), "qualified": False}
     wire.write_new(out / MANIFEST, manifest)
     return manifest
 
@@ -191,6 +217,8 @@ def admit(directory, url, config):
     manifest = wire.read_json(directory / MANIFEST)
     if manifest.get("schema") != SCHEMA:
         raise Unbound(f"{directory}/{MANIFEST} is not {SCHEMA}")
+    if experimental_determinism.MARKER in manifest or manifest.get("qualified", True) is not True:
+        raise Unbound(f"{directory} is an experimental capture of pinned diagnostic options, which no gate admits")
     recorded = identity_of(manifest["server"])
     if url is None:
         raise Unbound("no live candidate to bind the capture to (--url)")
@@ -220,6 +248,11 @@ def main():
     make.add_argument("--taps-dir", required=True)
     make.add_argument("--out", required=True)
     make.add_argument("--request", action="append", required=True, metavar="NAME=PATH=BODY.json")
+    make.add_argument("--experimental", action="store_true",
+                      help="capture a server serving the sealed pin's diagnostic options; no gate admits it")
+    make.add_argument("--experimental-pin", type=Path,
+                      help="the sealed complete option map, checkpoint identity and startup nonce")
+    make.add_argument("--experimental-pin-sha256", help="SHA256 of the sealed pin file")
     args = parser.parse_args()
     requests = []
     for text in args.request:
@@ -227,7 +260,9 @@ def main():
         requests.append((name, path, json.loads(Path(body).read_text())))
     config = common.qualification_config()
     try:
-        manifest = capture(args.url, args.server_log, args.taps_dir, requests, args.out, config)
+        pin = experimental_determinism.selected(args)
+        manifest = capture(args.url, args.server_log, args.taps_dir, requests, args.out, config,
+                           experimental_pin=pin)
     except (OSError, ValueError, KeyError, RuntimeError) as error:
         print(f"capture refused: {error}", file=sys.stderr)
         return 3

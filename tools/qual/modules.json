@@ -488,6 +488,7 @@
    "HEX": "dict",
    "IDENTITY": "list",
    "MANIFEST": "str",
+   "OPTIONS": "list",
    "ROOT": "number",
    "SCHEMA": "str",
    "STEPS": "str",

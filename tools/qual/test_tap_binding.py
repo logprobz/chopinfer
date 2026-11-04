@@ -5,6 +5,7 @@ capture's. Synthetic servers and steps; needs numpy for the step files."""
 
 import contextlib
 import copy
+import hashlib
 import io
 import json
 import os
@@ -23,6 +24,7 @@ except ModuleNotFoundError:
     np = None
 import common  # noqa: E402
 import declaration  # noqa: E402
+import experimental_determinism  # noqa: E402
 import tap_binding  # noqa: E402
 
 PIN = declaration.load(declaration.path("qwen38"))["qualification"]["checkpoint"]
@@ -30,6 +32,8 @@ URL = "http://127.0.0.1:39001"
 SERVING = {"bundle_id": "qwen38.flash.v2", "checkpoint_identity": PIN["checkpoint_identity"],
            "startup_nonce": "a" * 32, "package_identity": "1" * 64, "metadata_identity": "2" * 64,
            "source_commit": "3" * 40, "version": "0.1.0", "profile": {"name": None, "tensor_parallel_size": 1}}
+# A complete option map at its qualified defaults, as /health reports it.
+OPTIONS = {"model_options": {"prefill_chunk_tokens": 8192, "fast_route": True}, "model_options_qualified": True}
 
 
 def serving(model):
@@ -100,14 +104,24 @@ class TapBindingTests(unittest.TestCase):
         self.tokens = list(range(100, 110))
         self.tensors = {"L00.out": np.ones((10, 16), dtype=np.float32)}
 
-    def capture(self, name="cap", **server):
+    def capture(self, name="cap", experimental_pin=None, **server):
         taps = self.root / f"taps-{name}"
         taps.mkdir()
         log = server_log(self.root / f"{name}.log", server.get("serving", SERVING))
         fake = FakeServer(taps, log, self.tensors, self.tokens, **server)
+        pinned = {"experimental_pin": experimental_pin} if experimental_pin else {}
         with serve(fake):
             return tap_binding.capture(URL, log, taps, [("p", "/v1/completions", {"prompt": self.tokens})],
-                                       self.root / name, self.config)
+                                       self.root / name, self.config, **pinned)
+
+    def sealed(self, options, serving=SERVING):
+        """A sealed experimental pin of `options` for the process `serving`
+        names, as determinism.py --experimental-pin reads one."""
+        path = self.root / "pin.json"
+        path.write_text(json.dumps({"model_options": options, "checkpoint_identity": serving["checkpoint_identity"],
+                                    "startup_nonce": serving["startup_nonce"]}))
+        path.chmod(0o600)
+        return experimental_determinism.Pin.load(path, hashlib.sha256(path.read_bytes()).hexdigest())
 
     def admit(self, directory, serving=SERVING):
         fake = FakeServer(self.root, self.root / "unused.log", self.tensors, self.tokens, serving=serving)
@@ -187,6 +201,69 @@ class TapBindingTests(unittest.TestCase):
         with patch.object(FakeServer, "request", request), patch.object(tap_binding, "TRACE_WAIT_SECONDS", 0.1), \
                 self.assertRaisesRegex(tap_binding.Unbound, "CHOPINFER_REQUEST_TRACE"):
             self.capture("untraced")
+
+    def test_a_capture_keeps_the_complete_option_map_beside_its_identity(self):
+        manifest = self.capture(serving=SERVING | OPTIONS)
+        self.assertEqual(set(tap_binding.OPTIONS), set(OPTIONS))
+        self.assertEqual(manifest["server"], SERVING | OPTIONS)
+        self.assertNotIn(experimental_determinism.MARKER, manifest)
+        # The tap gates admit it as before.
+        self.assertEqual(self.admit(self.root / "cap", SERVING | OPTIONS)["server"], SERVING | OPTIONS)
+
+    def test_non_default_options_need_a_sealed_pin_and_make_a_capture_no_gate_admits(self):
+        options = dict(OPTIONS["model_options"], fast_route=False)
+        serving = SERVING | {"model_options": options, "model_options_qualified": False}
+        # Unpinned, non-default or incompletely reported options are refused.
+        with self.assertRaisesRegex(ValueError, "non-default, unqualified"):
+            self.capture("unpinned", serving=serving)
+        with self.assertRaisesRegex(ValueError, "incompletely reported"):
+            self.capture("partial", serving=SERVING | {"model_options": OPTIONS["model_options"]})
+        pin = self.sealed(options)
+        manifest = self.capture(serving=serving, experimental_pin=pin)
+        self.assertEqual(manifest["server"], serving)
+        self.assertEqual(manifest[experimental_determinism.MARKER], pin.marker())
+        self.assertIs(manifest["qualified"], False)
+        self.assertEqual(json.loads((self.root / "cap" / tap_binding.MANIFEST).read_text()), manifest)
+        # No tap gate admits it, even against a candidate of its identity
+        # that serves the qualified defaults.
+        with self.assertRaisesRegex(tap_binding.Unbound, "experimental"):
+            self.admit(self.root / "cap", SERVING | OPTIONS)
+        # The pin names exactly the options, checkpoint and process served.
+        with self.assertRaisesRegex(ValueError, "differ from the sealed pin"):
+            self.capture("other", serving=serving, experimental_pin=self.sealed(OPTIONS["model_options"]))
+        with self.assertRaisesRegex(ValueError, "differ from the sealed pin"):
+            self.capture("restarted", serving=serving | {"startup_nonce": "b" * 32},
+                         experimental_pin=self.sealed(options))
+        with self.assertRaisesRegex(ValueError, "explicitly unqualified"):
+            self.capture("qualified", serving=SERVING | OPTIONS,
+                         experimental_pin=self.sealed(OPTIONS["model_options"]))
+
+    def test_the_command_takes_a_sealed_pin_only_with_experimental(self):
+        pin = self.sealed(OPTIONS["model_options"])
+        body = self.root / "body.json"
+        body.write_text(json.dumps({"prompt": self.tokens}))
+        passed = []
+
+        def capture(*args, experimental_pin=None, **kwargs):
+            passed.append(experimental_pin)
+            return {"requests": []}
+        argv = ["tap_binding", "capture", "--url", URL, "--server-log", str(self.root / "server.log"),
+                "--taps-dir", str(self.root), "--out", str(self.root / "out"),
+                "--request", f"p=/v1/completions={body}"]
+        digest = hashlib.sha256((self.root / "pin.json").read_bytes()).hexdigest()
+        sealed = ["--experimental-pin", str(self.root / "pin.json"), "--experimental-pin-sha256", digest]
+        with patch.object(tap_binding, "capture", capture), \
+                patch.object(common, "qualification_config", lambda: self.config):
+            with patch("sys.argv", argv + ["--experimental", *sealed]), contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(tap_binding.main(), 0)
+            self.assertEqual(passed.pop().marker(), pin.marker())
+            with patch("sys.argv", argv), contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(tap_binding.main(), 0)
+            self.assertIsNone(passed.pop())
+            with patch("sys.argv", argv + sealed), contextlib.redirect_stderr(io.StringIO()) as error:
+                self.assertEqual(tap_binding.main(), 3)
+            self.assertIn("require --experimental", error.getvalue())
+            self.assertEqual(passed, [])
 
 
 if __name__ == "__main__":

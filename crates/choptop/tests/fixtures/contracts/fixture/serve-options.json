@@ -484,7 +484,7 @@
         "off"
       ],
       "group": "cache",
-      "help": "offload cached prefixes; only off is served",
+      "help": "keep prefix anchors the GPU evicts in RAM, inside the --kv-offload-gib arena (default off)",
       "model_launch": true,
       "repeatable": false
     },
@@ -533,6 +533,15 @@
       "choices": null,
       "group": "debug",
       "help": "qualification only: swap decoding requests to host memory every N tokens",
+      "model_launch": true,
+      "repeatable": false
+    },
+    {
+      "flag": "--debug-prefix-ram",
+      "value": "none",
+      "choices": null,
+      "group": "debug",
+      "help": "exactness runs only: demote every cached prefix to the RAM tier, so every hit is a RAM hit",
       "model_launch": true,
       "repeatable": false
     },

@@ -169,9 +169,9 @@ serve --bundle DIR [--checkpoint DIR [--load-threads N]
   [--prewarm-mapped-views off|on|auto] (default off)
   [--reply-history-observer on|off]
   [--prefill-policy fixed|tbt|adaptive] [--decode-tbt-target-ms N]
-  [--kv-offload-gib N] [--kv-offload-min-tokens N] [--kv-offload-gbps F] [--kv-offload-prefix off]
+  [--kv-offload-gib N] [--kv-offload-min-tokens N] [--kv-offload-gbps F] [--kv-offload-prefix on|off]
   [--admission reserved|optimistic] [--admission-watermark F] [--max-preemptions N]
-  [--debug-preempt-every N] [--debug-swap-every N]
+  [--debug-preempt-every N] [--debug-swap-every N] [--debug-prefix-ram]
   [--max-request-body-bytes N] [--max-request-string-bytes N] [--max-images-per-request N]
   [--served-model-name NAME [NAME ...]]
   [--responses-store-bytes N]
@@ -460,6 +460,12 @@ pub struct ServingOptionsV1 {
     pub reply_history_observer: bool,
     pub debug_swap: bool,
     pub kv_offload: crate::offload::KvOffloadOptionsV1,
+    /// Keeps prefix anchors the GPU evicts in a RAM tier inside the offload
+    /// arena (`--kv-offload-prefix on`); off by default.
+    pub kv_offload_prefix: bool,
+    /// The RAM tier's forced mode, in which every hit is a RAM hit
+    /// (`--debug-prefix-ram`), for exactness runs only.
+    pub debug_prefix_ram: bool,
     /// With speculation, startup warmup also reaches every verify graph
     /// shape; on by default.
     pub verify_warmup: bool,
@@ -497,6 +503,8 @@ impl Default for ServingOptionsV1 {
             reply_history_observer: false,
             debug_swap: false,
             kv_offload: crate::offload::KvOffloadOptionsV1::default(),
+            kv_offload_prefix: false,
+            debug_prefix_ram: false,
             verify_warmup: true,
             admission: AdmissionPolicy::Optimistic(OptimisticAdmission::DEFAULT),
             prefill_budget: runtime_scheduler::PrefillBudget::Fixed,
@@ -3418,6 +3426,9 @@ fn serve_v1(
         prefix_cache: serving.prefix_cache,
         prefill_policy: serving.prefill_policy,
         kv_offload: serving.kv_offload,
+        prefix_ram: serving
+            .kv_offload_prefix
+            .then_some(serving.debug_prefix_ram),
         debug_reference_tokens: debug_reference_tokens.map(Path::to_path_buf),
         device_memory: device_memory.clone(),
         model_options: model_options.clone(),
@@ -3639,6 +3650,9 @@ struct ServedEngineV1 {
     prefix_cache: bool,
     prefill_policy: PrefillPolicyV1,
     kv_offload: crate::offload::KvOffloadOptionsV1,
+    /// The RAM prefix tier, when `--kv-offload-prefix on` asks for it:
+    /// whether it runs in its forced mode.
+    prefix_ram: Option<bool>,
     debug_reference_tokens: Option<PathBuf>,
     /// Where the host services publish each rank's device memory.
     device_memory: crate::device_memory::DeviceMemoryReportV1,
@@ -3892,6 +3906,15 @@ impl ServedEngineV1 {
             }
             config
         };
+        // The engine runs the tier only with prefix caching, KV offload and
+        // demotion cancel, and reports why not otherwise.
+        let config = match self.prefix_ram {
+            Some(forced) => config.with_prefix_ram(prefix_ram_config_v1(
+                forced,
+                pool_control.pages().unwrap_or(0),
+            )),
+            None => config,
+        };
         let offload_plan = if allocate_offload {
             pool_control.initialize_offload(self.kv_offload)?
         } else {
@@ -4003,6 +4026,19 @@ impl ServedEngineV1 {
             kv_metrics_v1(self.kv_dtype),
         )
         .map_err(|error| format!("the serving engine is unusable: {error}"))
+    }
+}
+
+/// The RAM prefix tier's configuration over a pool of `pool_pages` pages
+/// per rank: the promotions one step starts may take a sixteenth of the pool
+/// together, at least one page. A single larger promotion still starts as
+/// the step's only one, with no demotion outstanding.
+fn prefix_ram_config_v1(forced: bool, pool_pages: u64) -> runtime_scheduler::PrefixRamConfig {
+    runtime_scheduler::PrefixRamConfig {
+        forced,
+        promotion_budget_pages: usize::try_from(pool_pages / 16)
+            .unwrap_or(usize::MAX)
+            .max(1),
     }
 }
 
@@ -5904,9 +5940,9 @@ mod tests {
         DeviceServicesV1, FixturePlanV1, FixtureRequestV1, FixtureScenarioV1, HostCommandErrorV1,
         HostCommandV1, KvCacheDtypeV1, PREPARED_QUEUE_DEPTH_V1, PrefillPolicyV1, ServingOptionsV1,
         engine_config_v1, parse_bundle_command_v1, parse_conformance_host_command_v1,
-        parse_host_command_v1, resolve_developer_serving_plan_v1, resolve_kv_cache_dtype_v1,
-        resolve_topology_v1, same_selection_v1, server_config_v1, serving_backend_config_v1,
-        validate_label_v1,
+        parse_host_command_v1, prefix_ram_config_v1, resolve_developer_serving_plan_v1,
+        resolve_kv_cache_dtype_v1, resolve_topology_v1, same_selection_v1, server_config_v1,
+        serving_backend_config_v1, validate_label_v1,
     };
 
     fn arguments(words: &[&str]) -> Vec<String> {
@@ -6838,6 +6874,8 @@ mod tests {
                 reply_history_observer: false,
                 debug_swap: false,
                 kv_offload: crate::offload::KvOffloadOptionsV1::default(),
+                kv_offload_prefix: false,
+                debug_prefix_ram: false,
                 verify_warmup: true,
                 admission: AdmissionPolicy::Optimistic(OptimisticAdmission::DEFAULT),
                 prefill_budget: runtime_scheduler::PrefillBudget::Fixed,
@@ -7058,6 +7096,150 @@ mod tests {
             ]))
             .is_err()
         );
+    }
+
+    #[test]
+    fn the_ram_prefix_tier_needs_the_offload_arena_and_prefix_caching() {
+        let serving = |words: &[&str]| match parse_host_command_v1(&arguments(words)).unwrap() {
+            HostCommandV1::Serve { serving, .. } => serving,
+            _ => panic!("serve parses as serve"),
+        };
+        let defaults = serving(&["serve", "--bundle", "a", "--kv-offload-gib", "1"]);
+        assert!(!defaults.kv_offload_prefix && !defaults.debug_prefix_ram);
+        let tier = serving(&[
+            "serve",
+            "--bundle",
+            "a",
+            "--kv-offload-gib",
+            "1",
+            "--kv-offload-prefix",
+            "on",
+        ]);
+        assert!(tier.kv_offload_prefix && !tier.debug_prefix_ram);
+        assert!(tier.prefix_cache);
+        let forced = serving(&[
+            "serve",
+            "--bundle",
+            "a",
+            "--kv-offload-gib",
+            "1",
+            "--kv-offload-prefix",
+            "on",
+            "--debug-prefix-ram",
+        ]);
+        assert!(forced.kv_offload_prefix && forced.debug_prefix_ram);
+        for (options, expected) in [
+            (
+                vec!["--kv-offload-prefix", "on"],
+                "--kv-offload-prefix on requires positive --kv-offload-gib",
+            ),
+            (
+                vec!["--kv-offload-gib", "0", "--kv-offload-prefix", "on"],
+                "--kv-offload-prefix on requires positive --kv-offload-gib",
+            ),
+            (
+                vec![
+                    "--kv-offload-gib",
+                    "1",
+                    "--kv-offload-prefix",
+                    "on",
+                    "--prefix-cache",
+                    "off",
+                ],
+                "--kv-offload-prefix on requires --prefix-cache on",
+            ),
+            (
+                vec![
+                    "--kv-offload-gib",
+                    "1",
+                    "--kv-offload-prefix",
+                    "on",
+                    "--admission",
+                    "reserved",
+                ],
+                "--kv-offload-gib requires --admission optimistic",
+            ),
+            (
+                vec!["--debug-prefix-ram"],
+                "--debug-prefix-ram requires --kv-offload-prefix on",
+            ),
+            (
+                vec![
+                    "--kv-offload-gib",
+                    "1",
+                    "--kv-offload-prefix",
+                    "off",
+                    "--debug-prefix-ram",
+                ],
+                "--debug-prefix-ram requires --kv-offload-prefix on",
+            ),
+            (
+                vec!["--debug-prefix-ram", "--debug-prefix-ram"],
+                "--debug-prefix-ram is given more than once",
+            ),
+            (
+                vec!["--kv-offload-prefix", "yes"],
+                "--kv-offload-prefix must be on or off",
+            ),
+        ] {
+            let mut words = vec!["serve", "--bundle", "a"];
+            words.extend(options);
+            let refusal = refusal(&words);
+            assert!(refusal.contains(expected), "{words:?}: {refusal}");
+        }
+        let refused = refusal(&["conformance-run", "--bundle", "a", "--debug-prefix-ram"]);
+        assert!(
+            refused.contains("conformance-run does not accept --debug-prefix-ram"),
+            "{refused}"
+        );
+        // `serve --model` leaves the arena and the tier to the family's
+        // profile, and refuses only what the invocation itself gives.
+        for options in [
+            vec!["--kv-offload-prefix", "on"],
+            vec!["--debug-prefix-ram"],
+            vec!["--kv-offload-prefix", "on", "--debug-prefix-ram"],
+        ] {
+            let mut words = vec!["serve", "--model", "checkpoint"];
+            words.extend(options);
+            assert!(
+                parse_host_command_v1(&arguments(&words)).is_ok(),
+                "{words:?}"
+            );
+        }
+        for (options, expected) in [
+            (
+                vec!["--kv-offload-gib", "0", "--kv-offload-prefix", "on"],
+                "--kv-offload-prefix on requires positive --kv-offload-gib",
+            ),
+            (
+                vec!["--kv-offload-prefix", "on", "--prefix-cache", "off"],
+                "--kv-offload-prefix on requires --prefix-cache on",
+            ),
+            (
+                vec!["--kv-offload-prefix", "off", "--debug-prefix-ram"],
+                "--debug-prefix-ram requires --kv-offload-prefix on",
+            ),
+        ] {
+            let mut words = vec!["serve", "--model", "checkpoint"];
+            words.extend(options);
+            let refusal = refusal(&words);
+            assert!(refusal.contains(expected), "{words:?}: {refusal}");
+        }
+    }
+
+    #[test]
+    fn the_ram_tier_promotes_a_sixteenth_of_the_pool_per_step() {
+        for (pages, budget) in [(14_249, 890), (32, 2), (31, 1), (15, 1), (0, 1)] {
+            for forced in [false, true] {
+                assert_eq!(
+                    prefix_ram_config_v1(forced, pages),
+                    runtime_scheduler::PrefixRamConfig {
+                        forced,
+                        promotion_budget_pages: budget,
+                    }
+                );
+            }
+        }
     }
 
     #[test]

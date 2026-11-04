@@ -475,7 +475,7 @@ pub(crate) const SERVE_OPTIONS_V1: &[ServeOptionV1] = {
             "--kv-offload-prefix",
             Choice(ON_OFF_V1),
             Cache,
-            "offload cached prefixes; only off is served",
+            "keep prefix anchors the GPU evicts in RAM, inside the --kv-offload-gib arena (default off)",
         ).input(Some(31), input_access!(optional kv_offload_prefix)),
         ServeOptionV1::new(
             "--admission",
@@ -507,6 +507,12 @@ pub(crate) const SERVE_OPTIONS_V1: &[ServeOptionV1] = {
             Debug,
             "qualification only: swap decoding requests to host memory every N tokens",
         ).input(Some(42), input_access!(optional debug_swap_every)),
+        ServeOptionV1::new(
+            "--debug-prefix-ram",
+            Flag,
+            Debug,
+            "exactness runs only: demote every cached prefix to the RAM tier, so every hit is a RAM hit",
+        ).input(Some(61), input_access!(flag debug_prefix_ram)),
         ServeOptionV1::new(
             "--max-sequences",
             Count,
@@ -801,6 +807,8 @@ pub(crate) struct ServingInputsV1 {
     pub(crate) maximum_preemptions: Option<usize>,
     pub(crate) debug_preempt_every: Option<usize>,
     pub(crate) debug_swap_every: Option<usize>,
+    /// `--debug-prefix-ram`: the RAM prefix tier's forced mode.
+    pub(crate) debug_prefix_ram: bool,
     pub(crate) maximum_sequences: Option<usize>,
     pub(crate) maximum_connections: Option<usize>,
     pub(crate) maximum_batch_tokens: Option<usize>,
@@ -1000,6 +1008,7 @@ impl ArgumentsV1 {
                     "--fake-host-services" => &mut parsed.host_memory_device,
                     "--list-model-options" => &mut parsed.list_model_options,
                     "--check" => &mut parsed.check,
+                    "--debug-prefix-ram" => &mut parsed.debug_prefix_ram,
                     _ => unreachable!("the valueless flag table and parser must agree"),
                 };
                 if *slot {

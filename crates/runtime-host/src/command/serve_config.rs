@@ -405,9 +405,31 @@ pub(crate) fn resolve_inputs(
             "--kv-offload-gib requires --admission optimistic",
         ));
     }
+    // `serve --model` gets its speculation and scheduling defaults from the
+    // family's serving profile only after its package is selected. Only
+    // checks that depend on those defaults wait for complete typed resolution;
+    // every explicit value is checked here.
+    let profile_pending = parsed.model.is_some();
+    // The RAM prefix tier keeps prefix anchors inside the offload arena,
+    // whose own check above requires optimistic admission.
     if parsed.kv_offload_prefix == Some(true) {
+        if budget_bytes == 0 && !(profile_pending && parsed.kv_offload_gib.is_none()) {
+            return Err(usage_error(
+                "--kv-offload-prefix on requires positive --kv-offload-gib",
+            ));
+        }
+        if parsed.prefix_cache == Some(false) {
+            return Err(usage_error(
+                "--kv-offload-prefix on requires --prefix-cache on",
+            ));
+        }
+    }
+    if parsed.debug_prefix_ram
+        && parsed.kv_offload_prefix != Some(true)
+        && !(profile_pending && parsed.kv_offload_prefix.is_none())
+    {
         return Err(usage_error(
-            "--kv-offload-prefix on requires the deferred host prefix cache",
+            "--debug-prefix-ram requires --kv-offload-prefix on",
         ));
     }
     let kv_offload = crate::offload::KvOffloadOptionsV1 {
@@ -473,11 +495,6 @@ pub(crate) fn resolve_inputs(
             AdmissionPolicy::Reserved
         }
     };
-    // `serve --model` gets its speculation and scheduling defaults from the
-    // family's serving profile only after its package is selected. Only
-    // checks that depend on those defaults wait for complete typed resolution;
-    // every explicit value is checked here.
-    let profile_pending = parsed.model.is_some();
     let prefill_budget = prefill_budget_v1(&parsed, profile_pending)?;
     let prefill_policy = parsed.prefill_policy.unwrap_or_default();
     if !profile_pending
@@ -641,6 +658,8 @@ pub(crate) fn resolve_inputs(
                 .unwrap_or(defaults.reply_history_observer),
             debug_swap: parsed.debug_swap_every.is_some(),
             kv_offload,
+            kv_offload_prefix: parsed.kv_offload_prefix.unwrap_or(false),
+            debug_prefix_ram: parsed.debug_prefix_ram,
             verify_warmup: parsed.verify_warmup.unwrap_or(defaults.verify_warmup),
             admission,
             prefill_budget,

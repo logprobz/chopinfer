@@ -51,6 +51,12 @@ fn reads_the_options_serve_describes() {
     }
     assert_eq!(flag("--served-model-name").shape, Shape::Words);
     assert_eq!(flag("--speculation-confidence").shape, Shape::JsonOrOff);
+    assert_eq!(
+        flag("--kv-offload-prefix").choices.as_deref(),
+        Some(&["on".to_owned(), "off".to_owned()][..])
+    );
+    assert_eq!(flag("--debug-prefix-ram").shape, Shape::Switch);
+    assert!(flag("--debug-prefix-ram").model_launch);
     // Flags a loader must not offer for `serve --model`.
     for owned in ["--bundle", "--profile", "--describe-options"] {
         assert!(!flag(owned).model_launch, "{owned}");

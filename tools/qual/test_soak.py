@@ -2,9 +2,11 @@
 
 from qual_test_config import setUpModule
 
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 import tempfile
 import subprocess
+import threading
 import unittest
 from unittest.mock import patch
 
@@ -79,7 +81,16 @@ class SoakMemoryTests(unittest.TestCase):
                 self.assertEqual((sample["mib"], sample["host_rss_mib"], sample["host_rss_anon_mib"],
                                   sample["host_rss_file_mib"], sample["host_rss_shmem_mib"]), (350, 3, 1.5, 1, 0.5))
         with patch("soak.metrics_text", side_effect=OSError("connection refused")):
-            self.assertEqual(soak.memory_sample(123, 0, None)["mapped_view_error"], "connection refused")
+            self.assertEqual(soak.memory_sample(123, 0, None)["mapped_view_error"], "OSError: connection refused")
+        # A gauge that is not a whole number of bytes is an error of the
+        # scrape, beside a kept sample.
+        for value in ("NaN", "+Inf", "-Inf", "-1", "8192.5", "x", ""):
+            with self.subTest(value=value), patch("soak.metrics_text",
+                                                  return_value=f"chop_mapped_view_bytes {value}\n"):
+                sample = soak.memory_sample(123, 0, None)
+                self.assertNotIn("mapped_view_bytes", sample)
+                self.assertTrue(sample["mapped_view_error"].startswith(("ValueError", "IndexError")))
+                self.assertEqual((sample["mib"], sample["host_rss_mib"]), (350, 3))
 
     def test_the_soak_samples_the_parts_and_mapped_views_of_its_server(self):
         argv = ["soak", "--duration", "0.3", "--concurrency", "2", "--server-pid", "123"]
@@ -301,6 +312,77 @@ class StructuredKeepTests(unittest.TestCase):
         self.assertGreater(report["mixed_requests"]["structured_truncated"], 0)
         self.assertTrue(any("schema" in str(error.get("error")) for error in report["errors"]))
         self.assertFalse(report["passed"])
+
+
+class MetricsServer:
+    """A local /metrics endpoint that answers every scrape with `body`, cut to
+    its first `sent` bytes under the full Content-Length when `sent` is set."""
+
+    def __init__(self, body, sent=None):
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(handler):
+                handler.send_response(200)
+                handler.send_header("Content-Type", "text/plain; version=0.0.4")
+                handler.send_header("Content-Length", str(len(body)))
+                handler.end_headers()
+                handler.wfile.write(body if sent is None else body[:sent])
+
+            def log_message(handler, *args):
+                pass
+
+        self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.url = f"http://127.0.0.1:{self.server.server_address[1]}"
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+
+    def close(self):
+        self.server.shutdown()
+        self.server.server_close()
+
+
+class MetricsClient(FakeClient):
+    """A FakeClient whose /metrics is served at `url`."""
+
+    def __init__(self, url, timeout=900):
+        super().__init__(url, timeout)
+        self.url, self.timeout = url, timeout
+
+
+class MappedViewScrapeTests(unittest.TestCase):
+    """The mapped-view gauges are recorded only: a scrape that fails in
+    transport, decoding or parsing keeps each memory sample beside its error
+    and leaves the soak verdict alone."""
+
+    def soak(self, body, sent=None):
+        server = MetricsServer(body, sent)
+        self.addCleanup(server.close)
+        argv = ["soak", "--url", server.url, "--duration", "0.3", "--concurrency", "2", "--server-pid", "123"]
+        with patch("sys.argv", argv), patch.object(soak, "Client", MetricsClient), \
+             patch.object(soak, "device_memory", return_value=350), \
+             patch.object(soak, "host_memory", return_value={"host_rss_mib": 3, "host_rss_anon_mib": 1.5,
+                                                             "host_rss_file_mib": 1, "host_rss_shmem_mib": 0.5}), \
+             patch.object(soak, "receipt") as receipt:
+            with self.assertRaises(SystemExit) as exited:
+                soak.main()
+        return exited.exception.code, receipt.call_args.args[2]
+
+    def test_a_failed_scrape_keeps_the_sample_and_the_verdict(self):
+        served = b"chop_mapped_view_bytes 8192\nchop_mapped_view_resident_bytes 4096\n"
+        code, report = self.soak(served)
+        self.assertEqual((code, report["passed"], report["errors"]), (0, True, []))
+        self.assertGreaterEqual(len(report["memory_samples"]), 2)
+        self.assertTrue(all(sample["mapped_view_bytes"] == 8192 for sample in report["memory_samples"]))
+        for label, body, sent, cause in (
+                ("truncated response", served * 4, 20, "IncompleteRead"),
+                ("bad encoding", served + b"# \xff\xfe\n", None, "UnicodeDecodeError"),
+                ("NaN gauge", b"chop_mapped_view_bytes NaN\n", None, "not a finite whole number of bytes")):
+            with self.subTest(label):
+                failed_code, failed = self.soak(body, sent)
+                self.assertEqual((failed_code, failed["passed"], failed["errors"]), (code, report["passed"], []))
+                self.assertEqual(len(failed["memory_samples"]), len(report["memory_samples"]))
+                for sample in failed["memory_samples"]:
+                    self.assertEqual((sample["mib"], sample["host_rss_mib"]), (350, 3))
+                    self.assertNotIn("mapped_view_bytes", sample)
+                    self.assertIn(cause, sample["mapped_view_error"])
 
 
 class MemoryRule(unittest.TestCase):

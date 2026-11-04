@@ -36,6 +36,7 @@ memory rule judges device memory and VmRSS only.
 """
 
 from concurrent.futures import ThreadPoolExecutor
+import math
 import re
 import statistics
 import subprocess
@@ -330,14 +331,24 @@ def host_memory(root_pid):
 def mapped_views(client):
     """The host's mapped-view gauges when its /metrics serves them: the bytes
     its mapped views cover and, while residency is visible, the bytes of them
-    resident. Recorded only: a failed scrape records its error, not a soak
-    error."""
+    resident. They are recorded only: a scrape that fails in transport,
+    decoding or parsing, or a gauge that is not a finite whole number of
+    bytes, records `mapped_view_error` beside the memory sample and never
+    fails the soak."""
     try:
         text = metrics_text(client)
-    except OSError as error:
-        return {"mapped_view_error": str(error)}
-    return {name: value for name in ("mapped_view_bytes", "mapped_view_resident_bytes")
-            if (value := metric(text, "chop_" + name)) is not None}
+        views = {}
+        for name in ("mapped_view_bytes", "mapped_view_resident_bytes"):
+            raw = next((line.split()[1] for line in text.splitlines() if line.startswith(f"chop_{name} ")), None)
+            if raw is None:
+                continue
+            value = float(raw)
+            if not (math.isfinite(value) and value >= 0 and value.is_integer()):
+                raise ValueError(f"chop_{name} is not a finite whole number of bytes: {raw}")
+            views[name] = int(value)
+        return views
+    except Exception as error:
+        return {"mapped_view_error": f"{type(error).__name__}: {error}"}
 
 
 def memory_sample(root_pid, started, client):

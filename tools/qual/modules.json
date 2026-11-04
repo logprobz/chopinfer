@@ -52,6 +52,15 @@
    "SCHEMA": "str"
   },
   "agentic_trace_analysis": {},
+  "agentic_verdict": {
+   "ENERGY_VETO": "number",
+   "MAJOR_FAULT_BUDGET": "int",
+   "REGRESSION_FLOOR": "number",
+   "RULES": "dict",
+   "SCHEMA": "str",
+   "SERVER_COUNTERS": "dict",
+   "VISITS": "list"
+  },
   "agentic_workload": {
    "CORPUS": "number",
    "DEFAULT_MAX_TOOL_RESULT_BYTES": "int",

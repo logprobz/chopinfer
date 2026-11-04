@@ -3,10 +3,10 @@
 //! and the ancestry residency in the same call as every drop. The pool marks
 //! entries a logical event made unusable and the host tier drops them later,
 //! since the pool cannot release host pages itself.
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use crate::ancestry::{PrefixResidency, PrefixTier};
-use crate::{HostAnchorId, KvError, KvPool, KvTransferId, PrefixCacheKeyV1};
+use crate::{HostAnchorId, KvError, KvPool, KvTransferId, PrefixCacheKeyV1, PrefixChainV1};
 
 /// A public anchor resident in the host tier.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -22,6 +22,29 @@ pub struct PrefixHostEntryV1 {
     /// Distinguishes this entry from a later demotion of the same key.
     pub serial: u64,
 }
+
+/// A public frontier the RAM tier may copy ahead of its eviction.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PrefixDemotionCandidateV1 {
+    pub key: PrefixCacheKeyV1,
+    pub tokens: usize,
+    /// Pages its eviction would free now: those only this anchor references.
+    pub freeable_pages: usize,
+}
+
+/// A public GPU eviction with the RAM tier on, for miss accounting.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PrefixEvictionV1 {
+    pub key: PrefixCacheKeyV1,
+    pub tokens: usize,
+    /// A ready, usable host entry holds the key, so the eviction lost nothing.
+    pub covered: bool,
+    /// An indexed frontier of both tiers: the shape a demotion copies.
+    pub frontier: bool,
+}
+
+/// Public evictions the pool logs between drains; older ones are discarded.
+pub const PREFIX_EVICTION_LOG_V1: usize = 4096;
 
 /// Why a host entry became unusable before its host tier dropped it.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -47,6 +70,10 @@ pub(crate) struct PrefixRam {
     pub(crate) demotions: BTreeMap<PrefixCacheKeyV1, (u64, KvTransferId)>,
     /// Entries a logical event made unusable, awaiting their host drop.
     invalidations: BTreeMap<PrefixCacheKeyV1, PrefixHostInvalidationV1>,
+    /// Public evictions since the last drain, oldest first.
+    evictions: VecDeque<PrefixEvictionV1>,
+    /// Evictions the log's bound discarded since the last drain.
+    evictions_discarded: u64,
     /// The host tier whose anchors back the entries, bound by its first
     /// demotion.
     pub(crate) tier: Option<u64>,
@@ -88,6 +115,126 @@ impl KvPool {
     #[must_use]
     pub fn host_entry(&self, key: PrefixCacheKeyV1) -> Option<PrefixHostEntryV1> {
         self.ram.as_ref()?.entries.get(&key).copied()
+    }
+
+    /// Walks the eviction order from the next victim over the anchors whose
+    /// eviction frees the first `lead_pages` pages, and returns the ones a
+    /// demotion may copy, in that order: indexed public frontiers of both
+    /// tiers with at least `minimum_tokens` tokens, no host entry and no copy
+    /// in flight. An anchor eviction skips adds nothing.
+    #[must_use]
+    pub fn demotion_candidates(
+        &self,
+        lead_pages: usize,
+        minimum_tokens: usize,
+    ) -> Vec<PrefixDemotionCandidateV1> {
+        let (Some(ram), Some(index)) = (&self.ram, &self.ancestry) else {
+            return Vec::new();
+        };
+        let mut covered = 0usize;
+        let mut candidates = Vec::new();
+        for key in self.anchor_order.values() {
+            if covered >= lead_pages {
+                break;
+            }
+            if self.demotion_in_flight(*key) {
+                continue;
+            }
+            let anchor = &self.anchors[key];
+            let freeable_pages = anchor
+                .blocks
+                .iter()
+                .chain(&anchor.state)
+                .filter(|page| self.blocks[page.index()] == 1)
+                .count();
+            covered += freeable_pages;
+            if !anchor.private
+                && anchor.indexed
+                && anchor.tokens >= minimum_tokens
+                && !ram.entries.contains_key(key)
+                && !ram.demotions.contains_key(key)
+                && !index.has_descendant(*key)
+            {
+                candidates.push(PrefixDemotionCandidateV1 {
+                    key: *key,
+                    tokens: anchor.tokens,
+                    freeable_pages,
+                });
+            }
+        }
+        candidates
+    }
+
+    /// Finds the longest ready, usable host entry of this prompt that ends at
+    /// most at `limit` tokens and outside every media span, as
+    /// [`Self::lookup_anchor`] does for GPU anchors.
+    #[must_use]
+    pub fn lookup_host_anchor(
+        &self,
+        chain: &PrefixChainV1,
+        limit: usize,
+    ) -> Option<(PrefixCacheKeyV1, usize)> {
+        let ram = self.ram.as_ref().filter(|ram| !ram.entries.is_empty())?;
+        self.longest_match(chain, limit, &ram.chains, |key| {
+            ram.entries
+                .get(key)
+                .filter(|entry| entry.ready && !ram.invalidations.contains_key(key))
+                .map(|entry| entry.tokens)
+        })
+    }
+
+    /// Takes the public evictions logged since the last call, oldest first,
+    /// with how many the bound of [`PREFIX_EVICTION_LOG_V1`] discarded.
+    pub fn drain_prefix_evictions(&mut self) -> (Vec<PrefixEvictionV1>, u64) {
+        self.ram.as_mut().map_or_else(
+            || (Vec::new(), 0),
+            |ram| {
+                (
+                    ram.evictions.drain(..).collect(),
+                    std::mem::take(&mut ram.evictions_discarded),
+                )
+            },
+        )
+    }
+
+    /// Whether `key`'s current GPU anchor is the one a demotion in flight
+    /// leases.
+    pub(crate) fn demotion_in_flight(&self, key: PrefixCacheKeyV1) -> bool {
+        self.ram
+            .as_ref()
+            .and_then(|ram| ram.demotions.get(&key))
+            .is_some_and(|(lifetime, _)| {
+                self.anchors
+                    .get(&key)
+                    .is_some_and(|anchor| anchor.serial == *lifetime)
+            })
+    }
+
+    /// What the eviction log records for `key`, if the tier is on and the
+    /// anchor public.
+    pub(crate) fn eviction_record(&self, key: PrefixCacheKeyV1) -> Option<PrefixEvictionV1> {
+        let ram = self.ram.as_ref()?;
+        let anchor = self.anchors.get(&key).filter(|anchor| !anchor.private)?;
+        Some(PrefixEvictionV1 {
+            key,
+            tokens: anchor.tokens,
+            covered: ram.entries.get(&key).is_some_and(|entry| entry.ready)
+                && !ram.invalidations.contains_key(&key),
+            frontier: anchor.indexed
+                && !self
+                    .ancestry
+                    .as_ref()
+                    .is_some_and(|index| index.has_descendant(key)),
+        })
+    }
+
+    pub(crate) fn log_eviction(&mut self, record: PrefixEvictionV1) {
+        let ram = self.ram.as_mut().expect("the RAM tier logs evictions");
+        if ram.evictions.len() == PREFIX_EVICTION_LOG_V1 {
+            ram.evictions.pop_front();
+            ram.evictions_discarded += 1;
+        }
+        ram.evictions.push_back(record);
     }
 
     /// Why the key's host entry is unusable, until its host tier drops it.
@@ -283,6 +430,7 @@ impl KvPool {
         }
         if chained != ram.entries.len()
             || ram.order.len() != ram.entries.len()
+            || ram.evictions.len() > PREFIX_EVICTION_LOG_V1
             || (ram.tier.is_none() && !ram.entries.is_empty())
             || ram
                 .invalidations
@@ -322,7 +470,7 @@ impl KvPool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{HostTier, KvGeometry, KvTransferStatus, PrefixChainV1};
+    use crate::{HostTier, KvGeometry, KvTransferStatus};
 
     fn demoted() -> (KvPool, HostTier, PrefixChainV1) {
         let chain = PrefixChainV1::new(4, (0..12).collect::<Vec<u32>>().into(), vec![]).unwrap();

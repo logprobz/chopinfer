@@ -5,7 +5,10 @@ use ancestry::{PrefixAncestry, PrefixTier};
 pub use ancestry::{PrefixAncestryWorkV1, PrefixAnchorClassV1, PrefixEvictionTierV1};
 mod ram;
 use ram::PrefixRam;
-pub use ram::{PrefixHostEntryV1, PrefixHostInvalidationV1};
+pub use ram::{
+    PREFIX_EVICTION_LOG_V1, PrefixDemotionCandidateV1, PrefixEvictionV1, PrefixHostEntryV1,
+    PrefixHostInvalidationV1,
+};
 mod context_parallel;
 mod declared_pages;
 mod offload;
@@ -898,25 +901,39 @@ impl KvPool {
         chain: &PrefixChainV1,
         limit: usize,
     ) -> Option<(PrefixCacheKeyV1, usize)> {
-        if self.anchors.is_empty() || chain.block_tokens() != self.geometry.block_tokens {
+        if self.anchors.is_empty() {
+            return None;
+        }
+        self.longest_match(chain, limit, &self.anchor_chains, |key| {
+            self.anchors
+                .get(key)
+                .filter(|anchor| !anchor.private)
+                .map(|anchor| anchor.tokens)
+        })
+    }
+
+    /// The longest key of this prompt among `chains`, keys by the digest of
+    /// their full blocks, whose tokens `tokens_of` gives, that ends at most
+    /// at `limit` tokens and outside every media span. Both tiers' lookups
+    /// share it.
+    fn longest_match(
+        &self,
+        chain: &PrefixChainV1,
+        limit: usize,
+        chains: &BTreeMap<PrefixCacheKeyV1, std::collections::BTreeSet<PrefixCacheKeyV1>>,
+        tokens_of: impl Fn(&PrefixCacheKeyV1) -> Option<usize>,
+    ) -> Option<(PrefixCacheKeyV1, usize)> {
+        if chain.block_tokens() != self.geometry.block_tokens {
             return None;
         }
         let limit = limit.min(chain.tokens().len());
         for blocks in (0..=limit / self.geometry.block_tokens).rev() {
-            let Some(keys) = chain
-                .chain(blocks)
-                .and_then(|digest| self.anchor_chains.get(&digest))
-            else {
+            let Some(keys) = chain.chain(blocks).and_then(|digest| chains.get(&digest)) else {
                 continue;
             };
             let best = keys
                 .iter()
-                .filter_map(|key| {
-                    self.anchors
-                        .get(key)
-                        .filter(|anchor| !anchor.private)
-                        .map(|anchor| (*key, anchor.tokens))
-                })
+                .filter_map(|key| tokens_of(key).map(|tokens| (*key, tokens)))
                 .filter(|(key, tokens)| {
                     *tokens <= limit
                         && !chain.splits_media(*tokens)
@@ -1260,32 +1277,55 @@ impl KvPool {
 
     /// Evicts the lowest tier's least recently used anchor first. When only
     /// the live tier remains, a capture replaces the frontier its own
-    /// sequence extended before any other live anchor.
+    /// sequence extended before any other live anchor. An anchor whose
+    /// demotion is in flight is never evicted: its pages stay leased until
+    /// the copy completes, so evicting it would free nothing.
     fn evict_anchors_preferring(&mut self, needed: usize, mut replaced: Option<PrefixCacheKeyV1>) {
         while self.free_blocks.len() < needed {
-            let Some(((tier, _, _), oldest)) = self.anchor_order.first_key_value() else {
+            let Some((tier, oldest)) = self.next_victim() else {
                 return;
             };
             let key = match replaced {
                 Some(key)
-                    if *tier == PrefixEvictionTierV1::Live && self.anchors.contains_key(&key) =>
+                    if tier == PrefixEvictionTierV1::Live
+                        && self.anchors.contains_key(&key)
+                        && !self.demotion_in_flight(key) =>
                 {
                     replaced = None;
                     key
                 }
-                _ => *oldest,
+                _ => oldest,
             };
             let anchor = &self.anchors[&key];
             let public = !anchor.private;
             let class = anchor.class;
             let age = anchor.created_at.elapsed().as_secs();
             let free = self.free_blocks.len();
+            let logged = self.eviction_record(key);
             self.drop_anchor(key);
             if public {
                 self.metrics
                     .prefix_eviction(class, self.free_blocks.len() - free, age);
             }
+            if let Some(record) = logged {
+                self.log_eviction(record);
+            }
         }
+    }
+
+    /// The first anchor in eviction order that eviction may take.
+    fn next_victim(&self) -> Option<(PrefixEvictionTierV1, PrefixCacheKeyV1)> {
+        let mut order = self.anchor_order.iter();
+        let ((tier, _, _), key) = if self
+            .ram
+            .as_ref()
+            .is_some_and(|ram| !ram.demotions.is_empty())
+        {
+            order.find(|(_, key)| !self.demotion_in_flight(**key))?
+        } else {
+            order.next()?
+        };
+        Some((*tier, *key))
     }
 
     fn reclassify_anchors(&mut self) {

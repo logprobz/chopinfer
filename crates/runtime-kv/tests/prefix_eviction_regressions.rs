@@ -15,17 +15,20 @@ fn pool(pages: usize, ancestry: bool) -> KvPool {
         .with_prefix_ancestry(ancestry)
 }
 
-/// Global LRU, the ancestry index alone, or the index with its tier order.
+/// Global LRU, the ancestry index alone, the RAM tier with nothing
+/// demoted, or the index with its tier order.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Order {
     Lru,
     Index,
+    Ram,
     Ancestry,
 }
 
 fn ordered(pool: KvPool, order: Order) -> KvPool {
     pool.with_prefix_ancestry(order == Order::Ancestry)
         .with_prefix_index(order == Order::Index)
+        .with_prefix_ram(order == Order::Ram)
 }
 
 fn cold_capture(pool: &mut KvPool, chain: &PrefixChainV1, depth: usize) {
@@ -362,12 +365,12 @@ fn index_without_tier_order_reuses_what_lru_reuses() {
 }
 
 /// Conversations that branch, repeat and continue under pressure, run on
-/// three pools in lockstep. The index-only pool matches LRU in every hit,
-/// victim, page count and metric; the ancestry pool shows the traffic
-/// separates the two orders.
+/// four pools in lockstep. The index-only pool and the RAM tier pool with
+/// nothing demoted match LRU in every hit, victim, page count and metric;
+/// the ancestry pool shows the traffic separates the two orders.
 #[test]
 fn index_without_tier_order_evicts_exactly_as_lru() {
-    let orders = [Order::Lru, Order::Index, Order::Ancestry];
+    let orders = [Order::Lru, Order::Index, Order::Ram, Order::Ancestry];
     let mut pools = orders.map(|order| {
         ordered(
             KvPool::new(KvGeometry::new(4, 48).unwrap(), 8).unwrap(),
@@ -415,7 +418,8 @@ fn index_without_tier_order_evicts_exactly_as_lru() {
             seen.push(prompt.key_at(prompt.tokens().len()).unwrap());
         }
         assert_eq!(outcomes[1], outcomes[0], "step {step}");
-        diverged |= outcomes[2].0 != outcomes[0].0;
+        assert_eq!(outcomes[2], outcomes[0], "step {step}");
+        diverged |= outcomes[3].0 != outcomes[0].0;
         if step % 25 == 0 {
             let present = |pool: &KvPool| {
                 seen.iter()
@@ -423,7 +427,8 @@ fn index_without_tier_order_evicts_exactly_as_lru() {
                     .collect::<Vec<_>>()
             };
             assert_eq!(present(&pools[1]), present(&pools[0]), "step {step}");
-            diverged |= present(&pools[2]) != present(&pools[0]);
+            assert_eq!(present(&pools[2]), present(&pools[0]), "step {step}");
+            diverged |= present(&pools[3]) != present(&pools[0]);
             for pool in &pools {
                 pool.audit().unwrap();
             }

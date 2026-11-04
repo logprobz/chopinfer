@@ -4,9 +4,10 @@
 use std::sync::Arc;
 
 use runtime_kv::{
-    HostAnchorId, HostTier, KvGeometry, KvPool, KvTransferClass, KvTransferCompletion,
-    KvTransferPlan, KvTransferStatus, PrefixAnchorClassV1, PrefixCacheKeyV1, PrefixChainV1,
-    PrefixEvictionTierV1, PrefixHostInvalidationV1,
+    HostAnchorId, HostTier, KvError, KvGeometry, KvPool, KvTransferClass, KvTransferCompletion,
+    KvTransferPlan, KvTransferStatus, PREFIX_EVICTION_LOG_V1, PrefixAnchorClassV1,
+    PrefixCacheKeyV1, PrefixChainV1, PrefixDemotionCandidateV1, PrefixEvictionTierV1,
+    PrefixEvictionV1, PrefixHostInvalidationV1,
 };
 
 fn chain(tokens: &[u32]) -> PrefixChainV1 {
@@ -331,4 +332,184 @@ fn demotions_refuse_anything_but_an_indexed_public_frontier() {
     assert!(other.begin_offload(&mut pool, key(8), None).is_err());
     other.audit(&pool).unwrap();
     assert_idle(&pool, &tier);
+}
+
+#[test]
+fn demotion_candidates_are_frontiers_in_eviction_order() {
+    let interior = chain(&(0..8).collect::<Vec<_>>());
+    let (short, plain, shadowed, copying) = (
+        chain(&[2; 4]),
+        chain(&[3; 8]),
+        chain(&[4; 8]),
+        chain(&[5; 8]),
+    );
+    let mut pool = ram_pool(48);
+    let mut tier = HostTier::new(&pool, 32).unwrap();
+    // Oldest first: an ancestor, its frontier, a short frontier, a plain
+    // frontier, a shadow, a copy in flight, then digest-only and private
+    // anchors.
+    capture(&mut pool, &interior, &[4, 8]);
+    capture(&mut pool, &short, &[4]);
+    capture(&mut pool, &plain, &[8]);
+    capture(&mut pool, &shadowed, &[8]);
+    capture(&mut pool, &copying, &[8]);
+    let source = pool.create_sequence(8).unwrap();
+    pool.append(source, 8).unwrap();
+    let (digest, private) = (
+        PrefixCacheKeyV1::new([7; 32]),
+        PrefixCacheKeyV1::new([9; 32]),
+    );
+    pool.insert_anchor(digest, digest, source, 1)
+        .unwrap()
+        .unwrap();
+    pool.insert_private_anchor(private, source, 1)
+        .unwrap()
+        .unwrap();
+    pool.release(source).unwrap();
+    demote(&mut pool, &mut tier, shadowed.key_at(8).unwrap());
+    let (_, plan) = tier
+        .begin_offload(&mut pool, copying.key_at(8).unwrap(), None)
+        .unwrap();
+    let before = pool.clone();
+    let candidate = |chain: &PrefixChainV1, tokens, freeable_pages| PrefixDemotionCandidateV1 {
+        key: chain.key_at(tokens).unwrap(),
+        tokens,
+        freeable_pages,
+    };
+    // The frontier shares its first page with the ancestor below it.
+    let all = [candidate(&interior, 8, 2), candidate(&plain, 8, 3)];
+    assert_eq!(pool.demotion_candidates(usize::MAX, 8), all);
+    assert_eq!(
+        pool.demotion_candidates(usize::MAX, 4),
+        [all[0], candidate(&short, 4, 2), all[1]]
+    );
+    // The ancestor frees only its snapshot page, a lead of one page; the
+    // frontier after it reaches a lead of three.
+    assert!(pool.demotion_candidates(1, 8).is_empty());
+    assert_eq!(pool.demotion_candidates(3, 8), all[..1]);
+    assert!(pool.demotion_candidates(0, 8).is_empty());
+    assert_eq!(pool, before);
+    tier.complete_transfer(&mut pool, completed(plan)).unwrap();
+    tier.audit(&pool).unwrap();
+    // Without the tier nothing is a candidate.
+    let mut off = KvPool::new(KvGeometry::new(4, 16).unwrap(), 2)
+        .unwrap()
+        .with_prefix_index(true);
+    capture(&mut off, &plain, &[8]);
+    assert!(off.demotion_candidates(usize::MAX, 1).is_empty());
+}
+
+#[test]
+fn host_lookup_matches_ready_usable_entries_of_the_prompt() {
+    let prompt = chain(&(0..16).collect::<Vec<_>>());
+    let key = |depth| prompt.key_at(depth).unwrap();
+    // Forced mode keeps an interior entry beside a deeper one, so one prompt
+    // matches two entries.
+    let mut pool = ram_pool(48).with_prefix_ram_forced(true);
+    let mut tier = HostTier::new(&pool, 32).unwrap();
+    for depth in [6, 12] {
+        capture(&mut pool, &prompt, &[depth]);
+        demote(&mut pool, &mut tier, key(depth));
+        assert!(pool.remove_anchor(key(depth)).unwrap());
+    }
+    assert!(pool.lookup_anchor(&prompt, 16).is_none());
+    assert_eq!(pool.lookup_host_anchor(&prompt, 15), Some((key(12), 12)));
+    assert_eq!(pool.lookup_host_anchor(&prompt, 11), Some((key(6), 6)));
+    assert_eq!(pool.lookup_host_anchor(&prompt, 5), None);
+    // The same full blocks with a different partial tail are another key.
+    let diverged = chain(&[0, 1, 2, 3, 4, 99, 6, 7]);
+    assert_eq!(pool.lookup_host_anchor(&diverged, 8), None);
+    let geometry = PrefixChainV1::new(8, Arc::from(prompt.tokens()), Vec::new()).unwrap();
+    assert_eq!(pool.lookup_host_anchor(&geometry, 15), None);
+    // An unusable entry is skipped for a shorter usable one.
+    capture(&mut pool, &prompt, &[12]);
+    assert_eq!(
+        pool.host_invalidation(key(12)),
+        Some(PrefixHostInvalidationV1::Recaptured)
+    );
+    assert_eq!(pool.lookup_host_anchor(&prompt, 15), Some((key(6), 6)));
+    tier.drop_invalidated_entries(&mut pool).unwrap();
+    assert!(pool.remove_anchor(key(12)).unwrap());
+    // So is an entry whose copy is still in flight.
+    capture(&mut pool, &prompt, &[12]);
+    let (_, plan) = tier.begin_offload(&mut pool, key(12), None).unwrap();
+    assert_eq!(pool.lookup_host_anchor(&prompt, 15), Some((key(6), 6)));
+    tier.complete_transfer(&mut pool, completed(plan)).unwrap();
+    assert_eq!(pool.lookup_host_anchor(&prompt, 15), Some((key(12), 12)));
+    tier.audit(&pool).unwrap();
+}
+
+#[test]
+fn eviction_skips_the_demotion_in_flight_and_logs_public_victims() {
+    let prompts: Vec<_> = (1..=3).map(|n| chain(&[n; 8])).collect();
+    let keys: Vec<_> = prompts.iter().map(|c| c.key_at(8).unwrap()).collect();
+    // Three anchors of three pages fill nine of ten pages.
+    let mut pool = ram_pool(10);
+    let mut tier = HostTier::new(&pool, 32).unwrap();
+    for prompt in &prompts {
+        capture(&mut pool, prompt, &[8]);
+    }
+    let private = PrefixCacheKeyV1::new([9; 32]);
+    let (_, plan) = tier.begin_offload(&mut pool, keys[0], None).unwrap();
+    // Two pages of pressure skip the oldest anchor, whose leased pages
+    // eviction cannot free, and take the next.
+    let pressure = |pool: &mut KvPool, tokens| {
+        let handle = pool.create_sequence(tokens).unwrap();
+        let result = pool.append(handle, tokens);
+        pool.release(handle).unwrap();
+        result.map(|_| ())
+    };
+    pressure(&mut pool, 8).unwrap();
+    assert!(pool.has_anchor(keys[0]) && !pool.has_anchor(keys[1]));
+    let record = |key, covered| PrefixEvictionV1 {
+        key,
+        tokens: 8,
+        covered,
+        frontier: true,
+    };
+    assert_eq!(
+        pool.drain_prefix_evictions(),
+        (vec![record(keys[1], false)], 0)
+    );
+    // When the copy is the only victim left, allocation fails instead.
+    pressure(&mut pool, 20).unwrap();
+    assert!(!pool.has_anchor(keys[2]));
+    assert!(matches!(
+        pressure(&mut pool, 40),
+        Err(KvError::PoolExhausted { .. })
+    ));
+    assert!(pool.has_anchor(keys[0]));
+    tier.complete_transfer(&mut pool, completed(plan)).unwrap();
+    // A covered eviction is logged as such; private evictions are not.
+    let source = pool.create_sequence(4).unwrap();
+    pool.append(source, 4).unwrap();
+    pool.insert_private_anchor(private, source, 1)
+        .unwrap()
+        .unwrap();
+    pool.release(source).unwrap();
+    pressure(&mut pool, 40).unwrap();
+    assert!(!pool.has_anchor(keys[0]) && !pool.has_anchor(private));
+    assert_eq!(
+        pool.drain_prefix_evictions(),
+        (vec![record(keys[2], false), record(keys[0], true)], 0)
+    );
+    tier.audit(&pool).unwrap();
+}
+
+#[test]
+fn the_eviction_log_keeps_its_newest_records() {
+    // Each capture of four tokens and one snapshot page evicts the last.
+    let mut pool = ram_pool(3);
+    let total = PREFIX_EVICTION_LOG_V1 + 3;
+    for n in 0..=total as u32 {
+        capture(&mut pool, &chain(&[n; 4]), &[4]);
+    }
+    let (evictions, discarded) = pool.drain_prefix_evictions();
+    assert_eq!((evictions.len(), discarded), (PREFIX_EVICTION_LOG_V1, 3));
+    assert_eq!(
+        evictions.last().map(|record| record.key),
+        chain(&[total as u32 - 1; 4]).key_at(4)
+    );
+    assert_eq!(pool.drain_prefix_evictions(), (Vec::new(), 0));
+    pool.audit().unwrap();
 }

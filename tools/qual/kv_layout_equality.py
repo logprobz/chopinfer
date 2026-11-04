@@ -4,15 +4,14 @@
 A model whose comparison KV layout stores the same values as its served one
 (BF16 pages holding exactly what the native formats decode to) must serve
 the same bits from both. Bitwise equality of native against BF16 storage is
-required in the model's comparison configuration (DeepSeek 4.1's kv-bf16)
-on the determinism records, on forced records (`compare`) and on the decoded
+required in the model's BF16 comparison configuration (kv-bf16) on the
+determinism records, on forced records (`compare`) and on the decoded
 KV-state taps of a diagnostic-taps build (`taps`). The BF16 layout matches
 the native layout's stored values and production prefill partials, so the
-comparison isolates KV storage; routes only the native layout takes (on
-DeepSeek 4.1's Flash TP4 the served prefill attention with its decoded BF16
-cache, indexer MMA scoring of FP4 index keys and the device-results AR
-bridge) are compared as served against the BF16 layout's admitted paths.
-Both layouts run without speculation. Production accuracy is qualified
+comparison isolates KV storage; every route only the native layout takes
+(the kernels reading its packed codes and scales, and each fast route a
+package admits at its native layout alone) is compared as served against
+the BF16 layout's admitted paths. Production accuracy is qualified
 separately, by the default configuration's teacher, chat, long_context,
 multimodal, verify_exact pairs, greedy AR versus DSpark and determinism
 gates.
@@ -26,7 +25,7 @@ a `kv-native` server, which serves `auto`, the package's preferred layout;
 and a forced record of each layout (verify_exact.py record --k 0
 --require-row-shapes --reference long_context, on the forced `prefix` arm
 and a `kv-native-forced` arm), which teacher-forces the exact reference's
-texts and the pinned long-context text: DeepSeek 4.1's long_128k, a
+texts and the pinned long-context text: for a long_128k reference a
 130,048-token forced prefill and 1,024 forced decode positions, which no
 teacher capture can stand in for since it scores prefill rows only. The
 runner adds RUNNER_FORCED_REFERENCES to the configuration's forcing file.

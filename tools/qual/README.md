@@ -450,18 +450,16 @@ cohorts as `kv_offload_prefix_pressure`.
 
 A comparison KV layout that stores exactly the values the native formats
 decode to must serve the same bits. Bitwise equality of native against BF16
-storage is required in a model's comparison configuration (DeepSeek 4.1's
-`kv-bf16`) on the determinism records, on forced records and on the
-decoded KV-state taps of a `diagnostic-taps` build. The BF16 layout matches
-the native layout's stored values (each decoded value, held exactly in
-BF16) and its production prefill partials, so the comparison isolates KV
-storage. Routes the native layout alone takes are compared as served: on
-DeepSeek 4.1's Flash TP4 the native server runs the served prefill
-attention with its decoded BF16 cache, indexer MMA scoring of FP4 index
-keys (the eager prefill tile and the host-selected decode schedules) and
-the device-results AR bridge, where the BF16 server runs its admitted
-paths, and the bits must still be equal. BF16 KV serves autoregressive
-decoding only, so both layouts run without speculation. The check does not
+storage is required in a model's BF16 comparison configuration (`kv-bf16`)
+on the determinism records, on forced records and on the decoded KV-state
+taps of a `diagnostic-taps` build. The BF16 layout matches the native
+layout's stored values (each decoded value, held exactly in BF16) and its
+production prefill partials, so the comparison isolates KV storage. Every
+route only the native layout takes is compared as served: the kernels that
+read its packed codes and block scales and each fast route a package admits
+at its native layout alone run on the native server, the BF16 server runs
+its admitted paths there, and the bits must still be equal. A BF16 configuration that serves autoregressive
+decoding only runs both layouts without speculation. The check does not
 qualify production accuracy: the default configuration's teacher, chat,
 long_context, multimodal, `verify_exact` pairs, greedy AR versus DSpark and
 determinism gates do.
@@ -476,12 +474,11 @@ token IDs, tokens and selected and top logprobs must be bit-identical. The
 forced records must hold the same positions, those the gate's pinned exact
 and long-context references define, with bit-identical logprobs and top-5
 at every forced position and bit-identical prefill rows; the first
-differing text and position is named. The long-context text (DeepSeek
-4.1's `long_128k`, 131,072 tokens) is forced through a 130,048-token
-prefill and then decoded for 1,024 forced positions, which reaches
-multi-chunk prefill, the decoded cache and decode-time indexer selection
-over thousands of candidates; the runner adds it to the configuration's
-forcing file (`RUNNER_FORCED_REFERENCES`). A teacher capture cannot stand
+differing text and position is named. The long-context text (for a
+`long_128k` reference, 131,072 tokens) is forced through its prefill
+(130,048 tokens) and then decoded for its 1,024 scored positions, which
+reaches multi-chunk prefill and decode over a long history; the runner
+adds it to the configuration's forcing file (`RUNNER_FORCED_REFERENCES`). A teacher capture cannot stand
 in for it, since the teacher scores prefill rows only. A server that cannot
 hold the long history refuses the record, naming the KV capacity it needs,
 and the check fails.

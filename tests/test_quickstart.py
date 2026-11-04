@@ -1,4 +1,5 @@
 """Quickstart builds, installs private binaries and serves `serve --model CHECKPOINT`."""
+import argparse
 import contextlib
 import importlib.util
 import io
@@ -75,8 +76,7 @@ class QuickstartTest(unittest.TestCase):
                 self.assertNotIn(removed, stdout)
 
     def test_autoregressive_profiles_turn_speculation_off(self):
-        for model, profile, tp in [('qwen38', 'tp4-ar', 4), ('qwen38', 'tp2-ar', 2), ('mimo26', 'tp4-ar', 4),
-                                   ('mimo26', 'tp2-ar', 2)]:
+        for model, profile, tp in [('qwen38', 'tp4-ar', 4), ('qwen38', 'tp2-ar', 2), ('glm5next', 'tp4-ar', 4)]:
             stdout, _, code = quickstart([model, profile, '/data', '--checkpoint', '/checkpoint', '--dry-run',
                                           '--skip-build', '--model-cache-dir', '/cache', '--listen', '0.0.0.0:9000',
                                           '--', '--max-sequences', '8'])
@@ -90,19 +90,19 @@ class QuickstartTest(unittest.TestCase):
         self.assertEqual(stdout.count('--speculative-tokens'), 1)
 
     def test_verify_uses_mimo_manifest_and_allows_unrecorded(self):
+        # Quickstart offers released models only, so MiMo's rule is checked directly.
         default = json.loads((ROOT / 'models/mimo26/checkpoints.json').read_text())['default']
-        stdout, _, code = quickstart(['mimo26', 'tp4-ar', '/data', '--checkpoint', '/checkpoint', '--dry-run',
+        manifest = f"{ROOT}/models/mimo26/checkpoint-files.json#{default}"
+        self.assertEqual(MODULE.verify_command('chopinfer', 'mimo26', '/checkpoint'),
+                         ['chopinfer', 'verify', '--model', '/checkpoint', '--manifest', manifest, '--allow-unrecorded'])
+        stdout, _, code = quickstart(['qwen38', 'tp4-mtp', '/data', '--checkpoint', '/checkpoint', '--dry-run',
                                       '--skip-build', '--skip-serve', '--verify'])
         self.assertIsNone(code)
-        manifest = f"{ROOT}/models/mimo26/checkpoint-files.json#{default}"
-        self.assertIn(f"chopinfer verify --model /checkpoint --manifest '{manifest}' --allow-unrecorded", stdout)
-        self.assertNotIn(' serve ', stdout)
-        stdout, _, _ = quickstart(['qwen38', 'tp4-mtp', '/data', '--checkpoint', '/checkpoint', '--dry-run',
-                                   '--skip-build', '--verify'])
         self.assertIn('chopinfer verify --model /checkpoint\n', stdout)
+        self.assertNotIn(' serve ', stdout)
 
     def test_removed_flags_name_their_replacement(self):
-        base = ['mimo26', 'tp4-ar', '/data', '--checkpoint', '/c', '--dry-run']
+        base = ['qwen38', 'tp4-mtp', '/data', '--checkpoint', '/c', '--dry-run']
         for flag, expected in [('--skip-materialize', 'no rank images'), ('--skip-package', 'model cache'),
                                ('--skip-install', 'nothing is installed'), ('--space-margin-gib=0', 'space preflight'),
                                ('--drafter-checkpoint', 'CHECKPOINT/dflash/')]:
@@ -120,47 +120,54 @@ class QuickstartTest(unittest.TestCase):
         self.assertEqual(code, 2)
         self.assertIn('serve overrides must follow --', errors)
 
+    @staticmethod
+    def layout(profile, drafter, checkpoint):
+        """check_layout's refusal of MiMo's `profile` for `checkpoint`, or None."""
+        errors = io.StringIO()
+        with contextlib.redirect_stderr(errors):
+            try:
+                MODULE.check_layout(argparse.ArgumentParser(prog='quickstart'), 'mimo26', profile, drafter, checkpoint)
+            except SystemExit:
+                return errors.getvalue()
+        return None
+
     def test_mimo_profile_must_match_the_checkpoint_layout(self):
+        # Quickstart offers released models only, so MiMo's rule is checked directly.
         with tempfile.TemporaryDirectory() as temporary:
             checkpoint = Path(temporary)
-            base = ['/data', '--checkpoint', checkpoint, '--dry-run', '--skip-build']
-            _, errors, code = quickstart(['mimo26', 'tp4-dflash', *base])
-            self.assertEqual(code, 2)
-            self.assertIn(f'{checkpoint}/dflash/', errors)
-            _, errors, code = quickstart(['mimo26', 'tp4-mtp', *base])
-            self.assertIn('model_mtp.safetensors', errors)
+            self.assertIn(f'{checkpoint}/dflash/', self.layout('tp4-dflash', 'dflash', checkpoint))
+            self.assertIn('model_mtp.safetensors', self.layout('tp4-mtp', 'mtp', checkpoint))
             (checkpoint / 'model_mtp.safetensors').write_text('')
-            self.assertIsNone(quickstart(['mimo26', 'tp4-mtp', *base])[2])
+            self.assertIsNone(self.layout('tp4-mtp', 'mtp', checkpoint))
             (checkpoint / 'dflash').mkdir()
-            _, errors, code = quickstart(['mimo26', 'tp4-mtp', *base])
-            self.assertEqual(code, 2)
-            self.assertIn('picks tp4-dflash', errors)
-            self.assertIsNone(quickstart(['mimo26', 'tp4-dflash', *base])[2])
+            self.assertIn('picks tp4-dflash', self.layout('tp4-mtp', 'mtp', checkpoint))
+            self.assertIsNone(self.layout('tp4-dflash', 'dflash', checkpoint))
+            base = ['/data', '--checkpoint', checkpoint, '--dry-run', '--skip-build']
             self.assertIsNone(quickstart(['qwen38', 'tp4-mtp', *base])[2])
 
     def test_serve_installs_private_binaries_then_execs_serve_model(self):
         with tempfile.TemporaryDirectory() as temporary:
             data = Path(temporary)
             checkpoint = data / 'checkpoint'
-            (checkpoint / 'dflash').mkdir(parents=True)
-            fake_target(data / 'build', 'mimo26')
+            checkpoint.mkdir()
+            fake_target(data / 'build', 'qwen38')
             calls, execs = [], []
-            argv = ['mimo26', 'tp4-dflash', data, '--checkpoint', checkpoint, '--skip-build', '--verify',
+            argv = ['qwen38', 'tp4-mtp', data, '--checkpoint', checkpoint, '--skip-build', '--verify',
                     '--release', data / 'releases/mine']
             env = {'CARGO_TARGET_DIR': str(data / 'build'), 'CUDA_VISIBLE_DEVICES': '0,1,2,3'}
             asked = []
             def selected(helper, checkpoint, ranks):
                 asked.append((helper, checkpoint, ranks))
-                return 'tp4-dflash'
+                return 'tp4-mtp'
             with patch.object(MODULE, 'run', lambda command, **_: calls.append(list(map(str, command)))), \
                     patch.object(MODULE.os, 'execvp', lambda name, command: execs.append(command)), \
                     patch.object(MODULE, 'selected_profile', selected):
                 self.assertIsNone(quickstart(argv, env)[2])
                 # Rerunning into the same release replaces its binaries.
                 self.assertIsNone(quickstart(argv, env)[2])
-            self.assertEqual(asked[0], (data / 'releases/mine/install/bin/chopinfer-model-mimo26', checkpoint, 4))
+            self.assertEqual(asked[0], (data / 'releases/mine/install/bin/chopinfer-model-qwen38', checkpoint, 4))
             install = data / 'releases/mine/install'
-            for directory, name in MODULE.binaries('mimo26'):
+            for directory, name in MODULE.binaries('qwen38'):
                 self.assertEqual((install / directory / name).read_text(), name)
             for path in [install, *install.rglob('*')]:
                 self.assertEqual(path.stat().st_mode & 0o777, 0o755, path)
@@ -199,17 +206,17 @@ class QuickstartTest(unittest.TestCase):
         self.assertEqual(self.served('qwen38', 'tp2-ar', 'tp4-mtp')[2], 2)
 
     def test_an_autoregressive_request_runs_the_selected_profile_with_speculation_off(self):
-        profiles = json.loads((ROOT / 'models/mimo26/profiles.json').read_text())['profiles']
-        stdout, _, code, calls, served = self.served('mimo26', 'tp4-ar', 'tp4-dflash')
+        profiles = json.loads((ROOT / 'models/glm5next/profiles.json').read_text())['profiles']
+        stdout, _, code, calls, served = self.served('glm5next', 'tp4-ar', 'tp4-mtp')
         self.assertIsNone(code)
-        self.assertIn("Profile: tp4-ar runs this checkpoint's tp4-dflash with speculation off; tp4-dflash: "
-                      f"{profiles['tp4-dflash']['status']}: {profiles['tp4-dflash']['qualification']}", stdout)
-        self.assertEqual(calls[0][1:], ['profiles', 'show', str(ROOT / 'models/mimo26/profiles.json'), 'tp4-dflash'])
+        self.assertIn("Profile: tp4-ar runs this checkpoint's tp4-mtp with speculation off; tp4-mtp: "
+                      f"{profiles['tp4-mtp']['status']}: {profiles['tp4-mtp']['qualification']}", stdout)
+        self.assertEqual(calls[0][1:], ['profiles', 'show', str(ROOT / 'models/glm5next/profiles.json'), 'tp4-mtp'])
         self.assertEqual(served[-2:], ['--speculative-tokens', '0'])
         # The requested profile, when selected, is shown as it is.
-        stdout, _, code, calls, _ = self.served('mimo26', 'tp4-dflash', 'tp4-dflash')
+        stdout, _, code, calls, _ = self.served('glm5next', 'tp4-mtp', 'tp4-mtp')
         self.assertIsNone(code)
-        self.assertIn(f"Profile: tp4-dflash: {profiles['tp4-dflash']['status']}", stdout)
+        self.assertIn(f"Profile: tp4-mtp: {profiles['tp4-mtp']['status']}", stdout)
 
     def test_the_helper_is_asked_for_its_profile(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -239,7 +246,7 @@ class QuickstartTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             checkpoint = Path(temporary) / 'checkpoint'
             checkpoint.mkdir()
-            args = ['mimo26', 'tp4-ar', temporary, '--checkpoint', checkpoint, '--skip-build', '--skip-serve']
+            args = ['qwen38', 'tp4-mtp', temporary, '--checkpoint', checkpoint, '--skip-build', '--skip-serve']
             _, errors, code = quickstart(args, {'CARGO_TARGET_DIR': temporary + '/build'})
             self.assertEqual(code, 2)
             self.assertIn('rerun without --skip-build', errors)
@@ -247,7 +254,7 @@ class QuickstartTest(unittest.TestCase):
             _, errors, code = quickstart(args, {'CUDA_VISIBLE_DEVICES': ''})
             self.assertEqual(code, 2)
             self.assertIn('set CUDA_VISIBLE_DEVICES', errors)
-            _, errors, code = quickstart(['mimo26', 'tp4-ar', temporary, '--checkpoint', f'{temporary}/absent',
+            _, errors, code = quickstart(['qwen38', 'tp4-mtp', temporary, '--checkpoint', f'{temporary}/absent',
                                           '--skip-serve'])
             self.assertIn('checkpoint directory not found', errors)
 
@@ -255,7 +262,7 @@ class QuickstartTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             caller = Path(temporary)
             env = dict(os.environ, CHOPINFER_LOCAL_ENV='/dev/null', CARGO_TARGET_DIR='build')
-            result = subprocess.run([ROOT / 'tools/quickstart.sh', 'mimo26', 'tp4-dflash', 'data',
+            result = subprocess.run([ROOT / 'tools/quickstart.sh', 'qwen38', 'tp4-mtp', 'data',
                 '--checkpoint', 'checkpoint', '--model-cache-dir', 'cache',
                 '--release', 'data/release', '--dry-run', '--skip-build'],
                 cwd=caller, env=env, text=True, capture_output=True, check=True)

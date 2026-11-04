@@ -642,8 +642,8 @@ def shipped(root=ROOT) -> tuple[str, ...]:
 
 def released(root=ROOT) -> tuple[str, ...]:
     """The shipped models whose inventory enables `[release]`, by name in
-    directory order. A model declares `[release] enabled = false` until it
-    qualifies; tests exempt it from the released-model facts."""
+    directory order. A model declares `[release] enabled = false` while it is
+    not released; tests exempt it from the released-model facts."""
     return tuple(model.name for model in load(root) if model.release.enabled)
 
 

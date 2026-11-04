@@ -22,7 +22,7 @@ def released(path):
     """Whether the declaration at `path` (models/MODEL/...) is a release
     declaration: its model is released (tools/model_sdk/inventory.py), and
     it names no variant. A model that declares `[release] enabled = false`
-    until it qualifies is exempt from the shipped-model facts. A variant
+    while it is not released is exempt from the shipped-model facts. A variant
     (`qual.<variant>.json`, whose `variant` field declaration.load requires)
     qualifies another checkpoint or serving configuration as MODEL.VARIANT;
     it is not the model's release declaration, which keeps every release

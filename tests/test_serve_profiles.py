@@ -18,8 +18,8 @@ from tools.model_sdk import inventory as model_inventory  # noqa: E402
 def released(profiles_path):
     """Whether the model owning `profiles_path` (models/MODEL/profiles.json)
     is released (tools/model_sdk/inventory.py). A model that declares
-    `[release] enabled = false` until it qualifies is exempt from the tp4-ar
-    C64 qualification."""
+    `[release] enabled = false` while it is not released is exempt from the
+    tp4-ar C64 qualification."""
     return profiles_path.parent.name in model_inventory.released(ROOT)
 
 def profile_comparison(profile):
@@ -312,7 +312,9 @@ print(json.dumps({'result': 'prepared-direct', 'bundle': str(bundle)}))
                     # cadence target; every other profile keeps whole grid chunks.
                     dspark = (data['model'], name) == ('deepseek41', 'tp4-dspark')
                     self.assertIn(profile['prefill_policy'], ('fixed', 'tbt', 'adaptive'))
-                    at_64 = self.qualified_at_64(path, name) or (data['model'], name) == ('mimo26', 'tp4-dflash')
+                    # MiMo, outside the release, keeps the C64 qualifications it recorded.
+                    at_64 = self.qualified_at_64(path, name) or (data['model'], name) in (('mimo26', 'tp4-ar'),
+                                                                                          ('mimo26', 'tp4-dflash'))
                     self.check_cap(profile, at_64)
                     if (data['model'], name) == ('mimo26', 'tp4-dflash'):
                         # Its pooled speculative accuracy gate was waived by

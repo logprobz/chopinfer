@@ -6,14 +6,18 @@ import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'tests'))
 from model_requirements import ROOT, ModelRequirements  # noqa: E402
+from tools.model_sdk import inventory  # noqa: E402
 
 
 class MiMoInventory(ModelRequirements):
     MODEL = 'mimo26'
 
-    def test_release_ships_the_package_command_and_bundle(self):
-        release = self.release()
-        self.assertIsNotNone(release, 'mimo26 is released')
+    def test_outside_the_release_its_redeploy_keeps_the_declared_targets(self):
+        # Outside the release scope: CPU tests only, no further GPU qualification.
+        self.assertIs(self.declared['release']['enabled'], False)
+        self.assertIsNone(self.release())
+        # tools/dev/mimo-redeploy.sh installs the declared targets (tools/release/plan.py).
+        release = next(record for record in inventory.release_plan([self.model], declared=True))
         self.assertEqual({(target.name, target.kind) for target in release.targets},
                          {('mimo26-package', 'bin'), ('chopinfer-model-mimo26', 'bin'), ('bundle_mimo26', 'cdylib')})
         self.assertEqual(self.model.release.assets, ())

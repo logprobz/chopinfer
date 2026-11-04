@@ -21,13 +21,13 @@ COMMON = ROOT / 'tools/dev/redeploy-common.sh'
 
 
 class DeploymentArtifacts(unittest.TestCase):
-    def test_template_instances_keep_devices_ports_and_checkpoints_separate(self):
+    def test_template_instances_keep_devices_and_ports_separate(self):
         unit = (ROOT / 'deploy/systemd/chopinfer@.service').read_text()
         self.assertIn('EnvironmentFile=/etc/chopinfer/%i.env', unit)
         self.assertIn('ExecStart=/opt/chopinfer/bin/entrypoint.sh $CHOPINFER_SERVE_ARGS', unit)
         environments = []
-        for model, devices, port in [('mimo26', '0,1', '8311'), ('qwen38', '2,3', '8431')]:
-            text = (ROOT / f'deploy/systemd/{model}-tp2.env.example').read_text()
+        for instance, devices, port in [('qwen38-tp2-replica', '0,1', '8311'), ('qwen38-tp2', '2,3', '8431')]:
+            text = (ROOT / f'deploy/systemd/{instance}.env.example').read_text()
             env = dict(line.split('=', 1) for line in text.splitlines()
                        if line and not line.startswith('#'))
             self.assertEqual(env['CUDA_VISIBLE_DEVICES'], devices)
@@ -35,7 +35,10 @@ class DeploymentArtifacts(unittest.TestCase):
             self.assertEqual(env['CHOPINFER_TENSOR_PARALLEL_SIZE'], '2')
             self.assertEqual(env['CHOPINFER_MODEL_CACHE'], '/var/lib/chopinfer/model-cache')
             environments.append(env)
-        self.assertNotEqual(*(env['CHOPINFER_MODEL'] for env in environments))
+        # Replicas may share the read-only checkpoint, never a device or a port.
+        first, second = (set(env['CUDA_VISIBLE_DEVICES'].split(',')) for env in environments)
+        self.assertFalse(first & second)
+        self.assertNotEqual(*(env['CHOPINFER_LISTEN'] for env in environments))
 
     def test_systemd_examples_name_a_checkpoint_and_pass_validation(self):
         spec = importlib.util.spec_from_file_location('deployment', ROOT / 'deploy/docker/deployment.py')

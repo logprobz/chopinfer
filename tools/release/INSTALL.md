@@ -3,17 +3,15 @@
 Expect bugs and breaking formats, flags and packages. Requires Linux x86_64
 with glibc 2.39 or newer. Serving is tested and supported only on NVIDIA RTX
 PRO 6000 Blackwell 96 GB GPUs, two or four per model; other SM120 parts are
-untested and may be refused. Models: MiMo V2.6 Flash, Qwen3.8 Flash and GLM
-5.3 Flash. Weights and GPU qualification are not included.
+untested and may be refused. Models: Qwen3.8 Flash and GLM 5.3 Flash.
+Weights and GPU qualification are not included.
 
 1. Check the archive against the adjacent SHA256SUMS, extract it, then run
    `sha256sum --check SHA256SUMS` inside. Add `bin/` to PATH; use `--version`
    on either host binary to identify the build.
 2. `chopinfer serve --model DIR` serves a supported checkpoint by loading it
    directly through the `bin/chopinfer-model-*` helpers and `lib/*.so`;
-   `chopinfer verify --model DIR` checks its contents first. A MiMo copy
-   without Hugging Face metadata needs the source lock: add `--manifest
-   models/mimo26/checkpoint-files.json#mopd --allow-unrecorded`. To pin a
+   `chopinfer verify --model DIR` checks its contents first. To pin a
    package, pass the matching `lib/*.so` to `*-package --module` and serve it
    with `chopinfer serve --bundle PACKAGE --checkpoint DIR --profile NAME`.
    Libraries contain locked sm_120f cubins; they are not model packages.

@@ -191,11 +191,9 @@
   "crates/kernels-sm120/src/row/hyper_connection.rs": {"matches": {"qwen38": 11}, "reason": "Pending model-kernel extraction; remove or reduce this entry when references move to model ownership."},
   "deploy/systemd/chopinfer-glm5next.service": {"matches": {"glm": 1, "glm5next": 3}, "reason": "Shipped model integration, build selection, or deployment defaults."},
   "deploy/systemd/glm5next.env.example": {"matches": {"glm": 2, "glm5next": 2}, "reason": "Shipped model integration, build selection, or deployment defaults."},
-  "deploy/systemd/chopinfer-mimo26.service": {"matches": {"mimo": 2, "mimo26": 2}, "reason": "Shipped model integration, build selection, or deployment defaults."},
   "deploy/systemd/chopinfer-qwen38.service": {"matches": {"qwen": 1, "qwen38": 3}, "reason": "Shipped model integration, build selection, or deployment defaults."},
-  "deploy/systemd/mimo26-tp2.env.example": {"matches": {"mimo": 3, "mimo26": 1}, "reason": "Shipped model integration, build selection, or deployment defaults."},
-  "deploy/systemd/mimo26.env.example": {"matches": {"mimo": 3, "mimo26": 1}, "reason": "Shipped model integration, build selection, or deployment defaults."},
   "deploy/systemd/qwen38-tp2.env.example": {"matches": {"qwen": 2, "qwen38": 2}, "reason": "Shipped model integration, build selection, or deployment defaults."},
+  "deploy/systemd/qwen38-tp2-replica.env.example": {"matches": {"qwen": 3, "qwen38": 2}, "reason": "Shipped model integration, build selection, or deployment defaults."},
   "deploy/systemd/qwen38.env.example": {"matches": {"qwen": 1, "qwen38": 2}, "reason": "Shipped model integration, build selection, or deployment defaults."},
   "tools/dev/benchmark-loop.py": {"matches": {"mimo": 4, "mimo26": 2, "qwen38": 3}, "reason": "Existing model qualification, profiling, or development integration; migrate new model behavior to its owner."},
   "tools/dev/concurrency-control.py": {"matches": {"mimo": 1, "qwen38": 1}, "reason": "Existing model qualification, profiling, or development integration; migrate new model behavior to its owner."},
@@ -298,5 +296,5 @@
   "tools/refrun/taps.py": {"matches": {"qwen38": 1}, "reason": "Reference adapters and model workload comparisons."},
   "tools/refrun/test_quant.py": {"matches": {"mimo": 1}, "reason": "Reference adapters and model workload comparisons."},
   "tools/refrun/workload.py": {"matches": {"qwen38": 1}, "reason": "Reference adapters and model workload comparisons."},
-  "tools/release/INSTALL.md": {"matches": {"glm": 1, "mimo": 2, "mimo26": 1, "qwen": 1}, "reason": "Shipped model integration, build selection, or deployment defaults."}
+  "tools/release/INSTALL.md": {"matches": {"glm": 1, "qwen": 1}, "reason": "Shipped model integration, build selection, or deployment defaults."}
 }

@@ -19,8 +19,9 @@ bin = ["chopinfer-model-mimo26", "mimo26-package"]
 [contract]
 package = "model-mimo26-contract"
 
+# Outside the release scope; tools/dev/mimo-redeploy.sh installs the targets.
 [release]
-enabled = true
+enabled = false
 bins = ["mimo26-package", "chopinfer-model-mimo26"]
 cdylibs = ["bundle_mimo26"]
 

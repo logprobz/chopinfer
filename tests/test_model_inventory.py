@@ -510,7 +510,7 @@ class InventoryTests(unittest.TestCase):
 
     def released_facts(self, root, contributor, models):
         """Properties every released model's declarations keep. A model that
-        declares `[release] enabled = false` until it qualifies is exempt,
+        declares `[release] enabled = false` while it is not released is exempt,
         except that kernel-lab registers every model that opts into its
         catalog (`ci/kernel_lab_inventory.py`)."""
         declared = models
@@ -663,12 +663,12 @@ class InventoryTests(unittest.TestCase):
             self.assertIsNotNone(model.publisher, f'{model.directory}/model.toml: declare its publisher')
         self.assertEqual(inventory.shipped(root), tuple(model.name for model in models))
         self.assertEqual(inventory.released(root), tuple(model.name for model in models if model.release.enabled))
-        # An unreleased model says so explicitly until it qualifies.
+        # An unreleased model says so explicitly.
         for model in models:
             if not model.release.enabled:
                 declared = tomllib.loads((root / model.directory / 'model.toml').read_text())
                 self.assertIs(declared.get('release', {}).get('enabled'), False,
-                              f'{model.directory}/model.toml: declare [release] enabled = false until it qualifies')
+                              f'{model.directory}/model.toml: declare [release] enabled = false while it is not released')
         self.released_facts(root, contributor, models)
         cleared_keys = {'CHOPINFER_PACKAGE_NATIVE_ROOT', 'CHOPINFER_PACKAGE_SNAPSHOT', 'CHOPINFER_PACKAGE_EXTRA'}
         for model in models:

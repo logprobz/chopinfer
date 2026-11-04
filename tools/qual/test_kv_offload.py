@@ -166,6 +166,16 @@ class Offload(unittest.TestCase):
         self.assertEqual(failed["status"], "fail")
         self.assertEqual({gate["name"] for gate in failed["metrics"]["gates"] if not gate["passed"]},
                          {"fill_errors", "failed_records"})
+        # Promotions that never published restored nothing, however many.
+        del tier["fill"]["rows"][0]["error"]
+        tier["passed"] = True
+        unpublished = kvo.metrics(metric_text() + tier_text(hits=30, failed=30, missed=2), tier=True)["tier"]
+        for key in ("c16_after", "after"):
+            tier[key]["tier"] = deepcopy(unpublished)
+        failed = kvo.kinds.rescore(kind, capture, reference, check)
+        self.assertEqual(failed["status"], "fail")
+        self.assertEqual({gate["name"] for gate in failed["metrics"]["gates"] if not gate["passed"]},
+                         {"tier_promotions"})
 
     def test_offload_facts_compile_without_a_preview(self):
         # Readers that drop a model's preview (the GSM8K floor fixtures)
@@ -281,7 +291,7 @@ class Offload(unittest.TestCase):
             self.assertEqual(len(record[key]), 1)
 
 
-def tier_text(hits=0, promotions=0, pending=0.0, missed=None):
+def tier_text(hits=0, promotions=0, pending=0.0, missed=None, failed=0):
     """The RAM prefix tier's metrics, its labelled families unsampled
     unless given."""
     text = (f"chop_prefix_cache_ram_hits_total {hits}\nchop_prefix_cache_ram_reused_tokens_total {hits * 64}\n"
@@ -292,6 +302,8 @@ def tier_text(hits=0, promotions=0, pending=0.0, missed=None):
         text += f"# TYPE {family} counter\n"
     if promotions:
         text += f'chop_prefix_ram_promotions_total{{result="ok"}} {promotions}\n'
+    if failed:
+        text += f'chop_prefix_ram_promotions_total{{result="failed"}} {failed}\n'
     if missed:
         text += f'chop_prefix_ram_missed_evictions_total{{reason="headroom"}} {missed}\n'
     return text

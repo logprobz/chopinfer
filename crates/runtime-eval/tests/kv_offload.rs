@@ -357,6 +357,17 @@ fn prefix_pressure_requires_promotions_and_ram_hits() {
     let mut value = prefix_fixture();
     value["tier"]["after"]["tier"]["promotions"] = json!({});
     prefix_fails(value, "tier_promotions");
+    // Only published promotions count: failed, invalidated or superseded
+    // ones restored nothing.
+    for failed in [
+        json!({"failed": 30}),
+        json!({"invalidated": 2, "gpu_resident": 1}),
+        json!({"ok": 0, "failed": 5}),
+    ] {
+        let mut value = prefix_fixture();
+        value["tier"]["after"]["tier"]["promotions"] = failed.clone();
+        prefix_fails(value, "tier_promotions");
+    }
     let mut value = prefix_fixture();
     value["tier"]["after"]["tier"]["ram_hits"] = json!(0);
     prefix_fails(value, "tier_ram_hits");

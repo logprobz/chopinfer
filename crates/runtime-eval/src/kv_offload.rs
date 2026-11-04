@@ -508,10 +508,12 @@ pub fn judge_prefix(args: &Value) -> Result<Value, String> {
     }
     let (start, end) = (&before["tier"], &after["tier"]);
     let promotions = labelled(start, end, "promotions")?;
+    // Only a published promotion can serve a RAM hit; failed, invalidated
+    // and superseded ones restored nothing.
     gate(
         &mut gates,
         "tier_promotions",
-        promotions.values().sum(),
+        promotions.get("ok").copied().unwrap_or(0),
         "ge",
         1,
     );

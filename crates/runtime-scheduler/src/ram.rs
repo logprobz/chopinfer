@@ -152,6 +152,10 @@ pub(super) struct PrefixRamState {
     /// their anchor lifetime. Each goes after the first restore from it
     /// completes, or once no request can restore it.
     forced: BTreeMap<PrefixCacheKeyV1, u64>,
+    /// Forced mode: recaptured GPU anchors, by lifetime, whose demotion
+    /// waits for an older demotion of their key to end. Admission resumes
+    /// from none of them meanwhile.
+    forced_deferred: BTreeMap<PrefixCacheKeyV1, u64>,
 }
 
 impl PrefixRamState {
@@ -410,9 +414,46 @@ impl Scheduler {
             .map_err(ScheduleError::Kv)?;
         self.ram.demotions.insert(plan.id(), key);
         if config.forced {
+            self.ram.forced_deferred.remove(&key);
             self.kv.remove_anchor(key).map_err(ScheduleError::Kv)?;
         }
         Ok(plan)
+    }
+
+    /// Forced mode: keeps the demotion of `key`'s GPU anchor for a later
+    /// step when an older demotion of the key, begun before the anchor was
+    /// recaptured, still copies. [`Self::forced_demotions`] returns it until
+    /// it begins, and admission resumes from no anchor of that lifetime
+    /// meanwhile. Returns whether it was kept: an anchor gone, or a key with
+    /// no demotion outstanding, keeps nothing.
+    pub fn defer_forced_demotion(&mut self, key: PrefixCacheKeyV1) -> bool {
+        let forced = self.prefix_ram_active().is_some_and(|config| config.forced);
+        let outstanding = self.ram.demotions.values().any(|demoted| *demoted == key);
+        let Some(serial) = self.kv.anchor_serial(key).filter(|_| forced && outstanding) else {
+            return false;
+        };
+        self.ram.forced_deferred.insert(key, serial);
+        true
+    }
+
+    /// Forced mode: the deferred demotions whose anchor lifetime is still on
+    /// the GPU, in key order. Deferrals of lifetimes since evicted or
+    /// replaced are forgotten.
+    pub fn forced_demotions(&mut self) -> Vec<PrefixCacheKeyV1> {
+        let kv = &self.kv;
+        self.ram
+            .forced_deferred
+            .retain(|key, serial| kv.anchor_serial(*key) == Some(*serial));
+        self.ram.forced_deferred.keys().copied().collect()
+    }
+
+    /// Whether `key`'s current GPU anchor waits for a deferred forced
+    /// demotion.
+    fn forced_deferral(&self, key: PrefixCacheKeyV1) -> bool {
+        self.ram
+            .forced_deferred
+            .get(&key)
+            .is_some_and(|serial| self.kv.anchor_serial(key) == Some(*serial))
     }
 
     /// Whether [`Self::begin_demotion`] may demote `key` into `tier` while
@@ -541,12 +582,17 @@ impl Scheduler {
             .filter(|(key, _)| !refused(key))
             .map_or((None, 0), |(key, tokens)| (Some(key), tokens));
         // A forced demotion removed its GPU anchor when it started; a longer
-        // entry whose copy is in flight is waited for.
+        // entry whose copy is in flight is waited for, and so is the demotion
+        // of a recaptured GPU match that waits for its key's older copy.
         if config.forced
-            && self
+            && (self
                 .kv
                 .lookup_host_demotion(chain, limit)
                 .is_some_and(|(key, tokens)| tokens > g.max(h) && !refused(&key))
+                || self
+                    .kv
+                    .lookup_anchor(chain, limit)
+                    .is_some_and(|(key, _)| self.forced_deferral(key)))
         {
             return Ok(RamChoice::Wait(None));
         }

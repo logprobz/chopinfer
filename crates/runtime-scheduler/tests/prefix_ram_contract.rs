@@ -905,6 +905,50 @@ fn forced_host_only(h: &mut Harness, salt: u32) -> PrefixCacheKeyV1 {
     key
 }
 
+#[test]
+fn a_forced_recapture_waits_for_its_keys_older_demotion() {
+    for evicted in [false, true] {
+        let mut h = Harness::new(32, tier(true, 64));
+        let tokens = prompt(1, 17);
+        h.run(1, &tokens);
+        let key = key(&tokens, 17);
+        let older = h.s.begin_demotion(&mut h.tier, key).unwrap();
+        h.check();
+        // A repeat of the prompt looks up 16 tokens at most, so it runs cold
+        // and recaptures the key while the older demotion copies.
+        h.run(2, &tokens);
+        assert!(!h.s.prefix_demotable(&h.tier, key));
+        assert!(h.s.defer_forced_demotion(key));
+        assert_eq!(h.s.forced_demotions(), [key]);
+        if evicted {
+            // A lifetime gone from the GPU is forgotten.
+            for id in 3.. {
+                if h.anchors() == 0 {
+                    break;
+                }
+                h.evict_oldest(id);
+            }
+            assert!(h.s.forced_demotions().is_empty());
+            continue;
+        }
+        // A longer prompt resumes from no anchor of that lifetime.
+        h.submit(4, &extended(1, 17, 7, 0));
+        let report = h.admit();
+        assert!(report.admitted().is_empty());
+        assert!(report.ram_waits().is_empty());
+        // Once the older copy ends, the deferred demotion may begin, and the
+        // waiter then promotes its entry.
+        h.complete(older, KvTransferStatus::Complete);
+        h.s.drop_invalidated_host_entries(&mut h.tier).unwrap();
+        h.check();
+        assert!(h.s.prefix_demotable(&h.tier, key));
+        assert_eq!(h.s.forced_demotions(), [key]);
+        h.demote(key);
+        assert!(h.s.forced_demotions().is_empty());
+        assert_eq!(h.admit().ram_waits().len(), 1);
+    }
+}
+
 /// Promotes and publishes the pending promotion.
 fn publish(h: &mut Harness) {
     assert_eq!(h.promote(KvTransferStatus::Complete), 1);

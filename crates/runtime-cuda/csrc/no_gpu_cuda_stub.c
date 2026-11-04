@@ -19,6 +19,7 @@ enum {
   FAKE_LAUNCH_COOPERATIVE = 28,
   FAKE_MAX_ACTIVE_CLUSTERS = 32,
   FAKE_GRAPH_EXEC_DESTROY = 33,
+  FAKE_EVENT_SYNCHRONIZE = 36,
 };
 
 /* A fixed synthetic device footprint. These are not real device figures; they
@@ -31,7 +32,7 @@ static _Thread_local int failure_operation;
 static _Thread_local int failure_code;
 static _Thread_local int denied_device = -1;
 static _Thread_local int denied_peer = -1;
-static _Thread_local size_t call_counts[36];
+static _Thread_local size_t call_counts[37];
 static _Thread_local void* current_context;
 static _Thread_local unsigned next_stream;
 static _Thread_local unsigned char peer_edges[8][8];
@@ -399,6 +400,8 @@ int cuEventRecord(void* handle, void* stream) {
   return 0;
 }
 int cuEventSynchronize(void* handle) {
+  int result = result_for(FAKE_EVENT_SYNCHRONIZE);
+  if (result) return result;
   struct fake_event* event = handle;
   complete_host_copies(event->stream, event->sequence);
   return 0;

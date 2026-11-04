@@ -357,6 +357,81 @@ fn unfinished_peer_copies_apply_bounded_backpressure() {
     f.finish();
 }
 
+/// Fills the queue to the cap with copies whose completion queries report
+/// not ready, the front one's first real query included.
+fn fill_peer_queue(f: &mut Fixture) {
+    for index in 0..MAX_PENDING_PEER_COPIES {
+        if index > 0 {
+            fake_driver::fail_next(31, 600);
+        }
+        f.copy().unwrap();
+    }
+    assert_eq!(f.device.peer_copies.len(), MAX_PENDING_PEER_COPIES);
+}
+
+#[test]
+fn event_backpressure_waits_for_the_oldest_copy_alone() {
+    let mut f = Fixture::new();
+    f.device.peer_backpressure = PeerBackpressure::Event;
+    fill_peer_queue(&mut f);
+    let (fences, waits, copies) = (
+        fake_driver::call_count(5),
+        fake_driver::call_count(36),
+        fake_driver::call_count(18),
+    );
+    f.copy()
+        .expect("a full queue admits the copy after its oldest one");
+    assert_eq!(fake_driver::call_count(36), waits + 1, "one event wait");
+    assert_eq!(
+        fake_driver::call_count(5),
+        fences,
+        "the stream and the copies queued after the oldest one are not waited on"
+    );
+    assert_eq!(fake_driver::call_count(18), copies + 1);
+    assert_eq!(f.device.peer_copies.len(), MAX_PENDING_PEER_COPIES);
+    assert_eq!(fake_driver::ordering_violations(), 0);
+    f.finish();
+}
+
+#[test]
+fn a_failed_event_wait_keeps_the_oldest_copy_and_submits_nothing() {
+    let mut f = Fixture::new();
+    f.device.peer_backpressure = PeerBackpressure::Event;
+    fill_peer_queue(&mut f);
+    let (fences, copies) = (fake_driver::call_count(5), fake_driver::call_count(18));
+    fake_driver::fail_next(36, 719);
+    assert!(f.copy().is_err());
+    assert_eq!(fake_driver::call_count(18), copies, "no copy was submitted");
+    assert_eq!(fake_driver::call_count(5), fences);
+    assert_eq!(f.device.peer_copies.len(), MAX_PENDING_PEER_COPIES);
+    for &buffer in &f.buffers {
+        assert!(matches!(
+            f.device.buffer(buffer).unwrap().release(),
+            Err(CudaError::ResourceShared(_))
+        ));
+    }
+    // Releasing the buffers drains the kept copies with stream fences.
+    f.finish();
+}
+
+#[test]
+fn peer_backpressure_reads_its_candidate_switch() {
+    use std::ffi::OsStr;
+    assert_eq!(PeerBackpressure::from_env(None), PeerBackpressure::Stream);
+    for (value, selected) in [
+        ("event", PeerBackpressure::Event),
+        ("stream", PeerBackpressure::Stream),
+        ("Event", PeerBackpressure::Stream),
+        ("", PeerBackpressure::Stream),
+    ] {
+        assert_eq!(
+            PeerBackpressure::from_env(Some(OsStr::new(value))),
+            selected,
+            "{value:?}"
+        );
+    }
+}
+
 #[test]
 fn peer_pool_access_is_retained_until_pending_copies_finish() {
     let mut f = Fixture::new();

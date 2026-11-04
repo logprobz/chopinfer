@@ -952,6 +952,17 @@ impl PeerTransfer {
         }
         self.completed = true;
     }
+
+    /// Waits for this copy's own completion event, not for the work queued
+    /// on its stream after it, then retires the leases. A failed wait keeps
+    /// the transfer unfinished, so the leases and the drop fence stay.
+    pub fn wait(&mut self) -> Result<(), CudaError> {
+        if !self.completed {
+            self.done.synchronize()?;
+            self.completed = true;
+        }
+        Ok(())
+    }
 }
 
 impl Drop for PeerTransfer {

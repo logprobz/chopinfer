@@ -1129,5 +1129,63 @@ class RunnerTests(unittest.TestCase):
         self.assertEqual(changed, [("deepseek41", "kv-bf16", "full", [[1, 2, 3], [1, 4, 5, 6]])])
 
 
+class DeclarationTests(unittest.TestCase):
+    """DeepSeek 4.1's kv-bf16 configuration, the one that runs this check."""
+
+    @staticmethod
+    def configuration():
+        import declaration
+        return declaration.named("deepseek41.kv-bf16")
+
+    def test_the_bf16_configuration_declares_both_layouts_records_and_the_native_planes(self):
+        import declaration
+        value = declaration.load(self.configuration())
+        [check] = [check for check in value["checks"] if check["id"] == "kv_layout_equality"]
+        self.assertEqual(check["files"], RunnerTests.FILES)
+        self.assertEqual(check["args"], ["compare", "{kv_layout_native}", "{kv_layout_comparison}",
+                                         "--native-forced", "{kv_layout_native_forced}",
+                                         "--comparison-forced", "{kv_layout_comparison_forced}"])
+        self.assertEqual(set(check["files"]), set(kv_layout_equality.RUNNER_RECORDS))
+        # The package's native planes (models/deepseek41/compiler/src/kv.rs:
+        # compressed fp4_e2m1/e4m3x16 at 720 bytes a token, index
+        # fp4_e2m1/ue8m0x32 at 170).
+        self.assertEqual(check["constants"]["kv_layout_equality"]["NATIVE_PLANES"]["value"], RECORD_PLANES)
+        for name in check["files"]:
+            self.assertEqual([(rule["path"], rule["value"]) for rule in check["input_rules"][name]],
+                             [(["server", "model"], "{model}"),
+                              (["server", "health", "serving", "profile", "tensor_parallel_size"], 4)], name)
+        self.assertIn({"path": ["forced", "kv_cache_dtypes"], "op": "eq", "value": ["mixed", "bf16"],
+                       "source": "models/deepseek41/README.md#qualification"}, check["rules"])
+        # The configuration keeps the forced references its forcing file and
+        # forced records need.
+        self.assertEqual(sorted(value["qualification"]["references"]),
+                         sorted(kv_layout_equality.RUNNER_FORCED_REFERENCES))
+
+    def test_the_long_context_reference_moves_no_forceable_position_of_the_exact_texts(self):
+        # The runner adds the long-context text to the configuration's forcing
+        # file, which every forced arm of the configuration serves: no exact
+        # text may gain or lose a forceable position, so its other forced
+        # records score the positions they did.
+        import common
+        import declaration
+        import verify_exact
+        value = declaration.load(self.configuration())
+        declared = [common.declared_path(value["inputs"]["exact"]),
+                    *(common.declared_path(value["qualification"]["references"][name]["path"])
+                      for name in kv_layout_equality.RUNNER_FORCED_REFERENCES)]
+        if not all(path is not None and path.is_file() for path in declared):
+            self.skipTest("needs DeepSeek 4.1's pinned exact and long-context references under $CHOPINFER_DATA")
+        with patch.dict(os.environ, {"CHOPINFER_QUAL_CONFIG": str(self.configuration())}):
+            exact = verify_exact.load_exact(verify_exact.exact_path(None))
+            named = verify_exact.named_references(kv_layout_equality.RUNNER_FORCED_REFERENCES)
+        forced = verify_exact.forced_texts(exact, named)
+        self.assertEqual([len(text["prompt_token_ids"]) for _, value in named.values() for text in value["texts"]],
+                         [131072])
+        for text in exact["texts"]:
+            ids, start = text["prompt_token_ids"], text["score_from"]
+            alone, beside = (verify_exact.agreed_continuations(texts, ids)[start:] for texts in (exact["texts"], forced))
+            self.assertEqual([reach >= 1 for reach in alone], [reach >= 1 for reach in beside], text["name"])
+
+
 if __name__ == "__main__":
     unittest.main()

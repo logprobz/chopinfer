@@ -50,6 +50,8 @@ SEPARATOR = r'\s*[/\\]+\s*'
 ALLOWED = {
     f'{SDK}/tests/test_support_checkpoint.rs':
         ('tests', "the SDK's integration test of checkpoint.rs", ()),
+    f'{SDK}/tests/test_support_native.rs':
+        ('tests', "the SDK's integration test of native.rs", ()),
     'tests/sdk_test_support.py': ('guard', 'this guard', ()),
     'tests/test_core_guards.py': ('guard', "this guard's tests", ()),
 }

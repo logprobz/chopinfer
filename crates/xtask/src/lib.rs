@@ -29,6 +29,7 @@ const REVIEWED_UNSAFE_FILES: &[&str] = &[
     "crates/runtime-host/src/generation/heap.rs",
     "crates/runtime-host/src/direct/plan_cache/files.rs",
     "crates/runtime-host/src/signals.rs",
+    "crates/runtime-host/src/profile_ranges.rs",
     "crates/runtime-host/src/host_rows.rs",
     "crates/runtime-host/src/weight_keeper/fds.rs",
     // SAFETY-REVIEWED: private anonymous mappings owned by mutex-protected shards.
@@ -238,6 +239,17 @@ mod tests {
             audit_unsafe_source(Path::new(path), source).unwrap();
             assert!(audit_unsafe_source(Path::new(path), "unsafe { call() }").is_err());
         }
+    }
+
+    #[test]
+    fn profile_range_helper_has_reviewed_contracts() {
+        let path = Path::new("crates/runtime-host/src/profile_ranges.rs");
+        audit_unsafe_source(
+            path,
+            include_str!("../../runtime-host/src/profile_ranges.rs"),
+        )
+        .unwrap();
+        assert!(audit_unsafe_source(path, "unsafe { call() }").is_err());
     }
 
     #[test]

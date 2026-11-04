@@ -7,33 +7,38 @@ mod linux {
     use std::ffi::CStr;
     use std::sync::OnceLock;
 
+    // SAFETY-REVIEWED: this declares the preload helper's C contract,
+    // void(const char *, int); it executes no unsafe operation.
     type Notify = unsafe extern "C" fn(*const libc::c_char, libc::c_int);
     static NOTIFY: OnceLock<Result<Notify, String>> = OnceLock::new();
 
-    #[allow(unsafe_code)]
     fn resolve() -> Result<Notify, String> {
-        // SAFETY-REVIEWED: RTLD_DEFAULT looks up a static symbol in already loaded
-        // code. The explicitly supplied preload helper has this exact C signature
-        // and remains loaded for the process lifetime.
-        let symbol =
-            unsafe { libc::dlsym(libc::RTLD_DEFAULT, c"chopinfer_profile_range_v1".as_ptr()) };
+        let name = c"chopinfer_profile_range_v1";
+        // SAFETY-REVIEWED: RTLD_DEFAULT looks up a static name in loaded code. Bundles
+        // load RTLD_LOCAL, so only the never-unloaded preload helper supplies it.
+        #[allow(unsafe_code)]
+        let symbol = unsafe { libc::dlsym(libc::RTLD_DEFAULT, name.as_ptr()) };
         if symbol.is_null() {
             return Err("CHOPINFER_NVTX_RANGES=1 requires the profiling preload helper".into());
         }
-        // SAFETY-REVIEWED: the helper exports the documented two-argument function.
-        Ok(unsafe { std::mem::transmute::<*mut libc::c_void, Notify>(symbol) })
+        // SAFETY-REVIEWED: the helper exports exactly this two-argument function.
+        #[allow(unsafe_code)]
+        let function = unsafe { std::mem::transmute::<*mut libc::c_void, Notify>(symbol) };
+        Ok(function)
     }
 
-    #[allow(unsafe_code)]
     fn notify(name: &'static CStr, begin: bool) {
         let function = NOTIFY
             .get()
             .expect("initialized observer")
             .as_ref()
             .expect("loaded observer");
-        // SAFETY-REVIEWED: the function remains loaded, name is static and terminated,
-        // and the thread-bound guard balances push and pop on this same thread.
-        unsafe { function(name.as_ptr(), i32::from(begin)) };
+        // SAFETY-REVIEWED: the function stays loaded, name is static and terminated, and
+        // the thread-bound guard balances push and pop on this same thread.
+        #[allow(unsafe_code)]
+        unsafe {
+            function(name.as_ptr(), i32::from(begin))
+        };
     }
 
     pub(super) fn subscribe() -> Result<super::Subscription, String> {

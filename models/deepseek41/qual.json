@@ -1613,7 +1613,7 @@
         "--verify",
         "{verify_candidate}",
         "--row-capacity",
-        "8",
+        "6",
         "--ar-row-capacity",
         "1"
       ],
@@ -1703,7 +1703,7 @@
           ],
           "op": "eq",
           "value": [
-            8
+            6
           ],
           "source": "models/deepseek41/README.md#dspark-qualification"
         },
@@ -1756,7 +1756,7 @@
                 "--concurrency",
                 "1",
                 "--row-capacity",
-                "8"
+                "6"
               ]
             }
           }
@@ -2656,7 +2656,7 @@
         ]
       }
     },
-    "verify_exact_b16": {
+    "verify_exact_b8": {
       "module": "verify_exact",
       "args": [
         "report",
@@ -2666,7 +2666,7 @@
         "--verify",
         "{verify_candidate}",
         "--row-capacity",
-        "16",
+        "8",
         "--ar-row-capacity",
         "2"
       ],
@@ -2756,7 +2756,7 @@
           ],
           "op": "eq",
           "value": [
-            16
+            8
           ],
           "source": "models/deepseek41/README.md#dspark-qualification"
         },
@@ -2809,7 +2809,358 @@
                 "--concurrency",
                 "2",
                 "--row-capacity",
-                "16"
+                "8"
+              ]
+            }
+          }
+        }
+      },
+      "input_rules": {
+        "verify_ar": [
+          {
+            "path": [
+              "passed"
+            ],
+            "op": "eq",
+            "value": true,
+            "source": "tools/qual/README.md#release-gates"
+          },
+          {
+            "path": [
+              "texts"
+            ],
+            "op": "count_ge",
+            "value": 35,
+            "source": "models/deepseek41/README.md#qualification"
+          },
+          {
+            "path": [
+              "k"
+            ],
+            "op": "eq",
+            "value": 0,
+            "source": "tools/qual/README.md#release-gates"
+          },
+          {
+            "path": [
+              "server",
+              "checkpoint",
+              "checkpoint_identity"
+            ],
+            "op": "eq",
+            "value": "2273a3d95e14d4345958830db453d564ad6e54026389d7e786a872e47e03475b",
+            "source": "tools/qual/README.md#capabilities-and-required-evidence"
+          },
+          {
+            "path": [
+              "reference_sha256"
+            ],
+            "op": "eq",
+            "value": "fcbd248b4c8c5d5c74118effc3b80df586b75b89ea9f2280b4b12acd735bb7f2",
+            "source": "tools/qual/README.md#capabilities-and-required-evidence"
+          },
+          {
+            "path": [
+              "server",
+              "checkpoint",
+              "package_identity"
+            ],
+            "op": "count_ge",
+            "value": 64,
+            "source": "tools/qual/README.md#capabilities-and-required-evidence"
+          },
+          {
+            "path": [
+              "server",
+              "health",
+              "serving",
+              "profile",
+              "tensor_parallel_size"
+            ],
+            "op": "eq",
+            "value": 4,
+            "source": "models/deepseek41/README.md#dspark-qualification"
+          },
+          {
+            "path": [
+              "server",
+              "health",
+              "serving",
+              "profile",
+              "kv_cache_dtype"
+            ],
+            "op": "eq",
+            "value": "mixed",
+            "source": "models/deepseek41/README.md#dspark-qualification"
+          },
+          {
+            "path": [
+              "concurrency"
+            ],
+            "op": "eq",
+            "value": 2,
+            "source": "models/deepseek41/README.md#dspark-qualification"
+          }
+        ],
+        "verify_candidate": [
+          {
+            "path": [
+              "passed"
+            ],
+            "op": "eq",
+            "value": true,
+            "source": "tools/qual/README.md#release-gates"
+          },
+          {
+            "path": [
+              "texts"
+            ],
+            "op": "count_ge",
+            "value": 35,
+            "source": "models/deepseek41/README.md#qualification"
+          },
+          {
+            "path": [
+              "k"
+            ],
+            "op": "ge",
+            "value": 1,
+            "source": "tools/qual/README.md#release-gates"
+          },
+          {
+            "path": [
+              "server",
+              "model"
+            ],
+            "op": "eq",
+            "value": "{model}",
+            "source": "tools/qual/README.md#release-gates"
+          },
+          {
+            "path": [
+              "server",
+              "checkpoint",
+              "checkpoint_identity"
+            ],
+            "op": "eq",
+            "value": "2273a3d95e14d4345958830db453d564ad6e54026389d7e786a872e47e03475b",
+            "source": "tools/qual/README.md#capabilities-and-required-evidence"
+          },
+          {
+            "path": [
+              "reference_sha256"
+            ],
+            "op": "eq",
+            "value": "fcbd248b4c8c5d5c74118effc3b80df586b75b89ea9f2280b4b12acd735bb7f2",
+            "source": "tools/qual/README.md#capabilities-and-required-evidence"
+          },
+          {
+            "path": [
+              "server",
+              "checkpoint",
+              "package_identity"
+            ],
+            "op": "count_ge",
+            "value": 64,
+            "source": "tools/qual/README.md#capabilities-and-required-evidence"
+          },
+          {
+            "path": [
+              "server",
+              "health",
+              "serving",
+              "profile",
+              "tensor_parallel_size"
+            ],
+            "op": "eq",
+            "value": 4,
+            "source": "models/deepseek41/README.md#dspark-qualification"
+          },
+          {
+            "path": [
+              "server",
+              "health",
+              "serving",
+              "profile",
+              "kv_cache_dtype"
+            ],
+            "op": "eq",
+            "value": "mixed",
+            "source": "models/deepseek41/README.md#dspark-qualification"
+          },
+          {
+            "path": [
+              "concurrency"
+            ],
+            "op": "eq",
+            "value": 2,
+            "source": "models/deepseek41/README.md#dspark-qualification"
+          },
+          {
+            "path": [
+              "k"
+            ],
+            "op": "eq",
+            "value": 3,
+            "source": "models/deepseek41/README.md#dspark-qualification"
+          }
+        ]
+      }
+    },
+    "verify_exact_b12": {
+      "module": "verify_exact",
+      "args": [
+        "report",
+        "--require-row-shapes",
+        "--ar",
+        "{verify_ar}",
+        "--verify",
+        "{verify_candidate}",
+        "--row-capacity",
+        "12",
+        "--ar-row-capacity",
+        "2"
+      ],
+      "timeout_seconds": 7200,
+      "stdout_json": true,
+      "rules": [
+        {
+          "path": [
+            "records"
+          ],
+          "op": "count_ge",
+          "value": 1,
+          "source": "docs/numerics.md#serving-qualification-gates"
+        },
+        {
+          "path": [
+            "records",
+            "*",
+            "exact",
+            "all",
+            "gate_against_ar",
+            "passed"
+          ],
+          "op": "eq",
+          "value": true,
+          "source": "docs/numerics.md#serving-qualification-gates"
+        },
+        {
+          "path": [
+            "records",
+            "*",
+            "coverage",
+            "passed"
+          ],
+          "op": "eq",
+          "value": true,
+          "source": "tools/qual/README.md#release-gates"
+        },
+        {
+          "path": [
+            "records",
+            "*",
+            "k"
+          ],
+          "op": "ge",
+          "value": 1,
+          "source": "tools/qual/README.md#release-gates"
+        },
+        {
+          "path": [
+            "records",
+            "*",
+            "row_capacity_coverage",
+            "passed"
+          ],
+          "op": "eq",
+          "value": true,
+          "source": "docs/numerics.md#serving-qualification-gates"
+        },
+        {
+          "path": [
+            "records",
+            "*",
+            "ar_row_capacity_coverage",
+            "passed"
+          ],
+          "op": "eq",
+          "value": true,
+          "source": "docs/numerics.md#serving-qualification-gates"
+        },
+        {
+          "path": [
+            "records",
+            "*",
+            "concurrency"
+          ],
+          "op": "eq",
+          "value": 2,
+          "source": "models/deepseek41/README.md#dspark-qualification"
+        },
+        {
+          "path": [
+            "records",
+            "*",
+            "row_capacity_coverage",
+            "required"
+          ],
+          "op": "eq",
+          "value": [
+            12
+          ],
+          "source": "models/deepseek41/README.md#dspark-qualification"
+        },
+        {
+          "path": [
+            "records",
+            "*",
+            "ar_row_capacity_coverage",
+            "required"
+          ],
+          "op": "eq",
+          "value": [
+            2
+          ],
+          "source": "models/deepseek41/README.md#dspark-qualification"
+        }
+      ],
+      "files": [
+        "verify_ar",
+        "verify_candidate"
+      ],
+      "constants": {
+        "verify_exact": {
+          "ROW_MEAN_MARGIN": {
+            "value": 0.005,
+            "source": "docs/numerics.md#serving-qualification-gates"
+          },
+          "HOST_DRAFTED_MINIMUM_POSITIONS": {
+            "value": 3974,
+            "source": "models/deepseek41/README.md#qualification"
+          }
+        },
+        "teacher": {
+          "TOP1_SIGMAS": {
+            "value": 2.0,
+            "source": "docs/numerics.md#serving-qualification-gates"
+          }
+        },
+        "release_preview": {
+          "RECORD_ARGUMENTS": {
+            "source": "tools/qual/README.md#correctness-runner",
+            "value": {
+              "verify_ar": [
+                "--concurrency",
+                "2",
+                "--row-capacity",
+                "2"
+              ],
+              "verify_candidate": [
+                "--concurrency",
+                "2",
+                "--row-capacity",
+                "12"
               ]
             }
           }
@@ -3007,7 +3358,7 @@
         ]
       }
     },
-    "verify_exact_b32": {
+    "verify_exact_b16": {
       "module": "verify_exact",
       "args": [
         "report",
@@ -3017,7 +3368,7 @@
         "--verify",
         "{verify_candidate}",
         "--row-capacity",
-        "32",
+        "16",
         "--ar-row-capacity",
         "4"
       ],
@@ -3107,7 +3458,7 @@
           ],
           "op": "eq",
           "value": [
-            32
+            16
           ],
           "source": "models/deepseek41/README.md#dspark-qualification"
         },
@@ -3160,7 +3511,358 @@
                 "--concurrency",
                 "4",
                 "--row-capacity",
-                "32"
+                "16"
+              ]
+            }
+          }
+        }
+      },
+      "input_rules": {
+        "verify_ar": [
+          {
+            "path": [
+              "passed"
+            ],
+            "op": "eq",
+            "value": true,
+            "source": "tools/qual/README.md#release-gates"
+          },
+          {
+            "path": [
+              "texts"
+            ],
+            "op": "count_ge",
+            "value": 35,
+            "source": "models/deepseek41/README.md#qualification"
+          },
+          {
+            "path": [
+              "k"
+            ],
+            "op": "eq",
+            "value": 0,
+            "source": "tools/qual/README.md#release-gates"
+          },
+          {
+            "path": [
+              "server",
+              "checkpoint",
+              "checkpoint_identity"
+            ],
+            "op": "eq",
+            "value": "2273a3d95e14d4345958830db453d564ad6e54026389d7e786a872e47e03475b",
+            "source": "tools/qual/README.md#capabilities-and-required-evidence"
+          },
+          {
+            "path": [
+              "reference_sha256"
+            ],
+            "op": "eq",
+            "value": "fcbd248b4c8c5d5c74118effc3b80df586b75b89ea9f2280b4b12acd735bb7f2",
+            "source": "tools/qual/README.md#capabilities-and-required-evidence"
+          },
+          {
+            "path": [
+              "server",
+              "checkpoint",
+              "package_identity"
+            ],
+            "op": "count_ge",
+            "value": 64,
+            "source": "tools/qual/README.md#capabilities-and-required-evidence"
+          },
+          {
+            "path": [
+              "server",
+              "health",
+              "serving",
+              "profile",
+              "tensor_parallel_size"
+            ],
+            "op": "eq",
+            "value": 4,
+            "source": "models/deepseek41/README.md#dspark-qualification"
+          },
+          {
+            "path": [
+              "server",
+              "health",
+              "serving",
+              "profile",
+              "kv_cache_dtype"
+            ],
+            "op": "eq",
+            "value": "mixed",
+            "source": "models/deepseek41/README.md#dspark-qualification"
+          },
+          {
+            "path": [
+              "concurrency"
+            ],
+            "op": "eq",
+            "value": 4,
+            "source": "models/deepseek41/README.md#dspark-qualification"
+          }
+        ],
+        "verify_candidate": [
+          {
+            "path": [
+              "passed"
+            ],
+            "op": "eq",
+            "value": true,
+            "source": "tools/qual/README.md#release-gates"
+          },
+          {
+            "path": [
+              "texts"
+            ],
+            "op": "count_ge",
+            "value": 35,
+            "source": "models/deepseek41/README.md#qualification"
+          },
+          {
+            "path": [
+              "k"
+            ],
+            "op": "ge",
+            "value": 1,
+            "source": "tools/qual/README.md#release-gates"
+          },
+          {
+            "path": [
+              "server",
+              "model"
+            ],
+            "op": "eq",
+            "value": "{model}",
+            "source": "tools/qual/README.md#release-gates"
+          },
+          {
+            "path": [
+              "server",
+              "checkpoint",
+              "checkpoint_identity"
+            ],
+            "op": "eq",
+            "value": "2273a3d95e14d4345958830db453d564ad6e54026389d7e786a872e47e03475b",
+            "source": "tools/qual/README.md#capabilities-and-required-evidence"
+          },
+          {
+            "path": [
+              "reference_sha256"
+            ],
+            "op": "eq",
+            "value": "fcbd248b4c8c5d5c74118effc3b80df586b75b89ea9f2280b4b12acd735bb7f2",
+            "source": "tools/qual/README.md#capabilities-and-required-evidence"
+          },
+          {
+            "path": [
+              "server",
+              "checkpoint",
+              "package_identity"
+            ],
+            "op": "count_ge",
+            "value": 64,
+            "source": "tools/qual/README.md#capabilities-and-required-evidence"
+          },
+          {
+            "path": [
+              "server",
+              "health",
+              "serving",
+              "profile",
+              "tensor_parallel_size"
+            ],
+            "op": "eq",
+            "value": 4,
+            "source": "models/deepseek41/README.md#dspark-qualification"
+          },
+          {
+            "path": [
+              "server",
+              "health",
+              "serving",
+              "profile",
+              "kv_cache_dtype"
+            ],
+            "op": "eq",
+            "value": "mixed",
+            "source": "models/deepseek41/README.md#dspark-qualification"
+          },
+          {
+            "path": [
+              "concurrency"
+            ],
+            "op": "eq",
+            "value": 4,
+            "source": "models/deepseek41/README.md#dspark-qualification"
+          },
+          {
+            "path": [
+              "k"
+            ],
+            "op": "eq",
+            "value": 3,
+            "source": "models/deepseek41/README.md#dspark-qualification"
+          }
+        ]
+      }
+    },
+    "verify_exact_b24": {
+      "module": "verify_exact",
+      "args": [
+        "report",
+        "--require-row-shapes",
+        "--ar",
+        "{verify_ar}",
+        "--verify",
+        "{verify_candidate}",
+        "--row-capacity",
+        "24",
+        "--ar-row-capacity",
+        "4"
+      ],
+      "timeout_seconds": 7200,
+      "stdout_json": true,
+      "rules": [
+        {
+          "path": [
+            "records"
+          ],
+          "op": "count_ge",
+          "value": 1,
+          "source": "docs/numerics.md#serving-qualification-gates"
+        },
+        {
+          "path": [
+            "records",
+            "*",
+            "exact",
+            "all",
+            "gate_against_ar",
+            "passed"
+          ],
+          "op": "eq",
+          "value": true,
+          "source": "docs/numerics.md#serving-qualification-gates"
+        },
+        {
+          "path": [
+            "records",
+            "*",
+            "coverage",
+            "passed"
+          ],
+          "op": "eq",
+          "value": true,
+          "source": "tools/qual/README.md#release-gates"
+        },
+        {
+          "path": [
+            "records",
+            "*",
+            "k"
+          ],
+          "op": "ge",
+          "value": 1,
+          "source": "tools/qual/README.md#release-gates"
+        },
+        {
+          "path": [
+            "records",
+            "*",
+            "row_capacity_coverage",
+            "passed"
+          ],
+          "op": "eq",
+          "value": true,
+          "source": "docs/numerics.md#serving-qualification-gates"
+        },
+        {
+          "path": [
+            "records",
+            "*",
+            "ar_row_capacity_coverage",
+            "passed"
+          ],
+          "op": "eq",
+          "value": true,
+          "source": "docs/numerics.md#serving-qualification-gates"
+        },
+        {
+          "path": [
+            "records",
+            "*",
+            "concurrency"
+          ],
+          "op": "eq",
+          "value": 4,
+          "source": "models/deepseek41/README.md#dspark-qualification"
+        },
+        {
+          "path": [
+            "records",
+            "*",
+            "row_capacity_coverage",
+            "required"
+          ],
+          "op": "eq",
+          "value": [
+            24
+          ],
+          "source": "models/deepseek41/README.md#dspark-qualification"
+        },
+        {
+          "path": [
+            "records",
+            "*",
+            "ar_row_capacity_coverage",
+            "required"
+          ],
+          "op": "eq",
+          "value": [
+            4
+          ],
+          "source": "models/deepseek41/README.md#dspark-qualification"
+        }
+      ],
+      "files": [
+        "verify_ar",
+        "verify_candidate"
+      ],
+      "constants": {
+        "verify_exact": {
+          "ROW_MEAN_MARGIN": {
+            "value": 0.005,
+            "source": "docs/numerics.md#serving-qualification-gates"
+          },
+          "HOST_DRAFTED_MINIMUM_POSITIONS": {
+            "value": 3974,
+            "source": "models/deepseek41/README.md#qualification"
+          }
+        },
+        "teacher": {
+          "TOP1_SIGMAS": {
+            "value": 2.0,
+            "source": "docs/numerics.md#serving-qualification-gates"
+          }
+        },
+        "release_preview": {
+          "RECORD_ARGUMENTS": {
+            "source": "tools/qual/README.md#correctness-runner",
+            "value": {
+              "verify_ar": [
+                "--concurrency",
+                "4",
+                "--row-capacity",
+                "4"
+              ],
+              "verify_candidate": [
+                "--concurrency",
+                "4",
+                "--row-capacity",
+                "24"
               ]
             }
           }
@@ -3353,6 +4055,357 @@
             ],
             "op": "eq",
             "value": 5,
+            "source": "models/deepseek41/README.md#dspark-qualification"
+          }
+        ]
+      }
+    },
+    "verify_exact_b32": {
+      "module": "verify_exact",
+      "args": [
+        "report",
+        "--require-row-shapes",
+        "--ar",
+        "{verify_ar}",
+        "--verify",
+        "{verify_candidate}",
+        "--row-capacity",
+        "32",
+        "--ar-row-capacity",
+        "8"
+      ],
+      "timeout_seconds": 7200,
+      "stdout_json": true,
+      "rules": [
+        {
+          "path": [
+            "records"
+          ],
+          "op": "count_ge",
+          "value": 1,
+          "source": "docs/numerics.md#serving-qualification-gates"
+        },
+        {
+          "path": [
+            "records",
+            "*",
+            "exact",
+            "all",
+            "gate_against_ar",
+            "passed"
+          ],
+          "op": "eq",
+          "value": true,
+          "source": "docs/numerics.md#serving-qualification-gates"
+        },
+        {
+          "path": [
+            "records",
+            "*",
+            "coverage",
+            "passed"
+          ],
+          "op": "eq",
+          "value": true,
+          "source": "tools/qual/README.md#release-gates"
+        },
+        {
+          "path": [
+            "records",
+            "*",
+            "k"
+          ],
+          "op": "ge",
+          "value": 1,
+          "source": "tools/qual/README.md#release-gates"
+        },
+        {
+          "path": [
+            "records",
+            "*",
+            "row_capacity_coverage",
+            "passed"
+          ],
+          "op": "eq",
+          "value": true,
+          "source": "docs/numerics.md#serving-qualification-gates"
+        },
+        {
+          "path": [
+            "records",
+            "*",
+            "ar_row_capacity_coverage",
+            "passed"
+          ],
+          "op": "eq",
+          "value": true,
+          "source": "docs/numerics.md#serving-qualification-gates"
+        },
+        {
+          "path": [
+            "records",
+            "*",
+            "concurrency"
+          ],
+          "op": "eq",
+          "value": 8,
+          "source": "models/deepseek41/README.md#dspark-qualification"
+        },
+        {
+          "path": [
+            "records",
+            "*",
+            "row_capacity_coverage",
+            "required"
+          ],
+          "op": "eq",
+          "value": [
+            32
+          ],
+          "source": "models/deepseek41/README.md#dspark-qualification"
+        },
+        {
+          "path": [
+            "records",
+            "*",
+            "ar_row_capacity_coverage",
+            "required"
+          ],
+          "op": "eq",
+          "value": [
+            8
+          ],
+          "source": "models/deepseek41/README.md#dspark-qualification"
+        }
+      ],
+      "files": [
+        "verify_ar",
+        "verify_candidate"
+      ],
+      "constants": {
+        "verify_exact": {
+          "ROW_MEAN_MARGIN": {
+            "value": 0.005,
+            "source": "docs/numerics.md#serving-qualification-gates"
+          },
+          "HOST_DRAFTED_MINIMUM_POSITIONS": {
+            "value": 3974,
+            "source": "models/deepseek41/README.md#qualification"
+          }
+        },
+        "teacher": {
+          "TOP1_SIGMAS": {
+            "value": 2.0,
+            "source": "docs/numerics.md#serving-qualification-gates"
+          }
+        },
+        "release_preview": {
+          "RECORD_ARGUMENTS": {
+            "source": "tools/qual/README.md#correctness-runner",
+            "value": {
+              "verify_ar": [
+                "--concurrency",
+                "8",
+                "--row-capacity",
+                "8"
+              ],
+              "verify_candidate": [
+                "--concurrency",
+                "8",
+                "--row-capacity",
+                "32"
+              ]
+            }
+          }
+        }
+      },
+      "input_rules": {
+        "verify_ar": [
+          {
+            "path": [
+              "passed"
+            ],
+            "op": "eq",
+            "value": true,
+            "source": "tools/qual/README.md#release-gates"
+          },
+          {
+            "path": [
+              "texts"
+            ],
+            "op": "count_ge",
+            "value": 35,
+            "source": "models/deepseek41/README.md#qualification"
+          },
+          {
+            "path": [
+              "k"
+            ],
+            "op": "eq",
+            "value": 0,
+            "source": "tools/qual/README.md#release-gates"
+          },
+          {
+            "path": [
+              "server",
+              "checkpoint",
+              "checkpoint_identity"
+            ],
+            "op": "eq",
+            "value": "2273a3d95e14d4345958830db453d564ad6e54026389d7e786a872e47e03475b",
+            "source": "tools/qual/README.md#capabilities-and-required-evidence"
+          },
+          {
+            "path": [
+              "reference_sha256"
+            ],
+            "op": "eq",
+            "value": "fcbd248b4c8c5d5c74118effc3b80df586b75b89ea9f2280b4b12acd735bb7f2",
+            "source": "tools/qual/README.md#capabilities-and-required-evidence"
+          },
+          {
+            "path": [
+              "server",
+              "checkpoint",
+              "package_identity"
+            ],
+            "op": "count_ge",
+            "value": 64,
+            "source": "tools/qual/README.md#capabilities-and-required-evidence"
+          },
+          {
+            "path": [
+              "server",
+              "health",
+              "serving",
+              "profile",
+              "tensor_parallel_size"
+            ],
+            "op": "eq",
+            "value": 4,
+            "source": "models/deepseek41/README.md#dspark-qualification"
+          },
+          {
+            "path": [
+              "server",
+              "health",
+              "serving",
+              "profile",
+              "kv_cache_dtype"
+            ],
+            "op": "eq",
+            "value": "mixed",
+            "source": "models/deepseek41/README.md#dspark-qualification"
+          },
+          {
+            "path": [
+              "concurrency"
+            ],
+            "op": "eq",
+            "value": 8,
+            "source": "models/deepseek41/README.md#dspark-qualification"
+          }
+        ],
+        "verify_candidate": [
+          {
+            "path": [
+              "passed"
+            ],
+            "op": "eq",
+            "value": true,
+            "source": "tools/qual/README.md#release-gates"
+          },
+          {
+            "path": [
+              "texts"
+            ],
+            "op": "count_ge",
+            "value": 35,
+            "source": "models/deepseek41/README.md#qualification"
+          },
+          {
+            "path": [
+              "k"
+            ],
+            "op": "ge",
+            "value": 1,
+            "source": "tools/qual/README.md#release-gates"
+          },
+          {
+            "path": [
+              "server",
+              "model"
+            ],
+            "op": "eq",
+            "value": "{model}",
+            "source": "tools/qual/README.md#release-gates"
+          },
+          {
+            "path": [
+              "server",
+              "checkpoint",
+              "checkpoint_identity"
+            ],
+            "op": "eq",
+            "value": "2273a3d95e14d4345958830db453d564ad6e54026389d7e786a872e47e03475b",
+            "source": "tools/qual/README.md#capabilities-and-required-evidence"
+          },
+          {
+            "path": [
+              "reference_sha256"
+            ],
+            "op": "eq",
+            "value": "fcbd248b4c8c5d5c74118effc3b80df586b75b89ea9f2280b4b12acd735bb7f2",
+            "source": "tools/qual/README.md#capabilities-and-required-evidence"
+          },
+          {
+            "path": [
+              "server",
+              "checkpoint",
+              "package_identity"
+            ],
+            "op": "count_ge",
+            "value": 64,
+            "source": "tools/qual/README.md#capabilities-and-required-evidence"
+          },
+          {
+            "path": [
+              "server",
+              "health",
+              "serving",
+              "profile",
+              "tensor_parallel_size"
+            ],
+            "op": "eq",
+            "value": 4,
+            "source": "models/deepseek41/README.md#dspark-qualification"
+          },
+          {
+            "path": [
+              "server",
+              "health",
+              "serving",
+              "profile",
+              "kv_cache_dtype"
+            ],
+            "op": "eq",
+            "value": "mixed",
+            "source": "models/deepseek41/README.md#dspark-qualification"
+          },
+          {
+            "path": [
+              "concurrency"
+            ],
+            "op": "eq",
+            "value": 8,
+            "source": "models/deepseek41/README.md#dspark-qualification"
+          },
+          {
+            "path": [
+              "k"
+            ],
+            "op": "eq",
+            "value": 3,
             "source": "models/deepseek41/README.md#dspark-qualification"
           }
         ]
@@ -3729,16 +4782,38 @@
     "verify-b8": {
       "serve": [
         "--speculative-tokens",
+        "3",
+        "--speculation",
+        "fixed"
+      ],
+      "screens": false,
+      "checks": [
+        "verify_exact_b8"
+      ],
+      "quick": [
+        "verify_exact_b8"
+      ],
+      "serving": {
+        "speculation_tokens": 3
+      },
+      "media": false,
+      "keep_references": [
+        "teacher"
+      ]
+    },
+    "verify-b12": {
+      "serve": [
+        "--speculative-tokens",
         "5",
         "--speculation",
         "fixed"
       ],
       "screens": false,
       "checks": [
-        "verify_exact"
+        "verify_exact_b12"
       ],
       "quick": [
-        "verify_exact"
+        "verify_exact_b12"
       ],
       "serving": {
         "speculation_tokens": 5
@@ -3746,12 +4821,25 @@
       "media": false,
       "keep_references": [
         "teacher"
-      ]
+      ],
+      "capabilities": {
+        "text": false,
+        "frontend": false,
+        "api": false,
+        "structured": false,
+        "prefix_cache": false,
+        "preemption": false,
+        "long_context": false,
+        "stability": false,
+        "kv_offload": false,
+        "media": [],
+        "speculation": "none"
+      }
     },
     "verify-b16": {
       "serve": [
         "--speculative-tokens",
-        "5",
+        "3",
         "--speculation",
         "fixed"
       ],
@@ -3763,14 +4851,14 @@
         "verify_exact_b16"
       ],
       "serving": {
-        "speculation_tokens": 5
+        "speculation_tokens": 3
       },
       "media": false,
       "keep_references": [
         "teacher"
       ]
     },
-    "verify-b32": {
+    "verify-b24": {
       "serve": [
         "--speculative-tokens",
         "5",
@@ -3779,13 +4867,48 @@
       ],
       "screens": false,
       "checks": [
+        "verify_exact_b24"
+      ],
+      "quick": [
+        "verify_exact_b24"
+      ],
+      "serving": {
+        "speculation_tokens": 5
+      },
+      "media": false,
+      "keep_references": [
+        "teacher"
+      ],
+      "capabilities": {
+        "text": false,
+        "frontend": false,
+        "api": false,
+        "structured": false,
+        "prefix_cache": false,
+        "preemption": false,
+        "long_context": false,
+        "stability": false,
+        "kv_offload": false,
+        "media": [],
+        "speculation": "none"
+      }
+    },
+    "verify-b32": {
+      "serve": [
+        "--speculative-tokens",
+        "3",
+        "--speculation",
+        "fixed"
+      ],
+      "screens": false,
+      "checks": [
         "verify_exact_b32"
       ],
       "quick": [
         "verify_exact_b32"
       ],
       "serving": {
-        "speculation_tokens": 5
+        "speculation_tokens": 3
       },
       "media": false,
       "keep_references": [

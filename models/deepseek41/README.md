@@ -1016,6 +1016,33 @@ declared verify bounds and GSM8K at least 193/200 in each arm. Forced verify
 capacities are judged separately against paired AR, without pooling away an
 uncovered capacity.
 
+Since d27fe227bd (2026-10-20), a package with exact verify graphs reports
+each verify step's live row count as its row capacity, not a padded bucket;
+AR decode keeps its power-of-two buckets. A pair at concurrency C with draft
+budget K therefore forms at most C * (K + 1) verify rows; at the
+power-of-two concurrencies below, its AR control forms C decode rows. Each
+`verify_exact` check requires exactly those capacities in both its records
+and its report. The default full cohort runs the profile's balanced pair at
+C1. Each `verify-bN` configuration fixes its draft budget with
+`--speculation fixed`, so the scheduler cannot avoid its capacity.
+`tests/test_verify_capacities.py` holds the declaration to this rule.
+
+| Configuration | Check | Draft budget | Concurrency | Verify capacity | AR capacity |
+| --- | --- | ---: | ---: | ---: | ---: |
+| default | `verify_exact` | 5 | 1 | 6 | 1 |
+| `verify-b2` | `verify_exact_b2` | 1 | 1 | 2 | 1 |
+| `verify-b4` | `verify_exact_b4` | 3 | 1 | 4 | 1 |
+| `verify-b8` | `verify_exact_b8` | 3 | 2 | 8 | 2 |
+| `verify-b12` | `verify_exact_b12` | 5 | 2 | 12 | 2 |
+| `verify-b16` | `verify_exact_b16` | 3 | 4 | 16 | 4 |
+| `verify-b24` | `verify_exact_b24` | 5 | 4 | 24 | 4 |
+| `verify-b32` | `verify_exact_b32` | 3 | 8 | 32 | 8 |
+
+The capacities name the tuned verify rows at 4, 6, 8, 12, 16 and 32, and
+the shapes balanced planning serves at its depths: 6 rows at C1, 12 at C2,
+24 at C4 and 32 at C8. A missing capacity or a dropped row observation
+fails the check.
+
 TP4 DSpark main projections use the existing stage-2 compact MXFP8 template
 for retained inner widths 129..511. This range is owned by the dense-prefill
 tuning table; smaller and larger widths retain the previous routes. The

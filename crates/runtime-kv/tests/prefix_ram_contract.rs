@@ -2,9 +2,11 @@
 //! host evictions and logical events, failure and quarantine, pending
 //! anchors and their promotion, the demotion headroom rule, and a seeded
 //! model check. Both audits run after every operation, and a byte model of
-//! device and host pages checks what every copy moved: each GPU anchor and
-//! each ready, usable host entry must hold its prompt's rows and its own
-//! snapshot.
+//! device and host pages checks what every copy moved. Each capture writes
+//! snapshot bytes of its own, and the model keeps the full bytes of every
+//! page each capture, demotion and promotion took: a GPU anchor holds its
+//! key's latest capture, a host anchor what its copy found at plan time,
+//! and a usable host entry or a publish the latest capture again.
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
@@ -31,30 +33,23 @@ fn counting(n: u32, len: u32) -> PrefixChainV1 {
     chain(&(n * 1000..n * 1000 + len).collect::<Vec<_>>())
 }
 
-/// The value a capture writes into every row of its snapshot pages.
-fn stamp(key: PrefixCacheKeyV1) -> u32 {
-    u32::from_le_bytes(key.digest()[..4].try_into().unwrap()) >> 1
-}
-
-fn assert_content(
-    key: PrefixCacheKeyV1,
-    prompt: &PrefixChainV1,
-    tokens: usize,
-    kv: &[Page],
-    state: &[Page],
-    what: &str,
-) {
-    assert_eq!(kv.len(), tokens.div_ceil(BLOCK), "{what} pages");
+/// Checks an anchor's full page bytes, KV pages then snapshot pages,
+/// against its prompt: committed rows hold the prompt's tokens and each
+/// snapshot page one capture's bytes.
+fn assert_rows(prompt: &PrefixChainV1, tokens: usize, bytes: &[Page], what: &str) {
+    let kv = tokens.div_ceil(BLOCK);
+    assert_eq!(bytes.len(), kv + STATE, "{what} pages");
     for (position, token) in prompt.tokens()[..tokens].iter().enumerate() {
         assert_eq!(
-            kv[position / BLOCK][position % BLOCK],
+            bytes[position / BLOCK][position % BLOCK],
             *token,
             "{what} row {position}"
         );
     }
-    assert_eq!(state.len(), STATE, "{what} snapshot pages");
     assert!(
-        state.iter().flatten().all(|row| *row == stamp(key)),
+        bytes[kv..]
+            .iter()
+            .all(|page| page[0] != STALE && page.iter().all(|row| *row == page[0])),
         "{what} snapshot"
     );
 }
@@ -76,6 +71,15 @@ struct Tiers {
     copies: BTreeMap<KvTransferId, KvTransferSubmission>,
     /// The prompt and tokens of every public key captured.
     keys: BTreeMap<PrefixCacheKeyV1, (PrefixChainV1, usize)>,
+    /// The snapshot bytes of the last capture.
+    stamp: u32,
+    /// The full page bytes of each key's latest capture.
+    latest: BTreeMap<PrefixCacheKeyV1, Vec<Page>>,
+    /// The full source page bytes each host anchor's copy out found when it
+    /// was planned.
+    copied: BTreeMap<HostAnchorId, Vec<Page>>,
+    /// The full source page bytes each promotion found when it was planned.
+    promoted: BTreeMap<PendingAnchorId, Vec<Page>>,
     /// Pending anchors published or abandoned, whose ids must stay dead.
     retired: Vec<PendingAnchorId>,
 }
@@ -90,6 +94,10 @@ impl Tiers {
             host: BTreeMap::new(),
             copies: BTreeMap::new(),
             keys: BTreeMap::new(),
+            stamp: 0,
+            latest: BTreeMap::new(),
+            copied: BTreeMap::new(),
+            promoted: BTreeMap::new(),
             retired: Vec::new(),
         };
         tiers.check();
@@ -115,9 +123,35 @@ impl Tiers {
         self.pool.stats().free_blocks()
     }
 
-    /// Both audits, no retired pending anchor id answering, and the bytes
-    /// of every GPU anchor and every ready, usable host entry of a captured
-    /// key.
+    /// The full bytes of `key`'s GPU anchor pages, KV then snapshot.
+    fn anchor_bytes(&self, key: PrefixCacheKeyV1) -> Option<Vec<Page>> {
+        let (_, blocks, state) = self.pool.anchor_pages(key)?;
+        Some(
+            blocks
+                .iter()
+                .chain(&state)
+                .map(|page| self.device(*page))
+                .collect(),
+        )
+    }
+
+    /// The full bytes of a host anchor's pages, KV then snapshot.
+    fn host_anchor_bytes(&self, host: HostAnchorId) -> Option<Vec<Page>> {
+        let anchor = self.tier.anchor(host)?;
+        Some(
+            anchor
+                .blocks
+                .iter()
+                .chain(&anchor.state)
+                .map(|page| self.host(*page))
+                .collect(),
+        )
+    }
+
+    /// Both audits, no retired pending anchor id answering, every GPU
+    /// anchor holding its key's latest capture, every ready host anchor
+    /// holding what its copy out found, and every usable host entry holding
+    /// its key's latest capture.
     fn check(&self) {
         self.pool.audit().unwrap();
         self.tier.audit(&self.pool).unwrap();
@@ -125,21 +159,29 @@ impl Tiers {
             assert_eq!(self.pool.pending_anchor(*id), None, "retired {id:?}");
         }
         for (key, (prompt, tokens)) in &self.keys {
-            if let Some((held, blocks, state)) = self.pool.anchor_pages(*key) {
-                assert_eq!(held, *tokens);
-                let kv: Vec<_> = blocks.iter().map(|page| self.device(*page)).collect();
-                let state: Vec<_> = state.iter().map(|page| self.device(*page)).collect();
-                assert_content(*key, prompt, *tokens, &kv, &state, "GPU anchor");
+            if let Some(bytes) = self.anchor_bytes(*key) {
+                assert_rows(prompt, *tokens, &bytes, "GPU anchor");
+                assert_eq!(Some(&bytes), self.latest.get(key), "GPU anchor {key:?}");
             }
             let usable = self
                 .pool
                 .host_entry(*key)
                 .filter(|entry| entry.ready && self.pool.host_invalidation(*key).is_none());
             if let Some(entry) = usable {
-                let anchor = self.tier.anchor(entry.host).unwrap();
-                let kv: Vec<_> = anchor.blocks.iter().map(|page| self.host(*page)).collect();
-                let state: Vec<_> = anchor.state.iter().map(|page| self.host(*page)).collect();
-                assert_content(*key, prompt, *tokens, &kv, &state, "host entry");
+                assert_eq!(
+                    self.copied.get(&entry.host),
+                    self.latest.get(key),
+                    "usable host entry {key:?}"
+                );
+            }
+        }
+        for (host, bytes) in &self.copied {
+            if self.tier.anchor(*host).is_some_and(|anchor| anchor.ready) {
+                assert_eq!(
+                    self.host_anchor_bytes(*host).as_ref(),
+                    Some(bytes),
+                    "host anchor {host:?}"
+                );
             }
         }
     }
@@ -189,18 +231,22 @@ impl Tiers {
         self.check();
     }
 
-    /// Captures `live` at `depth` and writes its snapshot, returning the
-    /// key when a new anchor was made.
+    /// Captures `live` at `depth` and writes snapshot bytes of its own,
+    /// returning the key when a new anchor was made.
     fn capture(&mut self, live: &Live, depth: usize) -> Option<PrefixCacheKeyV1> {
         let key = live.prompt.key_at(depth).unwrap();
         let state = self
             .pool
             .insert_content_anchor(&live.prompt, live.handle, depth, STATE)
             .unwrap()?;
+        self.stamp += 1;
         for page in state {
-            self.device.insert(page, [stamp(key); BLOCK]);
+            self.device.insert(page, [self.stamp; BLOCK]);
         }
+        let bytes = self.anchor_bytes(key).unwrap();
+        assert_rows(&live.prompt, depth, &bytes, "capture");
         self.keys.insert(key, (live.prompt.clone(), depth));
+        self.latest.insert(key, bytes);
         self.check();
         Some(key)
     }
@@ -212,6 +258,17 @@ impl Tiers {
             self.capture(&live, *depth).unwrap();
         }
         self.release(live);
+    }
+
+    /// Keeps the full source bytes a copy out found when it was planned.
+    fn copy_out(&mut self, host: HostAnchorId, plan: KvTransferPlan) -> KvTransferId {
+        let found = plan
+            .pages()
+            .iter()
+            .map(|pair| self.device(pair.device))
+            .collect();
+        self.copied.insert(host, found);
+        self.submit(plan)
     }
 
     fn submit(&mut self, plan: KvTransferPlan) -> KvTransferId {
@@ -257,7 +314,13 @@ impl Tiers {
         self.check();
         let (host, plan) = result?;
         assert_eq!(plan.class(), KvTransferClass::Demotion);
-        Ok((host, self.submit(plan)))
+        let copy = self.copy_out(host, plan);
+        assert_eq!(
+            self.copied.get(&host),
+            self.latest.get(&key),
+            "demotion source"
+        );
+        Ok((host, copy))
     }
 
     /// Demotes `key`, completes the copy and removes the GPU anchor.
@@ -274,18 +337,8 @@ impl Tiers {
         let pending = self.pool.create_pending_anchor(key, STATE);
         self.check();
         let pending = pending?;
-        let plan = self.tier.begin_promotion(&mut self.pool, pending);
-        self.check();
-        match plan {
-            Ok(plan) => {
-                assert_eq!(plan.class(), KvTransferClass::Promotion);
-                assert_eq!(plan.direction(), KvTransferDirection::In);
-                // Fresh pages hold whatever they held before.
-                for pair in plan.pages() {
-                    self.device.insert(pair.device, [STALE; BLOCK]);
-                }
-                Ok((pending, self.submit(plan)))
-            }
+        match self.start_promotion(pending) {
+            Ok(copy) => Ok((pending, copy)),
             Err(error) => {
                 self.abandon(pending);
                 Err(error)
@@ -293,10 +346,46 @@ impl Tiers {
         }
     }
 
+    /// Promotes a pending anchor's source entry, keeping the full source
+    /// bytes the promotion found, which must be what the entry's copy out
+    /// found.
+    fn start_promotion(&mut self, pending: PendingAnchorId) -> Result<KvTransferId, KvError> {
+        let source = self.pool.host_entry(pending.key()).map(|entry| entry.host);
+        let plan = self.tier.begin_promotion(&mut self.pool, pending);
+        self.check();
+        let plan = plan?;
+        assert_eq!(plan.class(), KvTransferClass::Promotion);
+        assert_eq!(plan.direction(), KvTransferDirection::In);
+        let found: Vec<_> = plan
+            .pages()
+            .iter()
+            .map(|pair| self.host(pair.host))
+            .collect();
+        assert_eq!(
+            source.and_then(|host| self.copied.get(&host)),
+            Some(&found),
+            "promotion source"
+        );
+        self.promoted.insert(pending, found);
+        // Fresh pages hold whatever they held before.
+        for pair in plan.pages() {
+            self.device.insert(pair.device, [STALE; BLOCK]);
+        }
+        Ok(self.submit(plan))
+    }
+
     fn publish(&mut self, pending: PendingAnchorId) -> PrefixPublishV1 {
-        let prompt = self.keys[&pending.key()].0.clone();
+        let key = pending.key();
+        let prompt = self.keys[&key].0.clone();
         let outcome = self.pool.publish_pending_anchor(pending, &prompt).unwrap();
         self.retired.push(pending);
+        let found = self.promoted.remove(&pending);
+        if outcome == PrefixPublishV1::Published {
+            // The anchor holds what the promotion found, and that is the
+            // key's latest capture: a publish never resurrects an older one.
+            assert_eq!(self.anchor_bytes(key), found, "published anchor");
+            assert_eq!(found.as_ref(), self.latest.get(&key), "published capture");
+        }
         self.check();
         outcome
     }
@@ -304,6 +393,7 @@ impl Tiers {
     fn abandon(&mut self, pending: PendingAnchorId) {
         self.pool.abandon_pending_anchor(pending).unwrap();
         self.retired.push(pending);
+        self.promoted.remove(&pending);
         self.check();
     }
 
@@ -333,9 +423,13 @@ impl Tiers {
         let (prompt, tokens) = self.keys[&key].clone();
         let hit = self.pool.resume_anchor(key, prompt.tokens().len()).unwrap();
         let blocks = self.pool.snapshot(hit.handle()).unwrap().into_blocks();
-        let kv: Vec<_> = blocks.iter().map(|page| self.device(*page)).collect();
-        let state: Vec<_> = hit.state().iter().map(|page| self.device(*page)).collect();
-        assert_content(key, &prompt, tokens, &kv, &state, "resumed sequence");
+        let bytes: Vec<_> = blocks
+            .iter()
+            .chain(hit.state())
+            .map(|page| self.device(*page))
+            .collect();
+        assert_rows(&prompt, tokens, &bytes, "resumed sequence");
+        assert_eq!(Some(&bytes), self.latest.get(&key), "resumed sequence");
         self.pool.finish_restore(hit.handle()).unwrap();
         self.check();
         Live {
@@ -634,8 +728,7 @@ fn a_retried_promotion_never_answers_to_an_earlier_attempts_id() {
     );
     tiers.assert_retired(first);
     // A failed copy, then a retry that succeeds.
-    let plan = tiers.tier.begin_promotion(&mut tiers.pool, second).unwrap();
-    let copy = tiers.submit(plan);
+    let copy = tiers.start_promotion(second).unwrap();
     tiers.complete(copy, KvTransferStatus::FailedIdle);
     assert_eq!(tiers.publish(second), PrefixPublishV1::NotCopied);
     let (third, copy) = tiers.promote(key).unwrap();
@@ -648,6 +741,32 @@ fn a_retried_promotion_never_answers_to_an_earlier_attempts_id() {
     for retired in [first, second, third] {
         tiers.assert_retired(retired);
     }
+}
+
+#[test]
+fn an_append_during_a_copy_leaves_the_copied_page_as_the_copy_found_it() {
+    let prompt = counting(14, 12);
+    let key = prompt.key_at(6).unwrap();
+    let mut tiers = Tiers::ram(32, 16);
+    let mut live = tiers.start(&prompt, 6).unwrap();
+    tiers.capture(&live, 6).unwrap();
+    let tail = tiers.pool.snapshot(live.handle).unwrap().blocks()[1];
+    let (host, copy) = tiers.demote(key).unwrap();
+    // The GPU anchor goes during the copy, and the sequence appends past
+    // the rows the anchor committed. The lease still shares the tail page,
+    // so the append writes a copy of it.
+    assert!(tiers.remove(key));
+    tiers.append(&mut live, 2).unwrap();
+    tiers.complete(copy, KvTransferStatus::Complete);
+    assert_ne!(tiers.pool.snapshot(live.handle).unwrap().blocks()[1], tail);
+    let copied = tiers.tier.anchor(host).unwrap().blocks[1];
+    assert_eq!(tiers.host(copied)[2..], [STALE; 2]);
+    tiers.release(live);
+    let (pending, copy) = tiers.promote(key).unwrap();
+    tiers.complete(copy, KvTransferStatus::Complete);
+    assert_eq!(tiers.publish(pending), PrefixPublishV1::Published);
+    let live = tiers.resume(key);
+    tiers.release(live);
 }
 
 #[test]
@@ -1064,7 +1183,7 @@ fn a_seeded_model_check_of_both_tiers() {
                     tiers.check();
                     if let Ok((host, plan)) = result {
                         assert_eq!(plan.class(), KvTransferClass::SwapOut);
-                        let copy = tiers.submit(plan);
+                        let copy = tiers.copy_out(host, plan);
                         copies.push((copy, Kind::Swap(host)));
                     }
                     assert!(tiers.remove(private));

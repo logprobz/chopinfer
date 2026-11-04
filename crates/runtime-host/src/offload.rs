@@ -3,13 +3,18 @@ use crate::device::{DeviceObjectV1, HostDeviceBackendV1, HostDeviceResultV1};
 use runtime_bundle_abi::BundleStatusV1 as Status;
 pub use runtime_engine::KvTransferStatus;
 use runtime_kv::{
-    KvTransferDirection, KvTransferId, KvTransferPlan, KvTransferPoll, KvTransferSubmission,
+    KvTransferClass, KvTransferId, KvTransferPlan, KvTransferPoll, KvTransferSubmission,
 };
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::time::{Duration, Instant};
 
 pub const KV_OFFLOAD_CAPABILITY_V1: &str = "chop.kv-offload.v1";
 const GIB: u64 = 1024 * 1024 * 1024;
+/// The bytes of one copy chunk, or one page when a page is larger.
+pub const KV_COPY_CHUNK_BYTES: usize = 8 * 1024 * 1024;
+/// Demotion chunks issued and not yet drained, at most, on each rank. A
+/// foreground copy waits at most for these to drain.
+pub const KV_DEMOTION_CHUNKS_IN_FLIGHT: usize = 4;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct KvOffloadOptionsV1 {
     pub budget_bytes: u64,
@@ -108,6 +113,15 @@ pub trait KvOffloadExecutorV1 {
     }
     fn drain(&self) -> HostDeviceResultV1<()>;
 }
+/// Copy order at chunk boundaries, lowest first: copies a waiting request
+/// or promotion needs, then swaps out, then demotions.
+fn priority(class: KvTransferClass) -> u8 {
+    match class {
+        KvTransferClass::Promotion | KvTransferClass::SwapIn => 0,
+        KvTransferClass::SwapOut => 1,
+        KvTransferClass::Demotion => 2,
+    }
+}
 struct Queued {
     plan: KvTransferSubmission,
     cursor: usize,
@@ -125,7 +139,10 @@ pub(crate) struct OffloadQueue {
     transfers: BTreeMap<KvTransferId, Queued>,
     in_flight: VecDeque<Chunk>,
     rate: Option<u64>,
+    /// The pacing clock of foreground copies: swaps and promotions.
     next_issue: Instant,
+    /// Demotions' own pacing clock; they never advance `next_issue`.
+    next_demotion: Instant,
     poisoned: bool,
 }
 impl OffloadQueue {
@@ -159,6 +176,7 @@ impl OffloadQueue {
             in_flight: VecDeque::new(),
             rate,
             next_issue: Instant::now(),
+            next_demotion: Instant::now(),
             poisoned: false,
         })
     }
@@ -167,8 +185,9 @@ impl OffloadQueue {
             return Duration::from_secs(5);
         };
         // Per-link pacing issues ranks together. Include unissued pages and
-        // already-issued pacing debt, then allow another full paced interval
-        // plus five seconds for event observation and queue scheduling.
+        // already-issued pacing debt on both clocks, then allow another full
+        // paced interval plus five seconds for event observation and queue
+        // scheduling.
         let bytes = self
             .transfers
             .values()
@@ -179,8 +198,10 @@ impl OffloadQueue {
                         .saturating_mul(self.plan.page_bytes as u64),
                 )
             });
+        let now = Instant::now();
         let paced = Duration::from_secs(bytes.div_ceil(rate))
-            .saturating_add(self.next_issue.saturating_duration_since(Instant::now()));
+            .saturating_add(self.next_issue.saturating_duration_since(now))
+            .saturating_add(self.next_demotion.saturating_duration_since(now));
         Duration::from_secs(5).saturating_add(paced.saturating_mul(2))
     }
 
@@ -244,17 +265,16 @@ impl OffloadQueue {
         let horizon = now + Duration::from_millis(20);
         while self.in_flight.len() < 128
             && self.in_flight.iter().map(|c| c.bytes).sum::<usize>() < GIB as usize
-            && (self.rate.is_none() || self.next_issue <= horizon)
         {
             // Do not interleave two transfers: they can name the same shared
-            // pages. Once a chunk drains, waiting reloads take priority.
+            // pages, and chunk completion assumes one transfer in flight. A
+            // waiting transfer of a higher class stops further chunks of the
+            // active one, and starts once the window drains on every rank.
             let chosen = if let Some(chunk) = self.in_flight.front() {
-                if self.transfers[&chunk.transfer].plan.direction() == KvTransferDirection::Out
-                    && self.transfers.values().any(|t| {
-                        t.status == KvTransferStatus::Pending
-                            && t.plan.direction() == KvTransferDirection::In
-                    })
-                {
+                let active = priority(self.transfers[&chunk.transfer].plan.class());
+                if self.transfers.values().any(|t| {
+                    t.status == KvTransferStatus::Pending && priority(t.plan.class()) < active
+                }) {
                     break;
                 }
                 Some(chunk.transfer)
@@ -262,7 +282,7 @@ impl OffloadQueue {
                 self.transfers
                     .iter()
                     .filter(|(_, t)| t.status == KvTransferStatus::Pending)
-                    .min_by_key(|(id, t)| (t.plan.direction() != KvTransferDirection::In, **id))
+                    .min_by_key(|(id, t)| (priority(t.plan.class()), **id))
                     .map(|(id, _)| *id)
             };
             let Some(id) = chosen else { break };
@@ -270,13 +290,29 @@ impl OffloadQueue {
             if t.cursor == t.plan.pages().len() {
                 break;
             }
+            // Demotions are paced on their own clock and, as the lowest
+            // class, also wait out foreground pacing debt. The window holds
+            // only this transfer's chunks, so its length counts them.
+            let demotion = t.plan.class() == KvTransferClass::Demotion;
+            let clock = if demotion {
+                self.next_demotion.max(self.next_issue)
+            } else {
+                self.next_issue
+            };
+            if (self.rate.is_some() && clock > horizon)
+                || (demotion && self.in_flight.len() >= KV_DEMOTION_CHUNKS_IN_FLIGHT)
+            {
+                break;
+            }
             let room = (GIB as usize - self.in_flight.iter().map(|c| c.bytes).sum::<usize>())
                 / self.plan.page_bytes;
             if room == 0 {
                 break;
             }
-            let end = (t.cursor + (8 * 1024 * 1024 / self.plan.page_bytes).max(1).min(room))
-                .min(t.plan.pages().len());
+            let chunk = (KV_COPY_CHUNK_BYTES / self.plan.page_bytes)
+                .max(1)
+                .min(room);
+            let end = (t.cursor + chunk).min(t.plan.pages().len());
             let pages = &t.plan.pages()[t.cursor..end];
             let mut ranks = Vec::new();
             for arena in &self.arenas {
@@ -292,7 +328,12 @@ impl OffloadQueue {
                 ranks,
             });
             if let Some(rate) = self.rate {
-                self.next_issue = self.next_issue.max(now)
+                let clock = if demotion {
+                    &mut self.next_demotion
+                } else {
+                    &mut self.next_issue
+                };
+                *clock = (*clock).max(now)
                     + Duration::from_secs_f64(
                         (pages.len() * self.plan.page_bytes) as f64 / rate as f64,
                     );
@@ -1135,5 +1176,309 @@ mod copy_window {
             q.poll(&mut device, out_id).unwrap().completion().unwrap(),
         )
         .unwrap();
+    }
+}
+#[cfg(all(test, feature = "fake-host-services"))]
+mod classes {
+    use super::*;
+    use crate::fake::FakeHostDeviceV1;
+    use runtime_kv::*;
+    use std::sync::Arc;
+    /// Four pages fill one chunk, so the demotion cap is sixteen pages.
+    const PB: usize = 2 * 1024 * 1024;
+    const PAGES: usize = 24;
+    struct Fixture {
+        device: FakeHostDeviceV1,
+        q: OffloadQueue,
+        p: KvPool,
+        h: HostTier,
+        seed: u32,
+    }
+    impl Fixture {
+        fn new() -> Self {
+            let mut device = FakeHostDeviceV1::new();
+            let mut buffers = Vec::new();
+            for rank in 0..2 {
+                let context = device.create_context(rank, rank as i32).unwrap();
+                let pool = device.create_memory_pool(context).unwrap();
+                let stream = device.create_stream(context, 0).unwrap();
+                buffers.push(
+                    device
+                        .allocate_device_buffer(pool, Some(stream), (PAGES * PB) as u64, 16)
+                        .unwrap(),
+                );
+            }
+            let plan =
+                HostArenaPlanV1::new((2 * PAGES * PB) as u64, 64 * GIB, PB as u64, 2).unwrap();
+            let q = OffloadQueue::new(&mut device, &buffers, PAGES, plan, None).unwrap();
+            let p = KvPool::new(KvGeometry::new(4, PAGES).unwrap(), 8)
+                .unwrap()
+                .with_prefix_ram(true);
+            let h = HostTier::new(&p, plan.pages_per_rank).unwrap();
+            Self {
+                device,
+                q,
+                p,
+                h,
+                seed: 0,
+            }
+        }
+        /// Demotes a new public anchor of `pages` KV pages and one snapshot page.
+        fn demotion(&mut self, pages: usize) -> (PrefixCacheKeyV1, KvTransferPlan) {
+            self.seed += 1;
+            let tokens: Vec<u32> = (0..4 * pages as u32).map(|i| self.seed << 16 | i).collect();
+            let chain = PrefixChainV1::new(4, Arc::from(tokens.as_slice()), Vec::new()).unwrap();
+            let seq = self.p.create_sequence(tokens.len()).unwrap();
+            self.p.append(seq, tokens.len()).unwrap();
+            self.p
+                .insert_content_anchor(&chain, seq, tokens.len(), 1)
+                .unwrap()
+                .unwrap();
+            self.p.release(seq).unwrap();
+            let key = chain.key_at(tokens.len()).unwrap();
+            let (_, plan) = self.h.begin_offload(&mut self.p, key, None).unwrap();
+            assert_eq!(plan.class(), KvTransferClass::Demotion);
+            (key, plan)
+        }
+        /// Swaps out a new request boundary of `pages` KV pages and one
+        /// snapshot page.
+        fn swap_out(&mut self, pages: usize) -> (HostAnchorId, KvTransferPlan) {
+            self.seed += 1;
+            let seq = self.p.create_sequence(4 * pages).unwrap();
+            self.p.append(seq, 4 * pages).unwrap();
+            let key = PrefixCacheKeyV1::new([self.seed as u8; 32]);
+            self.p.insert_private_anchor(key, seq, 1).unwrap();
+            let pair = self
+                .h
+                .begin_offload(&mut self.p, key, Some(u64::from(self.seed)))
+                .unwrap();
+            assert_eq!(pair.1.class(), KvTransferClass::SwapOut);
+            self.p.remove_anchor(key).unwrap();
+            self.p.release(seq).unwrap();
+            pair
+        }
+        /// A ready swap of `pages` KV pages, for a later reload.
+        fn ready_swap(&mut self, pages: usize) -> HostAnchorId {
+            let (anchor, out) = self.swap_out(pages);
+            let id = self.submit(out);
+            assert_eq!(self.wait(id), KvTransferStatus::Complete);
+            anchor
+        }
+        fn swap_in(&mut self, anchor: HostAnchorId) -> (PrefixHitV1, KvTransferPlan) {
+            let a = self.h.anchor(anchor).unwrap();
+            let (tokens, state) = (a.tokens, a.state.len());
+            let dest = self
+                .p
+                .create_initialized_sequence(tokens, tokens, state)
+                .unwrap();
+            let plan = self.h.begin_reload(&mut self.p, anchor, &dest).unwrap();
+            assert_eq!(plan.class(), KvTransferClass::SwapIn);
+            (dest, plan)
+        }
+        fn submit(&mut self, plan: KvTransferPlan) -> KvTransferId {
+            let id = plan.id();
+            self.q.submit(plan).unwrap();
+            id
+        }
+        fn poll(&mut self, id: KvTransferId) -> KvTransferStatus {
+            let status = self.q.poll(&mut self.device, id).unwrap().status();
+            let active: BTreeSet<_> = self.q.in_flight.iter().map(|c| c.transfer).collect();
+            assert!(active.len() <= 1, "two transfers interleaved");
+            status
+        }
+        /// Hands a finished transfer's result to the tiers.
+        fn finish(&mut self, id: KvTransferId) -> KvTransferStatus {
+            let done = self
+                .q
+                .poll(&mut self.device, id)
+                .unwrap()
+                .completion()
+                .unwrap();
+            let status = done.status();
+            self.h.complete_transfer(&mut self.p, done).unwrap();
+            self.h.audit(&self.p).unwrap();
+            status
+        }
+        fn wait(&mut self, id: KvTransferId) -> KvTransferStatus {
+            while self.poll(id) == KvTransferStatus::Pending {}
+            self.finish(id)
+        }
+        fn active(&self) -> Option<KvTransferId> {
+            self.q.in_flight.front().map(|c| c.transfer)
+        }
+        fn cursor(&self, id: KvTransferId) -> usize {
+            self.q.transfers[&id].cursor
+        }
+        /// Releases a reloaded sequence and a swap.
+        fn release_swap(&mut self, anchor: HostAnchorId, dest: PrefixHitV1) {
+            self.p.finish_initialized_restore(dest.handle()).unwrap();
+            self.p.release(dest.handle()).unwrap();
+            self.h.drop_anchor(anchor).unwrap();
+        }
+        /// Every page is free once the demoted GPU anchors are evicted and
+        /// their host entries dropped.
+        fn assert_idle(&mut self, demoted: &[PrefixCacheKeyV1]) {
+            for key in demoted {
+                self.p.remove_anchor(*key).unwrap();
+                self.h.drop_public_entry(&mut self.p, *key).unwrap();
+            }
+            self.h.audit(&self.p).unwrap();
+            assert_eq!(self.h.pending_transfers(), 0);
+            assert_eq!(self.h.used_pages(), 0);
+            assert_eq!(self.p.stats().free_blocks(), PAGES);
+        }
+    }
+
+    #[test]
+    fn swap_ins_run_before_swap_outs_and_swap_outs_before_demotions() {
+        use KvTransferClass::*;
+        // Promotions share the swap-ins' class; no plan names one yet.
+        assert_eq!(priority(Promotion), priority(SwapIn));
+        assert!(priority(SwapIn) < priority(SwapOut));
+        assert!(priority(SwapOut) < priority(Demotion));
+        let mut f = Fixture::new();
+        let swap = f.ready_swap(2);
+        // Submitted in the reverse of their priority.
+        let (key, demotion) = f.demotion(4);
+        let (out_anchor, out) = f.swap_out(2);
+        let (dest, reload) = f.swap_in(swap);
+        let ids = [f.submit(demotion), f.submit(out), f.submit(reload)];
+        let mut order = Vec::new();
+        while ids
+            .iter()
+            .any(|id| f.q.transfers[id].status == KvTransferStatus::Pending)
+        {
+            f.poll(ids[0]);
+            if let Some(active) = f.active()
+                && order.last() != Some(&active)
+            {
+                order.push(active);
+            }
+        }
+        assert_eq!(order, [ids[2], ids[1], ids[0]]);
+        for id in ids {
+            assert_eq!(f.finish(id), KvTransferStatus::Complete);
+        }
+        assert!(f.p.host_entry(key).unwrap().ready);
+        f.release_swap(swap, dest);
+        f.h.drop_anchor(out_anchor).unwrap();
+        f.assert_idle(&[key]);
+    }
+
+    #[test]
+    fn a_foreground_copy_waits_only_for_issued_demotion_chunks() {
+        for class in [KvTransferClass::SwapIn, KvTransferClass::SwapOut] {
+            let mut f = Fixture::new();
+            let swap = f.ready_swap(1);
+            // Five chunks: the cap issues four.
+            let (key, demotion) = f.demotion(18);
+            let demotion = f.submit(demotion);
+            f.poll(demotion);
+            assert_eq!(f.q.in_flight.len(), KV_DEMOTION_CHUNKS_IN_FLIGHT);
+            assert_eq!(f.cursor(demotion), 16);
+            let (dest, out, foreground) = if class == KvTransferClass::SwapIn {
+                let (dest, plan) = f.swap_in(swap);
+                (Some(dest), None, plan)
+            } else {
+                let (out, plan) = f.swap_out(1);
+                (None, Some(out), plan)
+            };
+            let foreground = f.submit(foreground);
+            let mut polls = 0;
+            while f.poll(foreground) == KvTransferStatus::Pending {
+                polls += 1;
+                assert!(polls < 100);
+                // The demotion's remainder waits, and the foreground copy
+                // starts in the poll that drains the window.
+                assert_eq!(f.cursor(demotion), 16, "{class:?}");
+                assert!(!f.q.in_flight.is_empty(), "{class:?}");
+            }
+            assert!(polls > 1, "{class:?}");
+            assert_eq!(f.finish(foreground), KvTransferStatus::Complete);
+            assert_eq!(f.wait(demotion), KvTransferStatus::Complete);
+            assert!(f.p.host_entry(key).unwrap().ready);
+            match (dest, out) {
+                (Some(dest), _) => f.release_swap(swap, dest),
+                (_, Some(out)) => {
+                    f.h.drop_anchor(swap).unwrap();
+                    f.h.drop_anchor(out).unwrap();
+                }
+                _ => unreachable!(),
+            }
+            f.assert_idle(&[key]);
+        }
+    }
+
+    #[test]
+    fn demotions_keep_four_chunks_in_flight_while_a_slow_rank_holds_completion() {
+        let mut f = Fixture::new();
+        f.device.set_offload_query_delay(f.q.arenas[0], 0);
+        f.device.set_offload_query_delay(f.q.arenas[1], 6);
+        let (key, demotion) = f.demotion(18);
+        let demotion = f.submit(demotion);
+        let mut held = 0;
+        while f.poll(demotion) == KvTransferStatus::Pending {
+            for rank in 0..2 {
+                let issued =
+                    f.q.in_flight
+                        .iter()
+                        .filter(|c| c.ranks[rank].is_some())
+                        .count();
+                assert!(issued <= KV_DEMOTION_CHUNKS_IN_FLIGHT);
+            }
+            assert!(f.q.in_flight.len() <= KV_DEMOTION_CHUNKS_IN_FLIGHT);
+            if f.cursor(demotion) == 16 {
+                held += 1;
+                assert_eq!(f.q.in_flight.len(), KV_DEMOTION_CHUNKS_IN_FLIGHT);
+                if held > 1 {
+                    // Rank 0 drained the head chunk; rank 1 still holds it.
+                    let head = &f.q.in_flight[0].ranks;
+                    assert!(head[0].is_none() && head[1].is_some());
+                }
+            }
+        }
+        assert!(held > 6);
+        assert_eq!(f.finish(demotion), KvTransferStatus::Complete);
+        assert!(f.p.host_entry(key).unwrap().ready);
+        f.assert_idle(&[key]);
+    }
+
+    #[test]
+    fn demotion_pacing_keeps_its_own_clock() {
+        let mut f = Fixture::new();
+        // Four seconds per chunk.
+        let rate = PB as u64;
+        f.q.rate = Some(rate);
+        let (key, demotion) = f.demotion(8);
+        let demotion = f.submit(demotion);
+        f.poll(demotion);
+        assert_eq!(f.cursor(demotion), 4);
+        let now = Instant::now();
+        assert!(f.q.next_issue <= now);
+        assert!(f.q.next_demotion > now + Duration::from_secs(3));
+        // The shutdown budget counts the unissued pages and the debt of the
+        // demotions' clock.
+        let unissued = 5 * PB as u64 / rate;
+        assert!(f.q.drain_timeout() >= Duration::from_secs(5 + 2 * (unissued + 3)));
+        let clock = f.q.next_demotion;
+        let (out_anchor, out) = f.swap_out(1);
+        let out = f.submit(out);
+        let mut polls = 0;
+        while f.poll(out) == KvTransferStatus::Pending {
+            polls += 1;
+            assert!(polls < 100, "the swap waited for demotion pacing");
+        }
+        assert_eq!(f.finish(out), KvTransferStatus::Complete);
+        assert!(f.q.next_issue > Instant::now() + Duration::from_secs(1));
+        assert_eq!(f.q.next_demotion, clock);
+        // The demotion still waits for its own clock.
+        for _ in 0..4 {
+            f.poll(demotion);
+        }
+        assert_eq!(f.cursor(demotion), 4);
+        f.q.rate = None;
+        assert_eq!(f.wait(demotion), KvTransferStatus::Complete);
+        f.h.drop_anchor(out_anchor).unwrap();
+        f.assert_idle(&[key]);
     }
 }

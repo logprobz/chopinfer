@@ -1056,9 +1056,35 @@ mismatch.
 
 The suite includes tokenizer/frontend goldens, per-layer taps, long context,
 GSM8K, media, prefix equality, determinism and a BF16-KV
-comparison. Native and BF16 KV must give the same served bits; BF16 KV is a
-diagnostic comparison and is not qualified for capacity, pressure
-preemption or offload. It explicitly disables speculation.
+comparison.
+
+Two checks keep KV storage apart from production accuracy. The `kv-bf16`
+configuration's `kv_layout_equality` requires native mixed KV and BF16 KV
+storage to serve the same bits, bit for bit, on the determinism request set
+and on forced records (`verify_exact.py` K=0) of the exact reference's
+texts and the pinned long_context text. That text is one request of a
+130,048-token prompt with 1,024 forced outputs, 1,023 of them from decode
+rows. In a `diagnostic-taps` build, `kv_layout_equality.py taps` also
+requires every text tap and decoded KV-state tap to be equal through
+prefill, decode and a prefix-hit restore. The BF16 layout stores exactly
+the values the native formats decode to, and at Flash TP4 it rounds prefill
+rank partials to BF16 as native does
+([partial arithmetic](communication-partials.md)), so the comparison
+isolates storage. Routes only the native layout takes are compared as
+served: the served prefill attention and its decoded BF16 cache, the
+scheduled latent decode and latent cache, the indexer's MMA prefill tile
+and its ordered decode and verify merge, and upper-skip DMA reductions.
+The BF16 server runs its admitted paths there, and the bits must still be
+equal.
+BF16 KV is a diagnostic comparison and is not qualified for capacity,
+pressure preemption or offload. It explicitly disables speculation.
+
+Production accuracy is qualified separately, on native KV: the default
+configuration's teacher (3974 positions), chat, long_context, multimodal,
+`verify_exact` pairs, greedy AR versus DSpark and determinism teacher-force
+or compare at matched histories against the pinned F32-TQ reference or AR.
+`paired_teacher` and `gsm8k_regression` stay informational until a stored
+passing baseline exists.
 
 The bundle declares no KV offload: the server keeps no KV in host memory,
 and a preempted request recomputes its KV. `qual.json` declares offload not

@@ -1595,6 +1595,47 @@ mod classes {
     }
 
     #[test]
+    fn a_cancelled_demotion_with_every_page_issued_fails_idle_once_the_slow_rank_drains() {
+        let mut f = Fixture::new();
+        f.device.set_offload_query_delay(f.q.arenas[0], 0);
+        f.device.set_offload_query_delay(f.q.arenas[1], 6);
+        // Fifteen KV pages and a snapshot page: the cap's four chunks.
+        let (key, demotion) = f.demotion(15);
+        let pages = demotion.pages().len();
+        assert_eq!(pages, 16);
+        let demotion = f.submit(demotion);
+        assert_eq!(f.poll(demotion), KvTransferStatus::Pending);
+        assert_eq!(f.cursor(demotion), pages);
+        assert_eq!(f.q.in_flight.len(), KV_DEMOTION_CHUNKS_IN_FLIGHT);
+        assert_eq!(f.q.cancel(demotion), Ok(true));
+        // Rank 1 still copies every chunk: the copy stays pending, and the
+        // tier keeps its lease and host pages.
+        let (mut held, mut rank_0_drained) = (0, false);
+        while f.poll(demotion) == KvTransferStatus::Pending {
+            held += 1;
+            assert!(held < 100);
+            let head = &f.q.in_flight[0].ranks;
+            assert!(head[1].is_some());
+            rank_0_drained |= head[0].is_none();
+            assert_eq!(f.h.pending_transfers(), 1);
+            assert!(f.h.used_pages() > 0);
+            assert_eq!(f.q.cancel(demotion), Ok(true));
+        }
+        assert!(held > 1 && rank_0_drained);
+        assert!(f.q.in_flight.is_empty());
+        assert!(f.q.available());
+        // Cancelled, a copy whose every page landed is still no copy: the
+        // tier drops its host entry and releases its host pages and lease.
+        assert_eq!(f.finish(demotion), KvTransferStatus::FailedIdle);
+        assert_eq!(f.p.host_entry(key), None);
+        assert_eq!(f.h.pending_transfers(), 0);
+        assert_eq!(f.h.used_pages(), 0);
+        f.p.remove_anchor(key).unwrap();
+        f.h.audit(&f.p).unwrap();
+        assert_eq!(f.p.stats().free_blocks(), PAGES);
+    }
+
+    #[test]
     fn a_cancelled_demotion_with_nothing_in_flight_fails_idle_at_once() {
         let mut f = Fixture::new();
         let (unissued, plan) = f.demotion(2);

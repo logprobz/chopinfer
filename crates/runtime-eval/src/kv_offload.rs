@@ -411,9 +411,9 @@ fn labelled(before: &Value, after: &Value, key: &str) -> Result<BTreeMap<String,
 /// control request served, and the off arm must pass its own end gates.
 /// Every C1 request must be bitwise equal, the fill must have evicted every
 /// earlier anchor, the tier must promote anchors and serve RAM hits, and it
-/// must end with no transfer pending or overdue, no request swapped and no
-/// stall. Its missed demotions are reported, and C16 equality is
-/// informational.
+/// must end with no transfer pending (none counted and none aged) or
+/// overdue, no request swapped and no stall. Its missed demotions are
+/// reported, and C16 equality is informational.
 pub fn judge_prefix(args: &Value) -> Result<Value, String> {
     facts(&args["facts"])?;
     let off = &args["off"];
@@ -495,9 +495,11 @@ pub fn judge_prefix(args: &Value) -> Result<Value, String> {
     )?;
     let before = &tier["before"];
     let after = &tier["after"];
-    // The tier keeps its entries, so host pages stay in use; its copies must not.
+    // The tier keeps its entries, so host pages stay in use; its copies must
+    // not. Only the count shows a copy submitted since the engine last
+    // polled, whose age reads zero.
     end_gates(&mut gates, tier, &["swapped_requests", "stalls"], true)?;
-    for key in ["pending_micros", "stalled_transfers"] {
+    for key in ["pending_transfers", "pending_micros", "stalled_transfers"] {
         gate(
             &mut gates,
             &format!("tier_end_{key}"),

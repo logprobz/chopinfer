@@ -290,7 +290,8 @@ fn prefix_fixture() -> Value {
     tier["repeat"] = json!([]);
     let idle = json!({"ram_hits": 0, "ram_reused_tokens": 0, "headroom_waits": 0, "ram_evictions": 0,
         "demotions": {}, "promotions": {}, "missed_evictions": {}, "ram_fallbacks": {},
-        "ram_anchors": 0, "ram_bytes": 0, "stalled_transfers": 0, "pending_micros": 0});
+        "ram_anchors": 0, "ram_bytes": 0, "stalled_transfers": 0, "pending_micros": 0,
+        "pending_transfers": 0});
     let mut end = idle.clone();
     end["ram_hits"] = json!(30);
     end["ram_reused_tokens"] = json!(3000);
@@ -383,11 +384,17 @@ fn prefix_pressure_requires_promotions_and_ram_hits() {
 
 #[test]
 fn prefix_pressure_requires_an_idle_tier_and_no_stalls_at_the_end() {
-    for key in ["pending_micros", "stalled_transfers"] {
+    for key in ["pending_transfers", "pending_micros", "stalled_transfers"] {
         let mut value = prefix_fixture();
         value["tier"]["after"]["tier"][key] = json!(1);
         prefix_fails(value, &format!("tier_end_{key}"));
     }
+    // A copy submitted since the last poll is pending at age zero: only
+    // the count shows it.
+    let mut value = prefix_fixture();
+    value["tier"]["after"]["tier"]["pending_transfers"] = json!(1);
+    assert_eq!(value["tier"]["after"]["tier"]["pending_micros"], 0);
+    prefix_fails(value, "tier_end_pending_transfers");
     for key in ["swapped_requests", "stalls"] {
         let mut value = prefix_fixture();
         value["tier"]["after"][key] = json!(1);
@@ -407,6 +414,7 @@ fn prefix_pressure_refuses_missing_tier_evidence_and_other_arms() {
         "promotions",
         "ram_hits",
         "pending_micros",
+        "pending_transfers",
     ] {
         let mut value = prefix_fixture();
         value["tier"]["after"]["tier"]

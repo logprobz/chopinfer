@@ -241,6 +241,7 @@ impl<E: ModelExecutor> Engine<E> {
                             warned: false,
                         },
                     );
+                self.publish_pending_transfers();
                 Ok(None)
             }
             Err((error, plan)) => {
@@ -333,6 +334,7 @@ impl<E: ModelExecutor> Engine<E> {
             .transfers
             .remove(&id)
             .ok_or(EngineError::InvariantViolation)?;
+        self.publish_pending_transfers();
         let incoming = transfer.direction == KvTransferDirection::In;
         let swap = matches!(transfer.owner, TransferOwner::Request(_));
         if status == KvTransferStatus::Complete {
@@ -383,6 +385,16 @@ impl<E: ModelExecutor> Engine<E> {
                 .map_err(EngineError::Scheduler)?;
         }
         Ok(())
+    }
+
+    /// Publishes the ledger's size on every change: a submission, and a
+    /// completion or settled cancel. The copies' ages wait for the next
+    /// poll, so a copy submitted since then is pending at age zero.
+    fn publish_pending_transfers(&self) {
+        if let Some(state) = &self.offload {
+            self.metrics
+                .offload_pending_transfers(state.transfers.len());
+        }
     }
 
     fn update_transfer_health(&mut self) {
@@ -641,6 +653,11 @@ mod tests {
         e.preempt().unwrap();
         assert_eq!(e.request_state(id).unwrap(), RequestState::Queued);
         assert_eq!(e.kv_metrics().snapshot().prefix_restore_resumed_decoding, 0);
+        // A swap copy is pending from its submission; a refused one never is.
+        assert_eq!(
+            e.metrics().snapshot().offload.pending_transfers,
+            u64::from(failure != "refusal")
+        );
         match failure {
             "failure" => e.poll_idle_kv_transfers().unwrap(),
             "discard" | "discard_pending" => {
@@ -668,6 +685,7 @@ mod tests {
         e.audit().unwrap();
         assert_eq!(e.kv_stats().used_blocks(), 0);
         assert_eq!(e.metrics().snapshot().offload.used_pages, 0);
+        assert_eq!(e.metrics().snapshot().offload.pending_transfers, 0);
     }
 
     #[test]

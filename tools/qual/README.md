@@ -411,7 +411,9 @@ PRESSURE_OFF --tier TIER` judges it against the pressure off arm: both
 records complete captures without a failed request, the off arm passing its
 own end and control gates, every C1 request bitwise equal, the fill's
 precondition met, promotions and RAM hits above zero, missed demotions
-recorded, and no pending transfer, swapped request or stall at the end.
+recorded, and no pending transfer (counted by
+`chop_kv_offload_pending_transfers` or aged), swapped request or stall at
+the end.
 Models whose bundles declare `chop.kv-offload.v1` run it in their full
 cohorts as `kv_offload_prefix_pressure`.
 

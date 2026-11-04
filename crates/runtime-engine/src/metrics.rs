@@ -911,6 +911,9 @@ pub struct OffloadMetrics {
     pub used_pages: u64,
     pub capacity: u64,
     pub swapped_requests: u64,
+    /// Copies in the engine's transfer ledger: submitted, and neither
+    /// finished nor settled after a cancel.
+    pub pending_transfers: u64,
     pub oldest_pending_micros: u64,
     pub stalled_transfers: u64,
     pub stalls: u64,
@@ -929,6 +932,10 @@ impl EngineMetrics {
             }
             metrics.fallbacks[index] += 1;
         }
+    }
+    pub(crate) fn offload_pending_transfers(&self, count: usize) {
+        let mut metrics = self.inner.offload.lock().unwrap_or_else(|e| e.into_inner());
+        metrics.pending_transfers = saturating_u64(count);
     }
     pub(crate) fn offload_transfer_health(&self, oldest: u64, stalled: u64, new_stalls: u64) {
         let mut metrics = self.inner.offload.lock().unwrap_or_else(|e| e.into_inner());
@@ -960,7 +967,15 @@ impl EngineMetrics {
 }
 impl OffloadMetrics {
     fn render(&self, out: &mut String) {
-        // Preserve disabled metrics and journals byte for byte.
+        // Exported from startup, like the RAM prefix tier's families: zero
+        // without an offload arena.
+        metric(
+            out,
+            "chop_kv_offload_pending_transfers",
+            "gauge",
+            self.pending_transfers,
+        );
+        // Preserve the other disabled metrics and journals byte for byte.
         if self.capacity == 0 {
             return;
         }
@@ -1298,7 +1313,11 @@ mod offload_render_tests {
     fn offload_families_are_typed_and_contiguous() {
         let mut text = String::new();
         OffloadMetrics::default().render(&mut text);
-        assert!(text.is_empty());
+        assert_eq!(
+            text,
+            "# TYPE chop_kv_offload_pending_transfers gauge\nchop_kv_offload_pending_transfers 0\n"
+        );
+        text.clear();
         OffloadMetrics {
             capacity: 8,
             ..Default::default()
@@ -1322,6 +1341,6 @@ mod offload_render_tests {
                 );
             }
         }
-        assert_eq!(seen.len(), 9);
+        assert_eq!(seen.len(), 10);
     }
 }

@@ -28,9 +28,12 @@ records complete, without a failed C1, warm, fill or control request, the
 off arm passing its own end gates, every C1 request bitwise equal, the
 fill's precondition met, published promotions (result "ok") and RAM hits
 above zero, the tier's missed demotions recorded, no transfer pending,
-swapped request or stall at the end. The tier's counters must be exposed: missing evidence never
-becomes zero. The tier holds its entries after the run, so its host pages
-are reported, not required to drain.
+swapped request or stall at the end. A pending transfer is one the engine's
+ledger counts (`chop_kv_offload_pending_transfers`) or one the oldest-copy
+age shows: the age is measured only when the engine polls, so a copy
+submitted since then reads zero seconds old. The tier's counters must be
+exposed: missing evidence never becomes zero. The tier holds its entries
+after the run, so its host pages are reported, not required to drain.
 """
 
 from concurrent.futures import ThreadPoolExecutor
@@ -67,7 +70,8 @@ TIER_LABELLED = {"demotions": "chop_prefix_ram_demotions_total",
                  "missed_evictions": "chop_prefix_ram_missed_evictions_total",
                  "ram_fallbacks": "chop_prefix_ram_fallbacks_total"}
 TIER_GAUGES = {"ram_anchors": "chop_prefix_ram_anchors", "ram_bytes": "chop_prefix_ram_bytes",
-               "stalled_transfers": "chop_kv_offload_stalled_transfers"}
+               "stalled_transfers": "chop_kv_offload_stalled_transfers",
+               "pending_transfers": "chop_kv_offload_pending_transfers"}
 PENDING_GAUGE = "chop_kv_offload_oldest_pending_seconds"
 # How long the prefix-pressure record waits for the tier's last copies
 # before its final snapshot.
@@ -294,10 +298,11 @@ def tier_delta(before, after):
 
 
 def idle(snapshot):
-    """Whether the host tier has finished its copies: no transfer pending or
-    overdue and no request swapped out."""
+    """Whether the host tier has finished its copies: no transfer pending
+    (counted or aged) or overdue and no request swapped out."""
     tier = snapshot["tier"]
-    return not tier["pending_micros"] and not tier["stalled_transfers"] and not snapshot["swapped_requests"]
+    return (not tier["pending_transfers"] and not tier["pending_micros"] and not tier["stalled_transfers"]
+            and not snapshot["swapped_requests"])
 
 
 def settle(snapshot, seconds=IDLE_SECONDS):

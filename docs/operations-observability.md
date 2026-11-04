@@ -151,11 +151,13 @@ leases can retain pages after an anchor disappears.
 
 ### KV offload and the RAM prefix tier
 
-The `chop_kv_offload_*` series below, but for the byte counter, appear only
-when the server copies through an offload arena (`--kv-offload-gib` above 0
-with a bundle that declares `chop.kv-offload.v1`). The RAM prefix tier's
-series and `chop_kv_offload_bytes_total` are exported from startup; the
-tier's stay zero while it is off, and the byte counter counts swaps too
+The `chop_kv_offload_*` series below, but for the byte counter and the
+pending transfer gauge, appear only when the server copies through an
+offload arena (`--kv-offload-gib` above 0 with a bundle that declares
+`chop.kv-offload.v1`). The RAM prefix tier's series,
+`chop_kv_offload_bytes_total` and `chop_kv_offload_pending_transfers` are
+exported from startup. The tier's stay zero while it is off and the gauge
+stays zero without an arena; the byte counter and the gauge count swaps too
 ([option and bounds](serving-profiles.md#kv-offload-and-the-ram-prefix-tier)).
 `chop_prefix_cache_hits_total` and `chop_prefix_cache_reused_tokens_total`
 count every hit, RAM hits included; recomputation stays
@@ -168,7 +170,8 @@ count every hit, RAM hits included; recomputation stays
 | `chop_kv_offload_fallback_total{reason}` | Swaps that fell back to recomputation: `tier_full` (no host room), `capture` (no swap capture), `out_refused` and `in_refused` (the executor refused the copy), `out_failed` and `in_failed` (the copy failed with every rank idle), `restore` (the bundle refused a reloaded state), `unconfirmed` (a copy's completion could not be confirmed, which poisons the instance), `staging_capacity` (the restore needs more pages than the pool holds) and `unsupported` (counted by nothing now) |
 | `chop_kv_offload_host_pages{kind}` | Host pages per rank: `used` and `capacity` |
 | `chop_kv_offload_swapped_requests` | Requests whose state is swapped to the arena |
-| `chop_kv_offload_oldest_pending_seconds` | Age of the oldest copy still pending |
+| `chop_kv_offload_pending_transfers` | Copies submitted and not yet finished, swaps and the tier's demotions and promotions; a cancelled demotion counts until its cancel settles. It changes with every submission, completion and settled cancel, so a reader that waits for the copies to end waits for it to read 0 |
+| `chop_kv_offload_oldest_pending_seconds` | Age of the oldest copy still pending, measured when the engine polls its copies: a copy submitted since then is not counted, so 0 does not mean none is pending |
 | `chop_kv_offload_stalled_transfers`, `chop_kv_offload_stalls_total` | Copies pending past twice the drain timeout now, and copies that ever became overdue; an overdue copy keeps its leases and makes the worker `kv_stalled` until it completes |
 | `chop_kv_offload_bytes_total{direction,kind}` | Bytes completed copies moved across every rank, `direction` `out` or `in`, `kind` `swap` or `prefix` (the tier's demotions and promotions) |
 | `chop_prefix_cache_ram_hits_total`, `chop_prefix_cache_ram_reused_tokens_total` | Hits restored from an anchor promoted from RAM, and their reused tokens |

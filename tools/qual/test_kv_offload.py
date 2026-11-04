@@ -176,6 +176,16 @@ class Offload(unittest.TestCase):
         self.assertEqual(failed["status"], "fail")
         self.assertEqual({gate["name"] for gate in failed["metrics"]["gates"] if not gate["passed"]},
                          {"tier_promotions"})
+        # A copy submitted since the engine last polled reads zero seconds
+        # old, and still fails the pair.
+        pending = kvo.metrics(metric_text() + tier_text(hits=30, promotions=30, missed=2, transfers=1),
+                              tier=True)["tier"]
+        for key in ("c16_after", "after"):
+            tier[key]["tier"] = deepcopy(pending)
+        failed = kvo.kinds.rescore(kind, capture, reference, check)
+        self.assertEqual(failed["status"], "fail")
+        self.assertEqual({gate["name"] for gate in failed["metrics"]["gates"] if not gate["passed"]},
+                         {"tier_end_pending_transfers"})
 
     def test_offload_facts_compile_without_a_preview(self):
         # Readers that drop a model's preview (the GSM8K floor fixtures)
@@ -291,12 +301,13 @@ class Offload(unittest.TestCase):
             self.assertEqual(len(record[key]), 1)
 
 
-def tier_text(hits=0, promotions=0, pending=0.0, missed=None, failed=0):
+def tier_text(hits=0, promotions=0, pending=0.0, missed=None, failed=0, transfers=0):
     """The RAM prefix tier's metrics, its labelled families unsampled
     unless given."""
     text = (f"chop_prefix_cache_ram_hits_total {hits}\nchop_prefix_cache_ram_reused_tokens_total {hits * 64}\n"
             "chop_prefix_ram_headroom_waits_total 0\nchop_prefix_ram_evictions_total 0\n"
             "chop_prefix_ram_anchors 4\nchop_prefix_ram_bytes 4096\nchop_kv_offload_stalled_transfers 0\n"
+            f"chop_kv_offload_pending_transfers {transfers}\n"
             f"chop_kv_offload_oldest_pending_seconds {pending}\n")
     for family in kvo.TIER_LABELLED.values():
         text += f"# TYPE {family} counter\n"
@@ -321,13 +332,19 @@ class TierMetrics(unittest.TestCase):
                          (3, {"ok": 2}, {"headroom": 1}))
         self.assertFalse(kvo.idle(after))
         self.assertTrue(kvo.idle(before))
+        # A copy submitted since the engine last polled reads zero seconds
+        # old: only the count shows it pending.
+        submitted = kvo.metrics(metric_text() + tier_text(transfers=1), tier=True)
+        self.assertEqual((submitted["tier"]["pending_transfers"], submitted["tier"]["pending_micros"]), (1, 0))
+        self.assertFalse(kvo.idle(submitted))
         # Other arms neither read nor need the tier's metrics.
         self.assertNotIn("tier", kvo.metrics(metric_text()))
         self.assertNotIn("tier", kvo.delta(kvo.metrics(metric_text()), kvo.metrics(metric_text())))
 
     def test_missing_tier_evidence_never_becomes_zero(self):
         for removed in ("chop_prefix_cache_ram_hits_total 0\n", "# TYPE chop_prefix_ram_missed_evictions_total counter\n",
-                        "chop_kv_offload_oldest_pending_seconds 0.0\n", "chop_prefix_ram_anchors 4\n"):
+                        "chop_kv_offload_oldest_pending_seconds 0.0\n", "chop_prefix_ram_anchors 4\n",
+                        "chop_kv_offload_pending_transfers 0\n"):
             with self.subTest(removed=removed), self.assertRaisesRegex(ValueError, "missing metric"):
                 kvo.metrics(metric_text() + tier_text().replace(removed, ""), tier=True)
         with self.assertRaisesRegex(ValueError, "invalid"):
@@ -337,12 +354,16 @@ class TierMetrics(unittest.TestCase):
             kvo.delta(before, kvo.metrics(metric_text() + tier_text(promotions=1), tier=True))
 
     def test_the_tier_record_waits_for_the_last_copies(self):
-        scrapes = iter([dict(tier=dict(pending_micros=5, stalled_transfers=0), swapped_requests=0),
-                        dict(tier=dict(pending_micros=0, stalled_transfers=0), swapped_requests=0)])
+        def scrape(transfers=0, micros=0):
+            return dict(tier=dict(pending_transfers=transfers, pending_micros=micros, stalled_transfers=0),
+                        swapped_requests=0)
+        # A copy aged by the last poll, then one submitted since, whose age
+        # reads zero.
+        scrapes = iter([scrape(1, 5), scrape(1, 0), scrape()])
         with patch.object(kvo.time, "sleep") as sleep:
-            self.assertEqual(kvo.settle(lambda: next(scrapes))["tier"]["pending_micros"], 0)
-        self.assertEqual(sleep.call_count, 1)
-        busy = dict(tier=dict(pending_micros=5, stalled_transfers=0), swapped_requests=0)
+            self.assertEqual(kvo.settle(lambda: next(scrapes))["tier"]["pending_transfers"], 0)
+        self.assertEqual(sleep.call_count, 2)
+        busy = scrape(1)
         self.assertIs(kvo.settle(lambda: busy, seconds=0), busy)
 
     def test_the_prefix_pressure_record_runs_the_pressure_workload_with_the_tier(self):

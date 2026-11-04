@@ -978,6 +978,60 @@ fn a_cancel_still_pending_at_the_drain_timeout_frees_no_pages() {
     assert_eq!(metric(&text, "chop_prefix_ram_headroom_waits_total"), 1);
 }
 
+/// `chop_kv_offload_pending_transfers`: the copies in the engine's ledger.
+fn pending_transfers(engine: &Engine<Model>) -> u64 {
+    metric(&prometheus(engine), "chop_kv_offload_pending_transfers")
+}
+
+/// One step, after which the gauge counts the copies the executor has not
+/// finished; returns that count.
+fn step_counting(engine: &mut Engine<Model>, outputs: &mut Outputs) -> u64 {
+    step(engine, outputs);
+    let pending = engine.executor().copies.len() as u64;
+    assert_eq!(pending_transfers(engine), pending);
+    pending
+}
+
+#[test]
+fn the_pending_transfer_gauge_counts_every_copy_until_it_settles() {
+    // Submission and completion: A's demotion, submitted at the end of a
+    // step, counts until its copy completes.
+    let a = [(1, &prompt(1, 16)[..], 1)];
+    let mut engine = engine(24, Some(tier(false, 16)), model());
+    assert_eq!(pending_transfers(&engine), 0);
+    submit(&mut engine, &a);
+    let mut outputs = Outputs::new();
+    let mut most = 0;
+    for _ in 0..100 {
+        most = most.max(step_counting(&mut engine, &mut outputs));
+        if finished(&outputs, &a) && engine.executor().copies.is_empty() {
+            break;
+        }
+    }
+    assert_eq!(most, 1);
+    assert_eq!(pending_transfers(&engine), 0);
+    assert_eq!(demotions(&prometheus(&engine), "ok"), 1);
+    // Under the fixed clock a pending copy is zero seconds old, so only the
+    // count shows X's held demotion.
+    let mut engine = held_demotion(model());
+    let text = prometheus(&engine);
+    assert_eq!(metric(&text, "chop_kv_offload_pending_transfers"), 1);
+    assert!(
+        text.lines()
+            .any(|line| line == "chop_kv_offload_oldest_pending_seconds 0")
+    );
+    // Cancel: R's snapshot needs X's pages, and the step whose allocation
+    // settles the cancel ends with the gauge at zero.
+    let r = [(2, &prompt(2, 36)[..], 1)];
+    submit(&mut engine, &r);
+    let mut outputs = Outputs::new();
+    while !finished(&outputs, &r) {
+        step_counting(&mut engine, &mut outputs);
+    }
+    assert_cancelled_for_headroom(&engine);
+    assert_eq!(pending_transfers(&engine), 0);
+}
+
 /// H's 16-token anchor demoted on a 33-page pool with a 24-token prefill
 /// chunk, then X's anchor under a demotion that never finishes unless
 /// cancelled, and R, alive, whose 27 pages and two snapshots (its final
@@ -1348,5 +1402,10 @@ fn every_tier_family_is_exported_from_startup() {
                 assert_eq!(metric(&text, &sample), 0);
             }
         }
+        assert!(
+            text.lines()
+                .any(|line| line == "# TYPE chop_kv_offload_pending_transfers gauge")
+        );
+        assert_eq!(metric(&text, "chop_kv_offload_pending_transfers"), 0);
     }
 }

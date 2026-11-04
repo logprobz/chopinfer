@@ -1,8 +1,11 @@
 #![forbid(unsafe_code)]
 
 mod ancestry;
-use ancestry::PrefixAncestry;
+use ancestry::{PrefixAncestry, PrefixTier};
 pub use ancestry::{PrefixAncestryWorkV1, PrefixAnchorClassV1, PrefixEvictionTierV1};
+mod ram;
+use ram::PrefixRam;
+pub use ram::{PrefixHostEntryV1, PrefixHostInvalidationV1};
 mod context_parallel;
 mod declared_pages;
 mod offload;
@@ -466,6 +469,8 @@ pub struct KvPool {
     tier_order: bool,
     /// The content index is maintained even without tier order.
     prefix_index: bool,
+    /// The RAM prefix tier's host entries, when the tier is on.
+    ram: Option<PrefixRam>,
     anchor_clock: u64,
     anchor_serial: u64,
     /// Anchor page references taken and released; observability only.
@@ -507,6 +512,7 @@ impl Clone for KvPool {
             ancestry: self.ancestry.clone(),
             tier_order: self.tier_order,
             prefix_index: self.prefix_index,
+            ram: self.ram.clone(),
             anchor_clock: self.anchor_clock,
             anchor_serial: self.anchor_serial,
             anchor_page_work: self.anchor_page_work,
@@ -541,6 +547,7 @@ impl PartialEq for KvPool {
             && self.ancestry == other.ancestry
             && self.tier_order == other.tier_order
             && self.prefix_index == other.prefix_index
+            && self.ram == other.ram
             && self.anchor_order == other.anchor_order
             && self.anchor_clock == other.anchor_clock
             && self.anchor_serial == other.anchor_serial
@@ -632,6 +639,7 @@ impl KvPool {
             ancestry: None,
             tier_order: false,
             prefix_index: false,
+            ram: None,
             anchor_clock: 0,
             anchor_serial: 0,
             anchor_page_work: 0,
@@ -668,7 +676,8 @@ impl KvPool {
             self.anchors.is_empty(),
             "configure eviction before captures"
         );
-        self.ancestry = (self.tier_order || self.prefix_index).then(PrefixAncestry::default);
+        self.ancestry = (self.tier_order || self.prefix_index || self.ram.is_some())
+            .then(PrefixAncestry::default);
         self
     }
 
@@ -1016,6 +1025,7 @@ impl KvPool {
         };
         self.active_sequences += 1;
         self.touch_anchor(key);
+        self.host_key_event(key, PrefixHostInvalidationV1::Resumed);
         self.metrics.appended(tokens);
         Ok(PrefixHitV1 {
             handle: SequenceHandle { slot, generation },
@@ -1149,6 +1159,7 @@ impl KvPool {
         let pages = self.geometry.blocks_for(tokens)?;
         if self.anchors.contains_key(&key) {
             self.touch_anchor(key);
+            self.host_key_event(key, PrefixHostInvalidationV1::Recaptured);
             return Ok(None);
         }
         if let Some(block) = self.sequences[slot].blocks[..pages]
@@ -1210,6 +1221,7 @@ impl KvPool {
             index.insert(identity, tokens, key);
             self.reclassify_anchors();
         }
+        self.host_key_event(key, PrefixHostInvalidationV1::Recaptured);
         if !private {
             self.metrics.prefix_capture();
         }
@@ -1283,6 +1295,10 @@ impl KvPool {
             .map(PrefixAncestry::changes)
             .unwrap_or_default();
         for (key, class, tier) in changes {
+            // A host entry stays a frontier of both tiers.
+            if class != PrefixAnchorClassV1::Maximal {
+                self.host_key_event(key, PrefixHostInvalidationV1::Descendant);
+            }
             // Without tier order every anchor keeps the maximal class and
             // the live tier, as with the index off.
             let Some(anchor) = self
@@ -1315,8 +1331,11 @@ impl KvPool {
             .remove(&(anchor.tier, anchor.last_used, key));
         self.metrics
             .anchor_removed(anchor.class, anchor.state.len(), anchor.private);
-        if let Some(index) = &mut self.ancestry {
-            index.remove(key);
+        // A key the host tier still holds keeps its node and lifetime flags.
+        if anchor.indexed
+            && let Some(index) = &mut self.ancestry
+        {
+            index.release_residency(key, PrefixTier::Gpu);
             self.reclassify_anchors();
         }
         if let Some(keys) = self.anchor_chains.get_mut(&anchor.chain) {
@@ -2081,16 +2100,14 @@ impl KvPool {
                 *refs = refs.checked_add(1).ok_or(KvError::InvariantViolation)?;
             }
         }
-        if self.ancestry.as_ref().is_some_and(|index| {
-            !index.audit(
-                self.anchors
-                    .iter()
-                    .filter(|(_, anchor)| anchor.indexed)
-                    .map(|(key, anchor)| (*key, anchor.tokens)),
-            )
-        }) {
+        if self
+            .ancestry
+            .as_ref()
+            .is_some_and(|index| !index.audit(self.expected_residency()))
+        {
             return Err(KvError::InvariantViolation);
         }
+        self.audit_ram()?;
         let mut indexed = 0usize;
         for (chain, keys) in &self.anchor_chains {
             for key in keys {
@@ -2129,13 +2146,14 @@ impl KvPool {
                             || anchor.tier != PrefixEvictionTierV1::Live
                     }
                 } else {
+                    // Only the host tier may hold an unindexed anchor's key.
                     anchor.class != PrefixAnchorClassV1::Maximal
                         || anchor.tier != PrefixEvictionTierV1::Live
                         || self
                             .ancestry
                             .as_ref()
-                            .and_then(|index| index.rank(*key))
-                            .is_some()
+                            .and_then(|index| index.residency(*key))
+                            .is_some_and(|residency| residency.gpu)
                 }
             {
                 return Err(KvError::InvariantViolation);

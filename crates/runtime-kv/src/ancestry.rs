@@ -22,6 +22,11 @@
 //! unshared ancestors rank below recency. Each node counts the children whose
 //! subtree holds an extended or consumed anchor, so a new anchor learns
 //! whether it is consumed without a search.
+//!
+//! With the RAM prefix tier, an anchor node stays while any tier holds its
+//! key: the GPU pool, the host tier, or a pending promotion copying it
+//! back. Moving between tiers updates the node's residency and keeps its
+//! lifetime flags; only the last tier's release removes the anchor.
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
@@ -104,6 +109,42 @@ impl PrefixAncestryWorkV1 {
 }
 
 type NodeId = u64;
+
+/// The tiers holding the anchor at a node.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) struct PrefixResidency {
+    pub(crate) gpu: bool,
+    pub(crate) host: bool,
+    /// Pending promotions copying the key back from the host.
+    pub(crate) pending: u32,
+}
+
+impl PrefixResidency {
+    pub(crate) const GPU: Self = Self {
+        gpu: true,
+        host: false,
+        pending: 0,
+    };
+
+    const fn any(self) -> bool {
+        self.gpu || self.host || self.pending > 0
+    }
+}
+
+/// One tier's hold on an indexed key.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum PrefixTier {
+    Gpu,
+    Host,
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "pending anchors hold the key while a promotion copies"
+        )
+    )]
+    Pending,
+}
 
 /// Immutable content of one insertion, shared by every node split from it.
 /// Ordinary tokens are stored densely; media is a separate sparse list.
@@ -243,6 +284,8 @@ struct Node {
     extended: bool,
     consumed: bool,
     shared: bool,
+    /// Empty exactly when the node holds no anchor.
+    residency: PrefixResidency,
 }
 
 impl Node {
@@ -578,14 +621,60 @@ impl PrefixAncestry {
                 self.split(child, common)
             };
         }
+        // A key another tier still holds keeps its lifetime flags.
+        if self.nodes[&node].anchor == Some(key) {
+            self.add_residency(key, PrefixTier::Gpu);
+            return;
+        }
         let consumed = self.nodes[&node].marked > 0;
         self.modify(node, |node| {
             node.anchor = Some(key);
             node.extended = false;
             node.consumed = consumed;
             node.shared = false;
+            node.residency = PrefixResidency::GPU;
         });
         self.anchors.insert(key, node);
+    }
+
+    /// Adds a tier's hold on `key`'s node without changing its lifetime
+    /// flags, returning false when the index lacks the key. A new GPU hold
+    /// reports the node's rank, which the pool's new anchor then takes.
+    pub(crate) fn add_residency(&mut self, key: PrefixCacheKeyV1, tier: PrefixTier) -> bool {
+        let Some(&id) = self.anchors.get(&key) else {
+            return false;
+        };
+        let residency = &mut self.nodes.get_mut(&id).expect("live radix node").residency;
+        match tier {
+            PrefixTier::Gpu => {
+                residency.gpu = true;
+                self.dirty.insert(id);
+            }
+            PrefixTier::Host => residency.host = true,
+            PrefixTier::Pending => residency.pending += 1,
+        }
+        true
+    }
+
+    /// Releases a tier's hold on `key`; the anchor leaves the index once no
+    /// tier holds it.
+    pub(crate) fn release_residency(&mut self, key: PrefixCacheKeyV1, tier: PrefixTier) {
+        let Some(&id) = self.anchors.get(&key) else {
+            return;
+        };
+        let residency = &mut self.nodes.get_mut(&id).expect("live radix node").residency;
+        match tier {
+            PrefixTier::Gpu => residency.gpu = false,
+            PrefixTier::Host => residency.host = false,
+            PrefixTier::Pending => residency.pending -= 1,
+        }
+        if !residency.any() {
+            self.remove(key);
+        }
+    }
+
+    pub(crate) fn residency(&self, key: PrefixCacheKeyV1) -> Option<PrefixResidency> {
+        self.anchors.get(&key).map(|id| self.nodes[id].residency)
     }
 
     /// Records a successful public restore of `key`, which the pool
@@ -639,7 +728,7 @@ impl PrefixAncestry {
         })
     }
 
-    pub(crate) fn remove(&mut self, key: PrefixCacheKeyV1) {
+    fn remove(&mut self, key: PrefixCacheKeyV1) {
         let Some(id) = self.anchors.remove(&key) else {
             return;
         };
@@ -649,6 +738,7 @@ impl PrefixAncestry {
             node.extended = false;
             node.consumed = false;
             node.shared = false;
+            node.residency = PrefixResidency::default();
         });
         if before && !self.nodes[&id].marks() {
             self.mark_delta(self.nodes[&id].parent, false);
@@ -840,13 +930,17 @@ impl PrefixAncestry {
         self.anchors.get(&key).map(|id| self.nodes[id].rank())
     }
 
-    pub(crate) fn audit(&self, expected: impl Iterator<Item = (PrefixCacheKeyV1, usize)>) -> bool {
+    /// Checks the index against every key a tier holds, with its depth.
+    pub(crate) fn audit(
+        &self,
+        expected: impl Iterator<Item = (PrefixCacheKeyV1, usize, PrefixResidency)>,
+    ) -> bool {
         let mut count = 0;
-        for (key, depth) in expected {
+        for (key, depth, residency) in expected {
             let Some(node) = self.anchors.get(&key).and_then(|id| self.nodes.get(id)) else {
                 return false;
             };
-            if node.depth != depth {
+            if node.depth != depth || node.residency != residency {
                 return false;
             }
             count += 1;
@@ -914,6 +1008,7 @@ impl PrefixAncestry {
             }
             if node.anchor.is_none() && (node.extended || node.consumed || node.shared)
                 || node.anchor.is_some() && node.fork() && !node.shared
+                || node.anchor.is_some() != node.residency.any()
             {
                 return false;
             }
@@ -1202,6 +1297,54 @@ mod audit_tests {
                 .insert((tier, anchor.last_used, passed), passed);
             assert_eq!(pool.audit(), Err(KvError::InvariantViolation));
         }
+    }
+
+    #[test]
+    fn residency_moves_between_tiers_without_resetting_lifetime_flags() {
+        let chain = PrefixChainV1::new(4, (0..12).collect::<Vec<u32>>().into(), vec![]).unwrap();
+        let (key, child) = (chain.key_at(8).unwrap(), chain.key_at(12).unwrap());
+        let mut index = PrefixAncestry::default();
+        index.insert(&chain, 8, key);
+        index.restored(key, false);
+        index.changes();
+        let extended = |index: &PrefixAncestry| index.nodes[&index.anchors[&key]].extended;
+        assert!(index.add_residency(key, PrefixTier::Host));
+        assert!(index.add_residency(key, PrefixTier::Pending));
+        index.release_residency(key, PrefixTier::Gpu);
+        // A pending promotion holds the node after its host entry goes.
+        index.release_residency(key, PrefixTier::Host);
+        let pending = PrefixResidency {
+            gpu: false,
+            host: false,
+            pending: 1,
+        };
+        assert_eq!(index.residency(key), Some(pending));
+        assert!(extended(&index));
+        // A descendant captured meanwhile reaches the held node.
+        index.insert(&chain, 12, child);
+        assert!(
+            index.changes().iter().any(
+                |(changed, class, _)| *changed == key && *class != PrefixAnchorClassV1::Maximal
+            )
+        );
+        // A publish adds the GPU hold and keeps the flags.
+        index.insert(&chain, 8, key);
+        index.changes();
+        assert!(extended(&index));
+        index.release_residency(key, PrefixTier::Pending);
+        assert_eq!(index.residency(key), Some(PrefixResidency::GPU));
+        assert!(
+            index.audit(
+                [
+                    (key, 8, PrefixResidency::GPU),
+                    (child, 12, PrefixResidency::GPU)
+                ]
+                .into_iter()
+            )
+        );
+        index.release_residency(key, PrefixTier::Gpu);
+        assert_eq!(index.residency(key), None);
+        assert!(index.audit([(child, 12, PrefixResidency::GPU)].into_iter()));
     }
 
     #[test]

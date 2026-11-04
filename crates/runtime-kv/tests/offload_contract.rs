@@ -186,34 +186,48 @@ fn private_anchor_is_invisible_to_prompt_lookup_but_resumes_by_exact_key() {
 }
 
 #[test]
-fn unowned_host_anchors_use_reload_recency_and_never_evict_owned_pages() {
-    let mut p = pool();
+fn public_host_entries_yield_to_swaps_and_never_evict_owned_pages() {
+    let mut p = pool().with_prefix_ram(true);
     let mut h = HostTier::new(&p, 2).unwrap();
-    let capture = |p: &mut KvPool, h: &mut HostTier, n, owner| {
+    let demote = |p: &mut KvPool, h: &mut HostTier, n: u32| {
+        let chain = PrefixChainV1::new(4, std::sync::Arc::from([n; 4]), vec![]).unwrap();
+        let seq = p.create_sequence(8).unwrap();
+        p.append(seq, 4).unwrap();
+        p.insert_content_anchor(&chain, seq, 4, 0).unwrap().unwrap();
+        p.release(seq).unwrap();
+        let key = chain.key_at(4).unwrap();
+        let (id, t) = h.begin_offload(p, key, None).unwrap();
+        assert_eq!(t.class(), KvTransferClass::Demotion);
+        h.complete_transfer(p, completed(t)).unwrap();
+        assert!(p.remove_anchor(key).unwrap());
+        (key, id)
+    };
+    let swap = |p: &mut KvPool, h: &mut HostTier, n| {
         let seq = p.create_sequence(8).unwrap();
         p.append(seq, 4).unwrap();
         p.insert_private_anchor(key(n), seq, 0).unwrap();
-        let result = h.begin_offload(p, key(n), owner);
+        let result = h.begin_offload(p, key(n), Some(n));
         p.remove_anchor(key(n)).unwrap();
         p.release(seq).unwrap();
-        result
+        result.map(|(id, t)| {
+            h.complete_transfer(p, completed(t)).unwrap();
+            id
+        })
     };
-    let (a, t) = capture(&mut p, &mut h, 1, None).unwrap();
-    h.complete_transfer(&mut p, completed(t)).unwrap();
-    let (b, t) = capture(&mut p, &mut h, 2, None).unwrap();
-    h.complete_transfer(&mut p, completed(t)).unwrap();
+    let (a, ha) = demote(&mut p, &mut h, 1);
+    let (b, hb) = demote(&mut p, &mut h, 2);
+    // A public entry cannot be dropped without the pool or reloaded.
+    assert!(h.drop_anchor(ha).is_err());
     let dest = p.create_initialized_sequence(4, 8, 0).unwrap();
-    let t = h.begin_reload(&mut p, a, &dest).unwrap();
-    h.complete_transfer(&mut p, completed(t)).unwrap();
+    assert!(h.begin_reload(&mut p, ha, &dest).is_err());
     p.release(dest.handle()).unwrap();
-    let (c, t) = capture(&mut p, &mut h, 3, Some(3)).unwrap();
-    h.complete_transfer(&mut p, completed(t)).unwrap();
-    assert!(h.anchor(a).is_some());
-    assert!(h.anchor(b).is_none());
-    let (d, t) = capture(&mut p, &mut h, 4, Some(4)).unwrap();
-    h.complete_transfer(&mut p, completed(t)).unwrap();
-    assert!(h.anchor(a).is_none());
-    assert!(capture(&mut p, &mut h, 5, Some(5)).is_err());
+    let c = swap(&mut p, &mut h, 3).unwrap();
+    assert!(h.anchor(ha).is_none() && p.host_entry(a).is_none());
+    assert_eq!(p.host_entry(b).map(|entry| entry.host), Some(hb));
+    let d = swap(&mut p, &mut h, 4).unwrap();
+    assert!(h.anchor(hb).is_none() && p.host_entry(b).is_none());
+    h.audit(&p).unwrap();
+    assert!(swap(&mut p, &mut h, 5).is_err());
     h.drop_anchor(c).unwrap();
     h.drop_anchor(d).unwrap();
     h.audit(&p).unwrap();
@@ -264,8 +278,8 @@ fn different_tiers_never_issue_the_same_transfer_id() {
     p.insert_private_anchor(key(1), seq, 0).unwrap();
     let mut h1 = HostTier::new(&p, 8).unwrap();
     let mut h2 = HostTier::new(&p, 8).unwrap();
-    let (_, a) = h1.begin_offload(&mut p, key(1), None).unwrap();
-    let (_, b) = h2.begin_offload(&mut p, key(1), None).unwrap();
+    let (_, a) = h1.begin_offload(&mut p, key(1), Some(1)).unwrap();
+    let (_, b) = h2.begin_offload(&mut p, key(1), Some(1)).unwrap();
     assert_ne!(a.id(), b.id());
     let (_, token) = h1.complete_transfer(&mut p, b.cancel()).unwrap_err();
     h2.complete_transfer(&mut p, token).unwrap();
@@ -298,7 +312,7 @@ fn retained_host_copy_does_not_survive_a_mutable_page_rewrite() {
             device.insert(*page, [1_u8; 32]);
         }
         let mut host = BTreeMap::new();
-        let (old, transfer) = h.begin_offload(&mut p, key(1), None).unwrap();
+        let (old, transfer) = h.begin_offload(&mut p, key(1), Some(1)).unwrap();
         for pair in transfer.pages() {
             host.insert(pair.host, device[&pair.device]);
         }
@@ -322,7 +336,7 @@ fn retained_host_copy_does_not_survive_a_mutable_page_rewrite() {
         p.insert_private_anchor(key(3), resumed.handle(), 0)
             .unwrap()
             .unwrap();
-        let (new, transfer) = h.begin_offload(&mut p, key(3), None).unwrap();
+        let (new, transfer) = h.begin_offload(&mut p, key(3), Some(2)).unwrap();
         for pair in transfer.pages() {
             host.insert(pair.host, device[&pair.device]);
         }

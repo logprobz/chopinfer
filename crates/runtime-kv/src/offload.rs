@@ -4,6 +4,7 @@ use super::*;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 static NEXT_TRANSFER: AtomicU64 = AtomicU64::new(1);
+static NEXT_TIER: AtomicU64 = AtomicU64::new(1);
 fn next_transfer() -> Result<KvTransferId, KvError> {
     NEXT_TRANSFER
         .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_add(1))
@@ -247,6 +248,7 @@ pub struct HostAnchor {
     pub tokens: usize,
     pub blocks: Vec<HostPageId>,
     pub state: Vec<HostPageId>,
+    /// The request a swap belongs to; a public entry has none.
     pub owner: Option<u64>,
     pub ready: bool,
     last_used: u64,
@@ -256,7 +258,9 @@ struct Transfer {
     lease: DevicePageLease,
     hosts: Vec<HostPageId>,
     anchor: HostAnchorId,
+    key: PrefixCacheKeyV1,
     direction: KvTransferDirection,
+    class: KvTransferClass,
     quarantined: bool,
     receipt: Arc<AtomicBool>,
     destination: Option<SequenceHandle>,
@@ -366,10 +370,14 @@ impl KvTransferPoll {
 }
 
 /// One tier belongs to one logical pool. Host IDs address symmetric pages on
-/// every rank. Owned anchors are never evicted; unowned ready anchors use LRU.
+/// every rank. Owned anchors are swaps and are never evicted. Unowned
+/// anchors are the pool's public host entries: the tier updates the pool's
+/// host maps in the same call as every drop of one.
 #[derive(Debug)]
 pub struct HostTier {
     identity: Arc<()>,
+    /// Binds the pool's public host entries to this tier.
+    tier: u64,
     refs: Vec<u32>,
     free: Vec<HostPageId>,
     anchors: BTreeMap<HostAnchorId, HostAnchor>,
@@ -386,6 +394,7 @@ impl HostTier {
         }
         Ok(Self {
             identity: Arc::clone(&pool.identity),
+            tier: NEXT_TIER.fetch_add(1, Ordering::Relaxed),
             refs: vec![0; capacity],
             free: (0..capacity).rev().map(HostPageId).collect(),
             anchors: BTreeMap::new(),
@@ -421,15 +430,74 @@ impl HostTier {
             self.free.push(page);
         }
     }
+    /// Drops an owned swap anchor. Public entries go through
+    /// [`Self::drop_public_entry`], which also updates the pool.
     pub fn drop_anchor(&mut self, id: HostAnchorId) -> Result<(), KvError> {
-        let anchor = self.anchors.remove(&id).ok_or(KvError::StaleHandle)?;
+        if self
+            .anchors
+            .get(&id)
+            .ok_or(KvError::StaleHandle)?
+            .owner
+            .is_none()
+        {
+            return Err(KvError::StaleHandle);
+        }
+        let anchor = self.anchors.remove(&id).expect("anchor checked");
         for page in anchor.blocks.into_iter().chain(anchor.state) {
             self.release(page);
         }
         Ok(())
     }
+    /// Drops any anchor; a public entry also leaves the pool's host maps.
+    /// A transfer naming the anchor keeps its pages until it completes.
+    fn release_anchor(&mut self, pool: &mut KvPool, id: HostAnchorId) -> Result<(), KvError> {
+        let anchor = self.anchors.remove(&id).ok_or(KvError::StaleHandle)?;
+        if anchor.owner.is_none() {
+            pool.remove_host_entry(anchor.key, id);
+        }
+        for page in anchor.blocks.into_iter().chain(anchor.state) {
+            self.release(page);
+        }
+        Ok(())
+    }
+    /// Drops a key's public host entry, returning whether it had one.
+    pub fn drop_public_entry(
+        &mut self,
+        pool: &mut KvPool,
+        key: PrefixCacheKeyV1,
+    ) -> Result<bool, KvError> {
+        self.check_pool(pool)?;
+        pool.ensure_no_prepared()?;
+        let Some(entry) = pool.host_entry(key) else {
+            return Ok(false);
+        };
+        self.release_anchor(pool, entry.host)?;
+        Ok(true)
+    }
+    /// Drops every public entry a resume, a recapture or a new resident
+    /// descendant made unusable, returning each key with its cause.
+    pub fn drop_invalidated_entries(
+        &mut self,
+        pool: &mut KvPool,
+    ) -> Result<Vec<(PrefixCacheKeyV1, PrefixHostInvalidationV1)>, KvError> {
+        self.check_pool(pool)?;
+        pool.ensure_no_prepared()?;
+        let invalidated = pool.invalidated_host_entries();
+        for (_, host, _) in &invalidated {
+            self.release_anchor(pool, *host)?;
+        }
+        Ok(invalidated
+            .into_iter()
+            .map(|(key, _, reason)| (key, reason))
+            .collect())
+    }
     /// Capture must have completed its device writes before this call. Reserve
     /// references before submitting the returned plan to the executor.
+    ///
+    /// An owner makes a swap of that request's own boundary. Without one this
+    /// is a demotion: the copy of an indexed public frontier into a public
+    /// host entry that keeps the anchor's last GPU use, on a pool with the
+    /// RAM tier. Its GPU anchor stays until eviction.
     pub fn begin_offload(
         &mut self,
         pool: &mut KvPool,
@@ -440,6 +508,9 @@ impl HostTier {
         pool.ensure_no_prepared()?;
         if owner.is_some() && self.anchors.values().any(|a| a.owner == owner) {
             return Err(KvError::StaleHandle);
+        }
+        if owner.is_none() {
+            pool.check_demotion(key, self.tier)?;
         }
         let id = next_transfer()?;
         let next = self
@@ -466,7 +537,7 @@ impl HostTier {
                 .min_by_key(|(_, a)| a.last_used)
                 .map(|(id, _)| *id);
             let Some(id) = candidate else { break };
-            self.drop_anchor(id)?;
+            self.release_anchor(pool, id)?;
         }
         if self.free.len() < needed {
             return Err(KvError::PoolExhausted {
@@ -513,12 +584,17 @@ impl HostTier {
                 lease,
                 hosts,
                 anchor,
+                key,
                 direction: KvTransferDirection::Out,
+                class,
                 quarantined: false,
                 receipt: Arc::clone(&receipt),
                 destination: None,
             },
         );
+        if owner.is_none() {
+            pool.record_demotion(key, self.tier, anchor, id);
+        }
         Ok((
             anchor,
             KvTransferPlan {
@@ -544,7 +620,10 @@ impl HostTier {
             .ok_or(KvError::SequenceGenerationExhausted)?;
         let a = self.anchors.get(&anchor).ok_or(KvError::StaleHandle)?;
         let snapshot = pool.snapshot(destination.handle)?;
-        if !a.ready
+        // Public entries are promoted into pending anchors, never reloaded
+        // into a request's sequence.
+        if a.owner.is_none()
+            || !a.ready
             || a.tokens != snapshot.tokens
             || a.blocks.len() != snapshot.blocks.len()
             || a.state.len() != destination.state.len()
@@ -552,6 +631,7 @@ impl HostTier {
         {
             return Err(KvError::StaleHandle);
         }
+        let key = a.key;
         let hosts: Vec<_> = a.blocks.iter().chain(&a.state).copied().collect();
         let allocations = snapshot
             .blocks
@@ -594,7 +674,9 @@ impl HostTier {
                 lease,
                 hosts,
                 anchor,
+                key,
                 direction: KvTransferDirection::In,
+                class: KvTransferClass::SwapIn,
                 quarantined: false,
                 receipt: Arc::clone(&receipt),
                 destination: Some(destination.handle),
@@ -645,6 +727,9 @@ impl HostTier {
         pool.release_transfer_pages(&t.lease)?;
         let t = self.transfers.remove(&c.id).expect("checked transfer");
         let success = c.status == KvTransferStatus::Complete;
+        if t.class == KvTransferClass::Demotion {
+            pool.finish_demotion(t.key, t.anchor, c.id, success);
+        }
         if success
             && t.direction == KvTransferDirection::Out
             && let Some(a) = self.anchors.get_mut(&t.anchor)
@@ -658,7 +743,7 @@ impl HostTier {
             pool.sequences[slot].restoring = Some(true);
         }
         if !success && self.anchors.contains_key(&t.anchor) {
-            self.drop_anchor(t.anchor)?;
+            self.release_anchor(pool, t.anchor)?;
         }
         for page in t.hosts {
             self.release(page);
@@ -690,6 +775,51 @@ impl HostTier {
                 .enumerate()
                 .any(|(i, r)| (*r == 0) != free.contains(&HostPageId(i)))
         {
+            return Err(KvError::InvariantViolation);
+        }
+        self.audit_public_entries(pool)
+    }
+    /// The pool's host entries are exactly this tier's public anchors, and
+    /// its demotion marks exactly the demotions in flight.
+    fn audit_public_entries(&self, pool: &KvPool) -> Result<(), KvError> {
+        let mut public = self.anchors.iter().filter(|(_, a)| a.owner.is_none());
+        let mut demotions = self
+            .transfers
+            .iter()
+            .filter(|(_, t)| t.class == KvTransferClass::Demotion);
+        let Some(ram) = pool.ram.as_ref().filter(|ram| ram.tier == Some(self.tier)) else {
+            return if public.next().is_none() && demotions.next().is_none() {
+                Ok(())
+            } else {
+                Err(KvError::InvariantViolation)
+            };
+        };
+        let mut count = 0usize;
+        for (id, a) in public {
+            count += 1;
+            let in_flight = self
+                .transfers
+                .values()
+                .any(|t| t.anchor == *id && t.class == KvTransferClass::Demotion);
+            if ram.entries.get(&a.key).is_none_or(|entry| {
+                entry.host != *id || entry.ready != a.ready || entry.tokens != a.tokens
+            }) || (!a.ready && !in_flight)
+            {
+                return Err(KvError::InvariantViolation);
+            }
+        }
+        let mut marked = 0usize;
+        for (id, t) in demotions {
+            marked += 1;
+            if ram
+                .demotions
+                .get(&t.key)
+                .is_none_or(|(_, transfer)| transfer != id)
+            {
+                return Err(KvError::InvariantViolation);
+            }
+        }
+        if count != ram.entries.len() || marked != ram.demotions.len() {
             return Err(KvError::InvariantViolation);
         }
         Ok(())

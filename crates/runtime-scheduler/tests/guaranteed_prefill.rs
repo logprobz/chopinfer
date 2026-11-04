@@ -1152,6 +1152,72 @@ fn grid_anchor_items_end_at_the_anchor_beside_a_later_prefill_without_a_contract
     }
 }
 
+/// Pins: with a 64-row scored limit, a 64-row scored prompt now shares the
+/// step with a 789-token grid prompt, whose chunk ends at its anchor at 768
+/// and takes no logits row. Before, the anchored 789-token chunk took its
+/// prompt-end row and the scored prompt waited for the next step.
+#[test]
+fn a_scored_prompt_takes_the_rows_beside_a_grid_chunk_ending_at_its_anchor() {
+    let mut s = served_grid(8);
+    submit(&mut s, 1, &(0..789).collect::<Vec<_>>(), false);
+    submit(&mut s, 2, &(200_000..200_064).collect::<Vec<_>>(), true);
+    assert_eq!(anchored_step(&mut s), [(1, 0, 768, None), (2, 0, 64, None)]);
+    assert_eq!(anchored_step(&mut s), [(1, 768, 21, None)]);
+}
+
+/// Pins: beside a decoding request and a one-token scored prompt, an
+/// 8191-token grid prompt's chunk now ends at its anchor at 8128, which
+/// leaves room in the 8192-token step for the scored prompt and a
+/// five-draft verify. Before, a plain decode and the anchored 8191-token
+/// chunk took the whole budget.
+#[test]
+fn a_grid_chunk_ending_at_its_anchor_leaves_room_for_drafts() {
+    let mut s = served_grid(8);
+    s.submit(RequestSpec::new(RequestId::new(9), 1, 1000).unwrap())
+        .unwrap();
+    let batch = s.next_batch().unwrap().unwrap();
+    let outcomes = [BatchOutcome::success(
+        RequestId::new(9),
+        BatchPhase::Prefill { tokens: 1 },
+        1,
+        false,
+    )];
+    s.commit_batch(batch.id(), &outcomes).unwrap();
+    assert_eq!(
+        s.request_state(RequestId::new(9)),
+        Ok(RequestState::Decoding)
+    );
+    submit(&mut s, 1, &(0..8191).collect::<Vec<_>>(), false);
+    submit(&mut s, 2, &(200_000..200_001).collect::<Vec<_>>(), true);
+    let batch = s
+        .next_batch_with_drafts(DraftLimits::new(5, 64), |candidates, budget| {
+            candidates
+                .iter()
+                .map(|candidate| {
+                    candidate
+                        .maximum_draft_tokens()
+                        .min(budget.spare_draft_tokens())
+                        .min(budget.spare_rows())
+                })
+                .collect()
+        })
+        .unwrap()
+        .unwrap();
+    let items: Vec<_> = batch
+        .items()
+        .iter()
+        .map(|item| (item.request_id().get(), item.phase(), item.anchor_tokens()))
+        .collect();
+    assert_eq!(
+        items,
+        [
+            (9, BatchPhase::Verify { draft_tokens: 5 }, None),
+            (1, BatchPhase::Prefill { tokens: 8128 }, None),
+            (2, BatchPhase::Prefill { tokens: 1 }, None),
+        ]
+    );
+}
+
 #[test]
 fn grid_anchor_items_preserve_cold_single_and_packed_shapes() {
     // Cold prompt lengths and packed shapes. Disjoint prefixes prevent an

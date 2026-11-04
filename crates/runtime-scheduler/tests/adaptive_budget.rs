@@ -765,6 +765,52 @@ fn adaptive_caps_price_no_grid_anchor_tail_beside_a_scored_prompt() {
     }
 }
 
+/// Pins: at a 202 ms target beside a decoder, a 767-token grid prompt
+/// with a one-token scored prompt waiting is now priced without its fused
+/// tail, so the step takes no cap and the chunk ends at its anchor at 704.
+/// Before, the fused 767-row item set a 640-token cap, where the chunk
+/// ended.
+#[test]
+fn a_scored_prompt_leaves_the_grid_chunk_uncapped_at_its_anchor() {
+    let config = SchedulerConfig::new(64, 256, GRID, GRID, 1)
+        .unwrap()
+        .with_prefill_granule(GRANULE)
+        .unwrap()
+        .with_guaranteed_prefill_chunks(GRID)
+        .unwrap()
+        .with_prefix_cache(1)
+        .with_prefill_cuts(true)
+        .with_grid_anchor_items(8)
+        .with_prefill_timing_cuts(true)
+        .with_prefill_budget(PrefillBudget::Tbt(MixedPolicy::new(202, FLOOR, 0).unwrap()))
+        .with_adaptive_prefill_budget(true);
+    let mut s = Scheduler::new(config, KvGeometry::new(GRANULE, 65536).unwrap()).unwrap();
+    train(&mut s);
+    decoders(&mut s, 1);
+    submit_prefix(&mut s, 1, (0..767).map(|n| 10_000 + n).collect(), 4);
+    s.submit(
+        RequestSpec::new(RequestId::new(2), 1, 2)
+            .unwrap()
+            .with_prompt_scoring(),
+    )
+    .unwrap();
+    let batch = s.next_batch().unwrap().unwrap();
+    assert_eq!(batch.prefill_cap(), None);
+    let items: Vec<_> = batch
+        .items()
+        .iter()
+        .filter(|item| item.request_id().get() < 100)
+        .map(|item| (item.request_id().get(), item.phase(), item.anchor_tokens()))
+        .collect();
+    assert_eq!(
+        items,
+        [
+            (1, BatchPhase::Prefill { tokens: 704 }, None),
+            (2, BatchPhase::Prefill { tokens: 1 }, None),
+        ]
+    );
+}
+
 fn owing(decode_steps: u32) -> PrefillBudget {
     PrefillBudget::Tbt(MixedPolicy::new(TARGET_MS, FLOOR, decode_steps).unwrap())
 }

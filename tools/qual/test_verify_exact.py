@@ -868,6 +868,121 @@ class CheckpointBindingTests(unittest.TestCase):
         self.assertRegex(str(code), "refused: the server loaded checkpoint 0{64}, not the pinned")
 
 
+class ReferenceServer(PinnedServer):
+    """A PinnedServer that forces `references` as --debug-reference-tokens
+    does (ForcingServer) and, like the host, refuses a request whose prompt
+    and output exceed `context` tokens."""
+
+    def __init__(self, references, log, pin, context=None):
+        super().__init__(references[0], log, pin, pin["checkpoint_identity"])
+        self.references, self.context, self.prompts = references, context, []
+
+    def request(self, path, body):
+        if path == "/detokenize":
+            return {"prompt": "x"}, 0.01
+        prompt = list(body["prompt"])
+        if self.context is not None and len(prompt) + body["max_tokens"] > self.context:
+            raise RuntimeError(f"HTTP 400: {len(prompt)} prompt tokens and {body['max_tokens']} output tokens "
+                               f"exceed the context of {self.context}")
+        self.prompts.append(len(prompt))
+        if body.get("echo"):
+            rows = [None] + [{str(token): {"logprob": -1.0, "rank": 1}} for token in prompt[1:]]
+            return {"choices": [{"prompt_logprobs": rows}]}, 0.01
+        return ForcingServer(self.references, lambda position: -1).request(path, body)
+
+
+class NamedReferenceTests(unittest.TestCase):
+    """--reference adds a pinned reference's texts (here Qwen3.8's pinned
+    32,768-token long-context fixture) to those `references` writes and
+    `record` forces."""
+
+    def setUp(self):
+        import declaration
+        selected = mock.patch.dict(os.environ, {"CHOPINFER_QUAL_CONFIG": str(declaration.named("qwen38"))})
+        selected.start()
+        self.addCleanup(selected.stop)
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.directory = Path(directory.name)
+        from common import pinned_reference, reference_path
+        self.long = pinned_reference("long_context", reference_path("long_context"))["texts"][0]
+        # A short text sharing the long text's first token, so the two
+        # disagree after it and its position 1 is not forced.
+        ids = self.long["prompt_token_ids"]
+        self.exact = {"texts": [{"name": "t", "category": "c", "score_from": 1,
+                                 "prompt_token_ids": [ids[0], ids[1] + 1, 6, 7],
+                                 "exact": {"logprob": [-1.0, -2.0, -3.0], "top1": [5, 6, 8]}}]}
+        self.exact_path = self.directory / "exact.json"
+        self.exact_path.write_text(json.dumps(self.exact))
+
+    def references(self, *argv):
+        out = self.directory / "references.json"
+        out.unlink(missing_ok=True)
+        code, _ = run_main(["references", "--exact", str(self.exact_path), "--out", str(out), *argv])
+        return code, out.read_bytes() if out.exists() else None
+
+    def test_references_add_each_named_reference_and_are_unchanged_without_one(self):
+        code, plain = self.references()
+        self.assertIsNone(code)
+        self.assertEqual(plain, (json.dumps({"sequences": [self.exact["texts"][0]["prompt_token_ids"]]}) + "\n").encode())
+        code, named = self.references("--reference", "long_context")
+        self.assertIsNone(code)
+        self.assertEqual(json.loads(named)["sequences"],
+                         [self.exact["texts"][0]["prompt_token_ids"], self.long["prompt_token_ids"]])
+
+    def test_unpinned_mismatched_or_repeated_references_are_refused(self):
+        self.assertRegex(str(self.references("--reference", "nope")[0]), "refused: the gate pins no reference nope")
+        self.assertRegex(str(self.references("--reference", "long_context", "--reference", "long_context")[0]),
+                         "refused: --reference long_context is given twice")
+        from common import reference_path
+        tampered = self.directory / "long.json"
+        data = bytearray(reference_path("long_context").read_bytes())
+        data[data.index(b'"score_from"') + 14] ^= 1
+        tampered.write_bytes(data)
+        with mock.patch("verify_exact.reference_path", return_value=tampered):
+            code, out = self.references("--reference", "long_context")
+        # The reference lock refuses the changed bytes before the pin's digest.
+        self.assertRegex(str(code), "refused: lock entry reference:long_context: sha256 differs")
+        self.assertIsNone(out)
+
+    def record(self, context=None):
+        from common import checkpoint_pin
+        server = ReferenceServer([text["prompt_token_ids"] for text in (*self.exact["texts"], self.long)],
+                                 self.directory / "trace.log", checkpoint_pin(), context)
+        with mock.patch("verify_exact.Client", lambda url, timeout: server), \
+                mock.patch("verify_exact.metrics_text", return_value=""), \
+                mock.patch("verify_exact.snapshot", return_value={}), \
+                mock.patch("verify_exact.difference", return_value={}):
+            code, output = run_main(["record", "--exact", str(self.exact_path), "--arm", "forced", "--k", "0",
+                                     "--reference", "long_context"])
+        return code, output, server
+
+    def test_a_record_forces_the_named_texts_and_their_long_history(self):
+        code, output, server = self.record()
+        self.assertEqual(code, 0, output)
+        recorded = json.loads(Path(json.loads(output.splitlines()[-1])["receipt"]).read_text())
+        import declaration
+        pin = declaration.load(declaration.named("qwen38"))["qualification"]["references"]["long_context"]
+        self.assertEqual(recorded["references"], {"long_context": pin["sha256"]})
+        self.assertEqual([text["name"] for text in recorded["texts"]], ["t", self.long["name"]])
+        [short], [long] = (text["passes"] for text in recorded["texts"])
+        # Agreement is read over every forced text: t's position 1 follows
+        # the long text's first token too, so no request starts there.
+        self.assertEqual(list(short["positions"]), ["2", "3"])
+        start, length = self.long["score_from"], len(self.long["prompt_token_ids"])
+        self.assertEqual(list(long["positions"]), [str(position) for position in range(start, length)])
+        self.assertEqual([row["row"] for row in long["positions"].values()], ["prefill"] + ["decode"] * (length - start - 1))
+        self.assertEqual([(request["start"], request["matched"]) for request in long["requests"]],
+                         [(start, length - start)])
+        self.assertEqual(list(recorded["prefill"][self.long["name"]]), [str(position) for position in range(start, length)])
+
+    def test_a_server_that_cannot_hold_the_long_history_refuses_the_record(self):
+        code, _, _ = self.record(context=4096)
+        self.assertRegex(str(code), rf"refused: {self.long['name']}: the server did not serve a request of its "
+                                    r"32768-token history \(HTTP 400: .*exceed the context of 4096\); recording "
+                                    "it needs KV capacity and a context that hold every token")
+
+
 class SmallBucketTests(unittest.TestCase):
     """B8 and B16 AR draws carry bucket evidence through the command line."""
 

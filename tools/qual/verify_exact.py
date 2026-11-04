@@ -35,6 +35,12 @@ keeps its own top-1 bound and coverage.
 
 `--exact` picks an explicit reference file. Otherwise the gate configuration
 selects the reference. Verify row buckets also come from the gate configuration.
+Each `--reference NAME` adds the texts of the gate's pinned reference NAME,
+verified against its pin, to those `references` writes and `record` forces
+(for example a long-context reference, whose long history a record then
+decodes); the record names each such reference and its digest. A request the
+server does not serve refuses the record, naming the KV capacity and context
+its text needs.
 """
 
 from concurrent.futures import ThreadPoolExecutor
@@ -47,7 +53,7 @@ import statistics
 import sys
 
 from common import (Client, arguments, bind_checkpoint, bound_live, confirm_live, input_path, pinned_kind,
-                    pinned_reference, qualification_config, read_config, receipt)
+                    pinned_reference, qualification_config, read_config, receipt, reference_path)
 import declaration
 from spec_metrics import difference, metrics_text, snapshot
 from step_overlap_ab import step_lines
@@ -109,6 +115,46 @@ def load_exact(path):
         except ValueError as error:
             raise SystemExit(f"refused: {error}")
     return json.loads(path.read_text())
+
+
+def named_references(names):
+    """{name: (pinned SHA-256, reference)} of the gate's pinned references
+    `names`, each verified against its pin; an unpinned or mismatched one,
+    or one whose texts lack the exact variant, is refused."""
+    if not names:
+        return {}
+    pins = qualification_config()["qualification"].get("references", {})
+    found = {}
+    for name in names:
+        if name in found:
+            raise SystemExit(f"refused: --reference {name} is given twice")
+        if name not in pins:
+            raise SystemExit(f"refused: the gate pins no reference {name}")
+        try:
+            value = pinned_reference(name, reference_path(name))
+        except (OSError, ValueError) as error:
+            raise SystemExit(f"refused: {error}")
+        if not all(isinstance(text.get("exact"), dict) for text in value["texts"]):
+            raise SystemExit(f"refused: the {name} reference's texts hold no exact variant")
+        found[name] = (pins[name]["sha256"], value)
+    return found
+
+
+def forced_texts(exact, named):
+    """Every text the server forces: the exact reference's, then each named
+    reference's; two texts may not share a name."""
+    texts = [*exact["texts"], *(text for _, value in named.values() for text in value["texts"])]
+    names = [text["name"] for text in texts]
+    if len(set(names)) != len(names):
+        raise SystemExit(f"refused: the forced references name a text twice: {sorted(names)}")
+    return texts
+
+
+def unserved(text, error):
+    """The refusal of a record whose server did not serve a request of `text`."""
+    return SystemExit(f"refused: {text['name']}: the server did not serve a request of its "
+                      f"{len(text['prompt_token_ids'])}-token history ({error}); recording it needs KV capacity "
+                      "and a context that hold every token")
 
 
 def variants(exact):
@@ -238,7 +284,10 @@ def record_pass(client, model, text, k, phase, agreed):
     ids = text["prompt_token_ids"]
     positions, requests = {}, []
     for start, count in forced_runs(agreed, text["score_from"] + phase, len(ids)):
-        result = forced_request(client, model, ids, start, count)
+        try:
+            result = forced_request(client, model, ids, start, count)
+        except RuntimeError as error:
+            raise unserved(text, error) from error
         if result["matched"] != count:
             raise RuntimeError(f"{text['name']}: the server left the reference at position "
                                f"{start + result['matched']}; start it with --debug-reference-tokens")
@@ -257,7 +306,10 @@ def prefill_capture(client, model, text):
     body = {"model": model, "prompt": text["prompt_token_ids"], "echo": True, "logprobs": TOP_LOGPROBS,
             "prompt_logprobs": TOP_LOGPROBS, "return_token_ids": True, "max_tokens": 1,
             "temperature": 0}
-    response, _ = client.request("/v1/completions", body)
+    try:
+        response, _ = client.request("/v1/completions", body)
+    except RuntimeError as error:
+        raise unserved(text, error) from error
     choice = response["choices"][0]
     rows = choice.get("prompt_logprobs") or response.get("prompt_logprobs")
     ids = text["prompt_token_ids"]
@@ -363,7 +415,9 @@ def record(args):
     model = server["model"]
     path = exact_path(args.exact)
     exact = load_exact(path)
-    texts = [text for text in exact["texts"]
+    named = named_references(getattr(args, "reference", None))
+    forced = forced_texts(exact, named)
+    texts = [text for text in forced
              if not args.texts or text["name"] in args.texts.split(",")]
     phases = range(args.phases if args.phases is not None else args.k + 1)
     before = snapshot(metrics_text(client), "chopinfer", model)
@@ -373,7 +427,7 @@ def record(args):
     bucket = getattr(args, "decode_bucket", None)
     offset = args.server_log.stat().st_size if bucket else None
     with ThreadPoolExecutor(args.concurrency) as pool:
-        agreed = {text["name"]: agreed_continuations(exact["texts"], text["prompt_token_ids"])
+        agreed = {text["name"]: agreed_continuations(forced, text["prompt_token_ids"])
                   for text in texts}
         passes = list(pool.map(lambda job: record_pass(client, model, job[0], label_k, job[1],
                                                        agreed[job[0]["name"]]), jobs))
@@ -422,6 +476,8 @@ def record(args):
         "skipped": [] if pooled or counters_match or args.concurrency == 1
         else ["row labels are simulated; counters differ at concurrency above 1"],
     }
+    if named:
+        result["references"] = {name: digest for name, (digest, _) in named.items()}
     if trace is not None:
         result["decode_bucket"] = trace
     if capacity is not None:
@@ -824,9 +880,9 @@ def report(args):
 
 
 def references(args):
-    exact = load_exact(exact_path(args.exact))
+    texts = forced_texts(load_exact(exact_path(args.exact)), named_references(getattr(args, "reference", None)))
     Path(args.out).write_text(json.dumps(
-        {"sequences": [text["prompt_token_ids"] for text in exact["texts"]]}) + "\n")
+        {"sequences": [text["prompt_token_ids"] for text in texts]}) + "\n")
 
 
 def main():
@@ -834,6 +890,8 @@ def main():
     parser.add_argument("command", choices=("references", "record", "report"))
     parser.add_argument("--exact", help="reference path or gate config name (default: selected gate)")
     parser.add_argument("--out", help="references: the file for serve --debug-reference-tokens")
+    parser.add_argument("--reference", action="append",
+                        help="references/record: also force the texts of this pinned reference (repeatable)")
     parser.add_argument("--arm", help="record: receipt label, e.g. ar or k7")
     parser.add_argument("--server-log", type=Path,
                         help="record: the server's startup log; when given, it must be the live server's")

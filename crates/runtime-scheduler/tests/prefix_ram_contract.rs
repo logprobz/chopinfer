@@ -949,6 +949,41 @@ fn a_forced_recapture_waits_for_its_keys_older_demotion() {
     }
 }
 
+#[test]
+fn a_deferred_forced_demotion_the_tier_has_no_room_for_stays_on_the_gpu() {
+    let mut h = Harness::new(32, tier(true, 64));
+    let tokens = prompt(1, 17);
+    h.run(1, &tokens);
+    let anchor = key(&tokens, 17);
+    let older = h.s.begin_demotion(&mut h.tier, anchor).unwrap();
+    h.check();
+    h.run(2, &tokens);
+    assert!(h.s.defer_forced_demotion(anchor));
+    h.complete(older, KvTransferStatus::Complete);
+    h.s.drop_invalidated_host_entries(&mut h.tier).unwrap();
+    h.check();
+    // Entries of later captures fill the tier, so the deferred demotion
+    // finds no room older than its anchor.
+    for salt in 10.. {
+        if h.tier.capacity() - h.tier.used_pages() < ANCHOR_PAGES {
+            break;
+        }
+        let other = prompt(salt, 17);
+        h.run(u64::from(salt), &other);
+        h.demote(key(&other, 17));
+    }
+    assert!(matches!(
+        h.s.begin_demotion(&mut h.tier, anchor),
+        Err(ScheduleError::Kv(KvError::PoolExhausted { .. }))
+    ));
+    h.check();
+    // Like any capture the tier has no room for, the anchor stays on the
+    // GPU, and a longer prompt resumes from it.
+    assert!(h.s.forced_demotions().is_empty());
+    h.submit(4, &extended(1, 17, 7, 0));
+    assert_eq!(h.admit().admitted().len(), 1);
+}
+
 /// Promotes and publishes the pending promotion.
 fn publish(h: &mut Harness) {
     assert_eq!(h.promote(KvTransferStatus::Complete), 1);

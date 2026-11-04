@@ -399,7 +399,9 @@ impl Scheduler {
     /// Begins a demotion: a copy of the public frontier `key` into a host
     /// entry that keeps the anchor's last GPU use. It stays outstanding until
     /// its confirmed completion. In forced mode the GPU anchor goes at once,
-    /// as a forced swap's does, so the key's next hit is a RAM hit.
+    /// as a forced swap's does, so the key's next hit is a RAM hit, and the
+    /// attempt ends a deferral of the key: an anchor the tier has no room for
+    /// stays on the GPU like any capture's.
     pub fn begin_demotion(
         &mut self,
         tier: &mut HostTier,
@@ -409,12 +411,14 @@ impl Scheduler {
         let config = self
             .prefix_ram_active()
             .ok_or(ScheduleError::InvariantViolation)?;
+        if config.forced {
+            self.ram.forced_deferred.remove(&key);
+        }
         let (_, plan) = tier
             .begin_offload(&mut self.kv, key, None)
             .map_err(ScheduleError::Kv)?;
         self.ram.demotions.insert(plan.id(), key);
         if config.forced {
-            self.ram.forced_deferred.remove(&key);
             self.kv.remove_anchor(key).map_err(ScheduleError::Kv)?;
         }
         Ok(plan)
@@ -423,9 +427,10 @@ impl Scheduler {
     /// Forced mode: keeps the demotion of `key`'s GPU anchor for a later
     /// step when an older demotion of the key, begun before the anchor was
     /// recaptured, still copies. [`Self::forced_demotions`] returns it until
-    /// it begins, and admission resumes from no anchor of that lifetime
-    /// meanwhile. Returns whether it was kept: an anchor gone, or a key with
-    /// no demotion outstanding, keeps nothing.
+    /// [`Self::begin_demotion`] tries the key again, and admission resumes
+    /// from no anchor of that lifetime meanwhile. Returns whether it was
+    /// kept: an anchor gone, or a key with no demotion outstanding, keeps
+    /// nothing.
     pub fn defer_forced_demotion(&mut self, key: PrefixCacheKeyV1) -> bool {
         let forced = self.prefix_ram_active().is_some_and(|config| config.forced);
         let outstanding = self.ram.demotions.values().any(|demoted| *demoted == key);

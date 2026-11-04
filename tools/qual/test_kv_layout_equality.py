@@ -268,6 +268,27 @@ class CompareTests(unittest.TestCase):
         with self.assertRaises(SystemExit):
             compared((native, unbound))
 
+    def test_a_field_one_record_lacks_differs_from_null_in_the_other(self):
+        # Presence is part of equality: an identity or profile field one
+        # record holds, even as null, and the other lacks is a difference.
+        serving = lambda value: value["server"]["health"]["serving"]  # noqa: E731
+        for name, where, field in (("identity", serving, "serving identity unexpected_null"),
+                                   ("profile", lambda value: serving(value)["profile"], "profile unexpected_null")):
+            with self.subTest(name):
+                native, comparison = records()
+                where(comparison)["unexpected_null"] = None
+                result = compared((native, comparison))
+                self.assertFalse(result["passed"])
+                self.assertIn(f"the records differ in {field}: only the comparison record holds it", result["errors"])
+                self.assertNotIn("equal", result)
+                native, comparison = forced()
+                where(native)["unexpected_null"] = None
+                result = compared(forced_records=(native, comparison))
+                self.assertFalse(result["passed"])
+                self.assertIn(f"the forced records differ in {field}: only the native forced record holds it",
+                              result["errors"])
+                self.assertNotIn("equal", result["forced"])
+
     def test_layouts_follow_the_declared_planes_and_the_bf16_arm_reports_none(self):
         native, comparison = records()
         profile = lambda value: value["server"]["health"]["serving"]["profile"]  # noqa: E731
@@ -964,7 +985,14 @@ class TapsTests(unittest.TestCase):
                 (lambda m: m["server"]["profile"].update(kv_cache_planes=NATIVE_PLANES),
                  "the comparison profile reports kv_cache_planes"),
                 (lambda m: m["server"]["profile"].update(kv_cache_dtype="mixed"),
-                 "the comparison profile serves KV dtype mixed without kv_cache_planes")):
+                 "the comparison profile serves KV dtype mixed without kv_cache_planes"),
+                # A field one capture holds, even as null, and the other lacks.
+                (lambda m: m["server"].update(unexpected_null=None),
+                 "the captures differ in serving identity unexpected_null: only the comparison capture holds it"),
+                (lambda m: m["server"]["profile"].update(unexpected_null=None),
+                 "the captures differ in profile unexpected_null: only the comparison capture holds it"),
+                (lambda m: m["requests"][0].pop("primer"),
+                 "the captures differ in request primer primer: only the native capture holds it")):
             with self.subTest(error=error):
                 comparison = self.capture("bf16", error)
                 edit_manifest(comparison, change)

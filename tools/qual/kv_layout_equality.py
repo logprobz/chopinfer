@@ -53,6 +53,8 @@ forced records must be live-bound to the gate's checkpoint pin and match
 their layout's determinism record in those fields and its package. The
 package identity may differ with the KV layout; both are reported. The
 layout fields are validated by `layout_errors` against NATIVE_PLANES.
+Presence is part of equality: a compared field one side holds, even as
+null, and the other lacks is a difference.
 
 `taps` compares the two layouts' diagnostic taps instead: two captures from
 tools/qual/tap_binding.py capture, one from a diagnostic-taps server of each
@@ -65,9 +67,10 @@ rules), in steps (each request's steps, their capture.json and items.json
 with engine request IDs read as request names, apart from state slots, the
 process's capture ID and producer, the declared taps and their bytes, and a
 KV step's storage), or in serving identity: every identity and profile field
-must be equal except the startup nonce, the package identity (reported; it
-may differ) and the layout fields, which `layout_errors` validates against
-the declared native planes (--native-planes, a JSON list: NATIVE_PLANES).
+must be present in both and equal except the startup nonce, the package
+identity (reported; it may differ) and the layout fields, which
+`layout_errors` validates against the declared native planes
+(--native-planes, a JSON list: NATIVE_PLANES).
 Both captures must record the same complete `model_options` and
 `model_options_qualified`. An experimental capture (a sealed pin's
 diagnostic options) compares only with --experimental, against another one,
@@ -197,24 +200,46 @@ NATIVE_KV_FORMATS = {"window": ["e4m3", "ue8m0", 32], "compressed": ["e2m1", "ue
 NOTHING_SELECTED = "no selected live tensors"
 
 
+def differing_keys(left, right, excluded=()):
+    """The keys, sorted and `excluded` aside, at which two JSON objects
+    differ, each with the index of the object that alone holds it, or None:
+    values unequal with their JSON types differ, and so does a key one
+    object holds, even as null, and the other lacks (presence is part of
+    equality)."""
+    return [(key, None if key in left and key in right else int(key in right))
+            for key in sorted((left.keys() | right.keys()) - set(excluded))
+            if key not in left or key not in right or not same(left[key], right[key])]
+
+
+def picked(value, keys):
+    """The fields among `keys` that the JSON object `value` holds."""
+    return {key: value[key] for key in keys if key in value}
+
+
+def presence(names, alone):
+    """What a difference adds when one of the two holders `names` alone
+    holds the field (`differing_keys`)."""
+    return "" if alone is None else f": only the {names[alone]} holds it"
+
+
 def served_errors(left, right, what):
     """Why two serving identities do not name one build, profile and option
     map in two KV layouts: every identity and profile field, `model_options`
-    included, is equal with its JSON type but the package identity (which
-    may follow the layout) and the layout fields, which `layout_errors`
-    validates against NATIVE_PLANES; each reports a complete option map."""
+    included, is present in both and equal with its JSON type but the
+    package identity (which may follow the layout) and the layout fields,
+    which `layout_errors` validates against NATIVE_PLANES; each reports a
+    complete option map."""
     errors = []
+    names = [f"{side} {what[:-1]}" for side in SIDES]
     for side, identity in zip(SIDES, (left, right)):
         if not (isinstance(identity.get("model_options"), dict) and identity["model_options"]
                 and type(identity.get("model_options_qualified")) is bool):
             errors.append(f"the {side} {what[:-1]} reports no complete model_options and model_options_qualified")
-    for key in sorted((left.keys() | right.keys()) - {"profile", *LAYOUT_FIELDS}):
-        if not same(left.get(key), right.get(key)):
-            errors.append(f"the {what} differ in serving identity {key}")
+    errors += [f"the {what} differ in serving identity {key}{presence(names, alone)}"
+               for key, alone in differing_keys(left, right, {"profile", *LAYOUT_FIELDS})]
     profiles = left["profile"], right["profile"]
-    for key in sorted((profiles[0].keys() | profiles[1].keys()) - set(LAYOUT_PROFILE)):
-        if not same(profiles[0].get(key), profiles[1].get(key)):
-            errors.append(f"the {what} differ in profile {key}")
+    errors += [f"the {what} differ in profile {key}{presence(names, alone)}"
+               for key, alone in differing_keys(*profiles, LAYOUT_PROFILE)]
     return errors + layout_errors(*profiles, NATIVE_PLANES)
 
 
@@ -384,12 +409,13 @@ def compare_forced(native, comparison, served):
     errors = []
     identities_of = [serving_identity(record) for record in (native, comparison)]
     errors += served_errors(*identities_of, "forced records")
+    names = ("forced record", "determinism record")
     for side, identity in zip(SIDES, identities_of):
-        fields = [(key, identity.get(key), served[side].get(key)) for key in BUILD_FIELDS]
-        fields += [(f"profile {key}", identity["profile"].get(key), served[side]["profile"].get(key))
-                   for key in LAYOUT_PROFILE]
-        errors += [f"the {side} forced record differs from its determinism record in {key}"
-                   for key, forced, recorded in fields if not same(forced, recorded)]
+        pairs = [(identity, served[side], BUILD_FIELDS, ""),
+                 (identity["profile"], served[side]["profile"], LAYOUT_PROFILE, "profile ")]
+        errors += [f"the {side} forced record differs from its determinism record in "
+                   f"{where}{key}{presence(names, alone)}" for forced, recorded, keys, where in pairs
+                   for key, alone in differing_keys(picked(forced, keys), picked(recorded, keys))]
     digest, references, expected, requests = forced_expectation()
     result = {"kv_cache_dtypes": [identity["profile"].get("kv_cache_dtype") for identity in identities_of],
               "references": references, "texts": len(expected), "forced_references": requests}
@@ -484,19 +510,16 @@ def capture_identities(native, comparison, native_planes, experimental=False):
     """The two capture manifests' layouts and experimental pins, and the
     errors that refuse the pair: see the module docstring."""
     servers = native["server"], comparison["server"]
-    errors = []
+    names = [f"{side} capture" for side in SIDES]
     excluded = {"profile", "startup_nonce", *LAYOUT_FIELDS, *tap_binding.OPTIONS}
-    for key in sorted((servers[0].keys() | servers[1].keys()) - excluded):
-        if not same(servers[0].get(key), servers[1].get(key)):
-            errors.append(f"the captures differ in serving identity {key}")
+    errors = [f"the captures differ in serving identity {key}{presence(names, alone)}"
+              for key, alone in differing_keys(*servers, excluded)]
     profiles = servers[0]["profile"], servers[1]["profile"]
-    for key in sorted((profiles[0].keys() | profiles[1].keys()) - set(LAYOUT_PROFILE)):
-        if not same(profiles[0].get(key), profiles[1].get(key)):
-            errors.append(f"the captures differ in profile {key}")
+    errors += [f"the captures differ in profile {key}{presence(names, alone)}"
+               for key, alone in differing_keys(*profiles, LAYOUT_PROFILE)]
     errors += layout_errors(*profiles, native_planes)
-    for key in tap_binding.OPTIONS:
-        if not same(servers[0].get(key), servers[1].get(key)):
-            errors.append(f"the captures differ in {key}")
+    errors += [f"the captures differ in {key}{presence(names, alone)}"
+               for key, alone in differing_keys(*(picked(server, tap_binding.OPTIONS) for server in servers))]
     markers = []
     for side, manifest in zip(SIDES, (native, comparison)):
         try:
@@ -538,9 +561,10 @@ def request_errors(native, comparison):
     elif len(set(names[0])) != len(names[0]):
         errors.append(f"the captures name two requests alike: {names[0]}")
     else:
+        names = [f"{side} capture" for side in SIDES]
         for left, right in zip(native["requests"], comparison["requests"]):
-            errors += [f"the captures differ in request {left['name']} {key}"
-                       for key in REQUEST_FIELDS if not same(left.get(key), right.get(key))]
+            errors += [f"the captures differ in request {left['name']} {key}{presence(names, alone)}"
+                       for key, alone in differing_keys(picked(left, REQUEST_FIELDS), picked(right, REQUEST_FIELDS))]
     return errors
 
 

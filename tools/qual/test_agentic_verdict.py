@@ -17,7 +17,9 @@ METRICS_BEFORE = ('vllm:num_preemptions_total{model_name="m"} 1\n'
 
 def level(concurrency=8, ttft=100.0, cached=50, warm=.5, gap=10.0, stalls=0, generated=10, samples=40,
           pid=1, sessions_per_minute=True):
-    """A replay level as agentic_trace builds it, summarized by agentic_metrics."""
+    """A replay level as agentic_trace builds it, summarized by agentic_metrics.
+    Its window starts PID hundred seconds into the wall clock, so visits run in
+    the order of their process IDs."""
     turns = []
     for index in range(samples):
         gaps = [dict(ms=150.0 if index < stalls else gap, holdback_possible=False)] + \
@@ -31,7 +33,7 @@ def level(concurrency=8, ttft=100.0, cached=50, warm=.5, gap=10.0, stalls=0, gen
     summary = summarize(sessions, 0, 10, concurrency)
     after = METRICS_BEFORE.replace('} 1\n', '} 4\n').replace('} 2\n', '} 7\n').replace('} 0\n', '} 3\n')
     startup = dict(pid=pid, start_ticks='100')
-    summary.update(replica=0, sessions=sessions,
+    summary.update(replica=0, sessions=sessions, realtime_offset_ns=dict(start=pid * 100 * 10**9, end=pid * 100 * 10**9),
                    server_metrics=dict(before=dict(text=METRICS_BEFORE), after=dict(text=after)),
                    prefill_budget=dict(startup_before=startup, startup_after=startup))
     return summary
@@ -41,7 +43,8 @@ def receipt(arm, seed, levels):
     return dict(schema='chopinfer-qualification/v1', check='agentic-mixed', receipt_kind='sweep', aborted=None,
                 passed=True, mechanics_only=False, arm=arm, workload_schema='chopinfer.agentic-mixed.v3',
                 source_revision='chopinfer.agentic-trace.v1', corpus_digest='trace', workload_digest='trace',
-                profile=dict(seed=seed, levels=[row['concurrency'] for row in levels], replicas=1),
+                profile=dict(seed=seed, levels=[row['concurrency'] for row in levels], replicas=1, temperature=1.0,
+                             cache_salt='session'),
                 server=dict(model='m'), run_id=f'{arm}-{seed}', levels=levels,
                 host_load=dict(idle=True, reasons=[]))
 
@@ -195,7 +198,7 @@ class VerdictTests(unittest.TestCase):
         self.assertEqual(result['decision'], 'replace')
         self.assertFalse(result['accepted'])
         self.assertIn('A1: major faults not recorded', result['problems'])
-        self.assertIn('power limits not recorded for every visit', result['problems'])
+        self.assertIn('A1: power and clock samples not recorded', result['problems'])
         self.assertEqual(result['cells'][0]['energy']['verdict'], 'unavailable')
         faults = dict.fromkeys(verdict.VISITS, 10) | {'B2': 1001}
         result = verdict.verdict(visits, ['cache_hit_rate'], None,
@@ -209,6 +212,91 @@ class VerdictTests(unittest.TestCase):
         result = judged(unidentified)
         self.assertIsNone(result['fresh_processes'])
         self.assertIn('server processes not identified', result['problems'])
+
+    def test_invalid_power_evidence_blocks_acceptance_whatever_the_energy(self):
+        visits = abba(**both(cached=80))
+        faults = dict.fromkeys(verdict.VISITS, 10)
+
+        def judge(edit):
+            power = {visit: copy.deepcopy(POWER) for visit in verdict.VISITS}
+            edit(power)
+            return verdict.verdict(visits, ['cache_hit_rate'], None, power, faults)
+        self.assertTrue(judge(lambda power: None)['accepted'])
+        # A limit that changes within a visit voids it, though its first sample matches.
+        def lowered(power):
+            power['B1'][-1]['limits'] = {'0': 250.0}
+        result = judge(lowered)
+        self.assertIn("B1: GPU 0 power limit changed within the visit ([250.0, 300.0]): the visit is void",
+                      result['problems'])
+        self.assertFalse(result['accepted'])
+        self.assertEqual(result['cells'][0]['energy']['unavailable'], 'incomplete power evidence')
+        self.assertIsNone(result['visits']['B1']['power_limits'])
+        # Clocks are evidence too.
+        def unclocked(power):
+            for samples in power.values():
+                for sample in samples:
+                    del sample['sm_clocks']
+        result = judge(unclocked)
+        self.assertIn('A1: power sample 0 lacks per-GPU sm_clocks', result['problems'])
+        self.assertFalse(result['accepted'])
+        for edit, problem in (
+                (lambda power: power['A2'].pop(), 'A2: power samples do not bracket the measured windows'),
+                (lambda power: power['B2'][1].update(at=0), 'B2: power sample times do not increase'),
+                (lambda power: power['A1'][1]['watts'].update({'1': 10.0}), 'A1: power sample 1 names other GPUs in watts'),
+                (lambda power: power['B1'][0]['limits'].update({'0': float('nan')}), 'B1: power sample 0 lacks per-GPU limits'),
+                (lambda power: power.update(A2=[]), 'A2: power and clock samples not recorded')):
+            with self.subTest(problem=problem):
+                result = judge(edit)
+                self.assertIn(problem, result['problems'])
+                self.assertFalse(result['accepted'])
+
+    def test_energy_vetoes_only_with_energy_in_every_cell(self):
+        visits = abba(cells=(8, 16), **both(cached=80))
+        # No output tokens in C16 leaves its energy unavailable.
+        for visit in verdict.VISITS:
+            visits[visit]['levels'][1] = level(16, pid=dict(A1=1, B1=2, B2=3, A2=4)[visit], generated=0,
+                                               cached=80 if visit[0] == 'B' else 50)
+        power = {visit: copy.deepcopy(POWER) for visit in verdict.VISITS}
+        for visit in ('B1', 'B2'):
+            for sample in power[visit]:
+                sample['watts'] = {'0': 330.0}
+        result = verdict.verdict(visits, ['cache_hit_rate'], None, power, dict.fromkeys(verdict.VISITS, 0))
+        cells = {cell['concurrency']: cell['energy'] for cell in result['cells']}
+        self.assertEqual(cells[8]['verdict'], 'increase')
+        self.assertAlmostEqual(cells[8]['mean'], .1)
+        self.assertEqual(cells[16]['verdict'], 'unavailable')
+        self.assertFalse(result['energy_veto'])
+        self.assertEqual(result['energy_note'], 'energy unavailable in C16: the increases measured elsewhere are informational')
+
+    def test_the_replay_protocol_is_required_for_acceptance(self):
+        # Visits that ran A1, A2, B2, B1 are not an ABBA.
+        visits = abba(**both(cached=80))
+        for visit, pid in (('A2', 2), ('B2', 3), ('B1', 4)):
+            visits[visit]['levels'][0]['realtime_offset_ns'] = dict(start=pid * 100 * 10**9, end=pid * 100 * 10**9)
+        with self.assertRaisesRegex(ValueError, 'B2 did not start after B1 ended'):
+            judged(visits)
+        # Overlapping visits are refused too.
+        visits = abba(**both(cached=80))
+        visits['B1']['levels'][0]['realtime_offset_ns'] = dict(start=105 * 10**9, end=105 * 10**9)
+        with self.assertRaisesRegex(ValueError, 'B1 did not start after A1 ended'):
+            judged(visits)
+        unclocked = abba(**both(cached=80))
+        del unclocked['B2']['levels'][0]['realtime_offset_ns']
+        result = judged(unclocked)
+        self.assertIn('visit chronology not recorded', result['problems'])
+        self.assertFalse(result['accepted'])
+        # Group salts are a shared-prefix diagnostic and greedy replays are not the protocol.
+        for key, value, problem in (('cache_salt', 'group', "cache salt 'group'"),
+                                    ('cache_salt', 'none', "cache salt 'none'"),
+                                    ('temperature', 0, 'temperature 0')):
+            with self.subTest(key=key, value=value):
+                visits = abba(**both(cached=80))
+                for receipt_value in visits.values():
+                    receipt_value['profile'][key] = value
+                result = judged(visits)
+                self.assertEqual(result['decision'], 'replace')
+                self.assertTrue(any(row.startswith(problem) for row in result['problems']), result['problems'])
+                self.assertFalse(result['accepted'])
 
     def test_receipts_that_are_not_one_abba_are_refused(self):
         def changed(edit):

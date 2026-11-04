@@ -544,16 +544,21 @@ visits as described in [stateful replay acceptance](../../docs/contributing.md#s
 --major-faults VISIT=N` judges one ABBA's four replay receipts by that rule.
 It refuses receipts that are not one ABBA: failed or partial replays,
 different workloads or settings other than the seed, unmatched pair seeds
-or arms, other cells or replicas, or two visits in one server process. Per
+or arms, other cells or replicas, two visits in one server process, or
+visits that did not run one after the other in A1, B1, B2, A2 order. Per
 cell and metric it reports each visit's value, d1, d2, mean, spread and a
 verdict; the cache-hit rate and sessions kept warm (percentage points) and
 both stall rates use differences, and a metric without supported samples
 in a visit is unavailable. Gains resolve only in the declared metrics and
 cells, regressions in any. Joules per output token compare under identical
-power limits. Preemptions, prefix evictions and the RAM tier's counters are
-reported per cell as evidence. `accepted` needs a resolved gain, no resolved
-regression or energy veto, and complete evidence: idle-host, non-mechanics
-visits with recorded power limits and at most 1,000 major faults each.
+power limits; an energy veto needs energy in every cell. Preemptions,
+prefix evictions and the RAM tier's counters are reported per cell as
+evidence. `accepted` needs a resolved gain, no resolved regression or energy
+veto, the protocol (temperature 1.0, per-session salts; group salts stay a
+diagnostic) and complete evidence: idle-host, non-mechanics visits, power
+samples with each GPU's power, limit and SM clock bracketing every measured
+window, each GPU's limit constant across all four visits, and at most 1,000
+major faults per visit.
 
 Trace analysis calculates decode stalls from generated output events using
 the recorded burst window. Prompt IDs, usage, finish and DONE events remain

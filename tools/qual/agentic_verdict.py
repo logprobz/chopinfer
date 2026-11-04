@@ -27,11 +27,18 @@ serving option value.
 Joules per output token come from each visit's power samples (`--power`,
 the agentic_trace_analysis format) over each cell's window, compared only
 under identical power limits in every visit. An increase vetoes adoption
-only when both pairs show it in every cell that has energy and its mean
-exceeds 3% in at least one; otherwise it is informational. Acceptance also
-needs mechanics-free visits on an idle host, major faults recorded for each
-visit and at most 1,000 in each (`--major-faults`), and separate server
-processes where the receipts identify them.
+only when every cell has energy, both pairs show the increase in every
+cell and its mean exceeds 3% in at least one; otherwise it is
+informational.
+
+Acceptance also needs the replay protocol and complete evidence:
+mechanics-free visits on an idle host, run in A1, B1, B2, A2 order in
+separate server processes, at temperature 1.0 with per-session cache salts
+(group salts are a shared-prefix diagnostic); every power sample of a
+visit carrying each GPU's power, enforced limit and SM clock, bracketing
+its measured windows, with each GPU's limit constant within the visit and
+the same in every visit (a change voids the visit or the job); and major
+faults recorded for each visit, at most 1,000 in each (`--major-faults`).
 """
 import argparse
 import json
@@ -213,16 +220,53 @@ def metric_verdict(name, rows, declared):
     return dict(result, **judged, verdict=verdict)
 
 
-def power_limits(samples):
-    return samples[0].get('limits') if samples else None
+def finite(value):
+    return type(value) in (int, float) and math.isfinite(value) and value >= 0
 
 
-def energy_cell(levels, power):
-    """Joules per output token of each visit's cell, and B against A."""
-    if any(power.get(visit) is None for visit in VISITS):
-        return dict(verdict='unavailable', unavailable='power samples not given for every visit')
-    limits = [power_limits(power[visit]) for visit in VISITS]
-    if any(limit != limits[0] for limit in limits):
+def power_evidence(name, samples, levels):
+    """(each GPU's enforced limit, problems) of one visit's power samples.
+    Every sample must carry each GPU's power, enforced limit and SM clock,
+    the samples must bracket every measured window of the visit at
+    increasing times, and each GPU's limit must stay constant: a change
+    voids the visit. The limits are None when the evidence is incomplete."""
+    if not samples:
+        return None, [f'{name}: power and clock samples not recorded']
+    if not isinstance(samples, list) or not all(isinstance(sample, dict) for sample in samples):
+        return None, [f'{name}: malformed power samples']
+    problems, ranks = [], None
+    for index, sample in enumerate(samples):
+        if not finite(sample.get('at')):
+            problems.append(f'{name}: power sample {index} has no time')
+        for field in ('watts', 'limits', 'sm_clocks'):
+            values = sample.get(field)
+            if not isinstance(values, dict) or not values or not all(finite(value) for value in values.values()):
+                problems.append(f'{name}: power sample {index} lacks per-GPU {field}')
+            elif ranks is None:
+                ranks = set(values)
+            elif set(values) != ranks:
+                problems.append(f'{name}: power sample {index} names other GPUs in {field}')
+    if problems:
+        return None, problems
+    times = [sample['at'] for sample in samples]
+    if any(b <= a for a, b in zip(times, times[1:])):
+        problems.append(f'{name}: power sample times do not increase')
+    start, end = min(level['window_start'] for level in levels), max(level['window_end'] for level in levels)
+    if times[0] > start or times[-1] < end:
+        problems.append(f'{name}: power samples do not bracket the measured windows')
+    for rank in sorted(ranks):
+        seen = sorted({sample['limits'][rank] for sample in samples})
+        if len(seen) > 1:
+            problems.append(f'{name}: GPU {rank} power limit changed within the visit ({seen}): the visit is void')
+    return (None if problems else dict(samples[0]['limits'])), problems
+
+
+def energy_cell(levels, power, limits):
+    """Joules per output token of each visit's cell, and B against A, from
+    power evidence `limits` (power_evidence) shows complete."""
+    if any(limits.get(visit) is None for visit in VISITS):
+        return dict(verdict='unavailable', unavailable='incomplete power evidence')
+    if any(limits[visit] != limits['A1'] for visit in VISITS):
         return dict(verdict='unavailable', unavailable='power limits differ between visits')
     values = {}
     for visit in VISITS:
@@ -252,6 +296,37 @@ def process(level):
             return None
         found.add((startup['pid'], startup.get('start_ticks')))
     return found
+
+
+def chronology(visits):
+    """Each visit's measured span on the wall clock, or None when a receipt
+    lacks its clock offsets; refuses visits that did not run one after the
+    other in A1, B1, B2, A2 order."""
+    spans = {}
+    for name in VISITS:
+        windows = []
+        for level in visits[name]['levels']:
+            offsets = level.get('realtime_offset_ns') or {}
+            if not finite(offsets.get('start')) or not finite(offsets.get('end')):
+                return None
+            windows.append((level['window_start'] + offsets['start'] / 1e9,
+                            level['window_end'] + offsets['end'] / 1e9))
+        spans[name] = (min(start for start, _ in windows), max(end for _, end in windows))
+    for left, right in zip(VISITS, VISITS[1:]):
+        if spans[right][0] < spans[left][1]:
+            raise ValueError(f'{right} did not start after {left} ended: the visits must run A1, B1, B2, A2 in order')
+    return spans
+
+
+def protocol_problems(profile):
+    """Why identical replay settings are not the acceptance protocol."""
+    problems = []
+    if profile.get('cache_salt') != 'session':
+        problems.append(f"cache salt {profile.get('cache_salt')!r}: shared-prefix diagnostics are informational; "
+                        "acceptance isolates each session (--cache-salt session)")
+    if profile.get('temperature') != 1:
+        problems.append(f"temperature {profile.get('temperature')!r}: acceptance replays sample at temperature 1.0")
+    return problems
 
 
 def validate(visits):
@@ -324,16 +399,19 @@ def verdict(visits, gains, cells=None, power=None, major_faults=None):
         raise ValueError(f'declared cells {declared_cells} are not among the measured {measured}')
     power, major_faults = power or {}, major_faults or {}
     fresh = fresh_processes(visits)
-    results, energies = [], []
+    spans = chronology(visits)
+    limits, power_problems = {}, []
+    for name in VISITS:
+        limits[name], found = power_evidence(name, power.get(name), visits[name]['levels'])
+        power_problems += found
+    results = []
     for concurrency in measured:
         levels = {name: next(level for level in visits[name]['levels'] if level['concurrency'] == concurrency)
                   for name in VISITS}
         rows = {name: figures(level) for name, level in levels.items()}
         metrics = {name: metric_verdict(name, {visit: rows[visit][name] for visit in VISITS},
                                         name in gains and concurrency in declared_cells) for name in RULES}
-        cell_energy = energy_cell(levels, power)
-        if 'mean' in cell_energy:
-            energies.append(cell_energy)
+        cell_energy = energy_cell(levels, power, limits)
         results.append(dict(concurrency=concurrency, declared=concurrency in declared_cells, metrics=metrics,
                             energy=cell_energy, evidence={name: evidence(level) for name, level in levels.items()}))
     named = [(f"{name}@C{cell['concurrency']}", row['verdict']) for cell in results for name, row in cell['metrics'].items()]
@@ -341,8 +419,17 @@ def verdict(visits, gains, cells=None, power=None, major_faults=None):
     regressions = [name for name, label in named if label == 'resolved regression']
     unavailable_declared = [f"{name}@C{cell['concurrency']}" for cell in results for name, row in cell['metrics'].items()
                             if row['declared'] and row['verdict'] == 'unavailable']
-    energy_veto = bool(energies) and all(row['d1'] > 0 and row['d2'] > 0 for row in energies) \
-        and any(row['mean'] > ENERGY_VETO for row in energies)
+    # A veto needs energy in every cell: the candidate is active in each.
+    energies = [cell['energy'] for cell in results]
+    complete = all('mean' in row for row in energies)
+    increases = [row for row in energies if 'mean' in row]
+    consistent = bool(increases) and all(row['d1'] > 0 and row['d2'] > 0 for row in increases) \
+        and any(row['mean'] > ENERGY_VETO for row in increases)
+    energy_veto = complete and consistent
+    energy_note = None
+    if consistent and not complete:
+        missing = ', '.join(f"C{cell['concurrency']}" for cell in results if 'mean' not in cell['energy'])
+        energy_note = f'energy unavailable in {missing}: the increases measured elsewhere are informational'
     timing = compared_timing({name: visits[name].get('host_load') for name in VISITS})
     problems = []
     if visits['A1']['mechanics_only']:
@@ -355,24 +442,26 @@ def verdict(visits, gains, cells=None, power=None, major_faults=None):
             problems.append(f'{name}: major faults not recorded')
         elif faults > MAJOR_FAULT_BUDGET:
             problems.append(f'{name}: {faults} major faults exceed the budget of {MAJOR_FAULT_BUDGET}; rerun the visit')
-    limits = [power_limits(power.get(name)) for name in VISITS]
-    if any(limit is None for limit in limits):
-        problems.append('power limits not recorded for every visit')
-    elif any(limit != limits[0] for limit in limits):
+    problems += power_problems
+    if all(limits[name] is not None for name in VISITS) and any(limits[name] != limits['A1'] for name in VISITS):
         problems.append('power limits changed between visits: the job is void')
     if fresh is None:
         problems.append('server processes not identified')
+    if spans is None:
+        problems.append('visit chronology not recorded')
+    problems += protocol_problems(visits['A1']['profile'])
     decision = ('tradeoff' if resolved_gains and regressions else 'regression' if regressions
                 else 'replace' if resolved_gains else 'no resolved gain')
     return dict(schema=SCHEMA, declared=dict(gains=sorted(gains), cells=declared_cells),
                 visits={name: dict(arm=visits[name]['arm'], seed=visits[name]['profile']['seed'],
                                    run_id=visits[name].get('run_id'), major_faults=major_faults.get(name),
-                                   power_limits=power_limits(power.get(name)))
+                                   power_limits=limits[name], span=spans and spans[name])
                         for name in VISITS},
                 arms=dict(A=visits['A1']['arm'], B=visits['B1']['arm']), mechanics_only=visits['A1']['mechanics_only'],
                 fresh_processes=fresh, host_load=timing, cells=results,
                 resolved_gains=resolved_gains, resolved_regressions=regressions,
-                unavailable_declared=unavailable_declared, energy_veto=energy_veto, decision=decision,
+                unavailable_declared=unavailable_declared, energy_veto=energy_veto, energy_note=energy_note,
+                decision=decision,
                 problems=problems, accepted=decision == 'replace' and not energy_veto and not problems)
 
 

@@ -397,6 +397,13 @@ and the context-parallel stripe rules. [Prefix accuracy](../../docs/numerics.md#
 defines logprob, top-one and acceptance gates; [KV state](../../docs/numerics.md#kv-offload-and-prefix-state)
 defines anchors, offload comparisons and lifetime requirements.
 
+`prefix_exact.py record --ram-hit` is the RAM-hit arm. Its server runs
+`--kv-offload-gib N --kv-offload-prefix on --debug-prefix-ram`, so every hit
+restores an anchor copied back from the host tier. Its record meets the
+GPU-hit arm's gate, drafter acceptance included, and each request that
+reports cached tokens must raise `chop_prefix_cache_ram_hits_total` once,
+as it raises the all-hit counter. Report the two arms' records separately.
+
 ## KV layout equality
 
 A comparison layout storing exactly the values the native KV formats decode

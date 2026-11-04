@@ -487,6 +487,30 @@ class ReportRefusalTests(unittest.TestCase):
                     self.assertIn(str(split_path if group == "rows" else record_path), result.stderr)
 
 
+    def test_a_report_refuses_records_of_both_hit_arms(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            exact = root / "exact.json"
+            ids = list(range(70))
+            exact.write_text(json.dumps({"schema": prefix_exact.prefix_policy()["reference_schema"],
+                                         "texts": [text("a", ids, [-1.0] * 69, ids[1:])]}))
+            main = {"family": "mimo26", "server": serving_server(), "run_id": "test",
+                    "reference_sha256": hashlib.sha256(exact.read_bytes()).hexdigest(),
+                    "block_tokens": 64, "top_logprobs": 5, "positions": [], "prompt_end": [], "detokenized": {}}
+            split = {"family": "mimo26", "server": serving_server(), "rows": [split_row(64, -1.0, -1.0)],
+                     "hit_tier": "ram", "ram_hits": []}
+            (root / "main.json").write_text(json.dumps(main))
+            (root / "split.json").write_text(json.dumps(split))
+            result = subprocess.run([sys.executable, "-B", prefix_exact.__file__, "report", "--exact", str(exact),
+                                     "--record", str(root / "main.json"), "--split-record", str(root / "split.json")],
+                                    capture_output=True, text=True, timeout=30)
+            self.assertEqual(result.returncode, 1, result.stderr)
+            self.assertIn("the records mix the GPU-hit and RAM-hit arms", result.stderr)
+            result = subprocess.run([sys.executable, "-B", prefix_exact.__file__, "report", "--ram-hit",
+                                     "--record", str(root / "main.json")], capture_output=True, text=True, timeout=30)
+            self.assertEqual(result.returncode, 2)
+            self.assertIn("--ram-hit records the RAM-hit arm", result.stderr)
+
     def test_a_slice_report_takes_one_shard_record_alone(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -733,6 +757,17 @@ class CoverageTests(unittest.TestCase):
         self.assertEqual([entry["server"] for entry in merged["inputs"]],
                          [first["server"], second["server"]])
 
+    def test_gpu_hit_and_ram_hit_records_never_merge(self):
+        sections = [prefix_exact.ram_section("positions", dict.fromkeys(prefix_exact.RAM_COUNTERS, 0),
+                                             dict.fromkeys(prefix_exact.RAM_COUNTERS, 1), [64])]
+        first, second = (dict(self.part({name}), hit_tier="ram", ram_hits=sections) for name in ("a", "b"))
+        merged = prefix_exact.merged_records([first, second])
+        self.assertEqual(merged["hit_tier"], "ram")
+        self.assertEqual(merged["ram_hits"], sections * 2)
+        with self.assertRaisesRegex(SystemExit, "hit_tier"):
+            prefix_exact.merged_records([first, self.part({"b"})])
+        self.assertNotIn("ram_hits", prefix_exact.merged_records([self.part({"a"}), self.part({"b"})]))
+
     def test_a_check_run_by_several_records_must_pass_in_each(self):
         merged = prefix_exact.merged_records([
             self.part({"a"}, media={"passed": True}), self.part({"b"}, media={"passed": False})])
@@ -874,6 +909,153 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual(result["totals"]["hit"], {"draft_tokens": 16, "accepted_tokens": 8,
                                                    "rate": 0.5})
         self.assertTrue(result["passed"])
+
+
+class RamServer(FakeServer):
+    """FakeServer behind the forced RAM tier (--debug-prefix-ram): each hit
+    restores an anchor promoted from RAM and counts as the server counts it,
+    except the first `gpu_hits` hits, which stay GPU hits. Without
+    `counters` the server has no host tier."""
+
+    def __init__(self, *args, gpu_hits=0, counters=True, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.counts = dict.fromkeys(prefix_exact.RAM_COUNTERS, 0)
+        self.gpu_hits, self.counters = gpu_hits, counters
+
+    def request(self, path, body=None, stream=False):
+        response, seconds = super().request(path, body, stream)
+        cached = ((response.get("usage") or {}).get("prompt_tokens_details") or {}).get("cached_tokens")
+        if cached:
+            self.counts["hits"] += 1
+            self.counts["reused_tokens"] += cached
+            if self.gpu_hits:
+                self.gpu_hits -= 1
+            else:
+                self.counts["ram_hits"] += 1
+                self.counts["ram_reused_tokens"] += cached
+        return response, seconds
+
+    def metrics(self, client):
+        return super().metrics(client) + ("".join(f"{prefix_exact.RAM_COUNTERS[key]} {value}\n"
+                                                  for key, value in self.counts.items()) if self.counters else "")
+
+
+class RamHitArmTests(unittest.TestCase):
+    ids = list(range(1000, 1200))
+
+    def scored(self, server):
+        entry = text("a", self.ids, [-0.5] * 199, self.ids[1:])
+        ram = []
+        with mock.patch.object(prefix_exact, "metrics_text", server.metrics):
+            rows = prefix_exact.ram_scored(server, ram, "positions", lambda: [
+                prefix_exact.score_position(server, "m", entry, p, anchor, "run")
+                for _, p, anchor in positions([entry])], prefix_exact.scored_cached)
+        return entry, rows, ram
+
+    def test_every_hit_raises_the_ram_hit_counter_once(self):
+        entry, rows, ram = self.scored(RamServer(64, self.ids))
+        self.assertEqual(cache_errors(rows, 64), [])
+        self.assertEqual(ram[0]["hit_requests"], len(rows))
+        self.assertEqual(ram[0]["after"]["ram_hits"] - ram[0]["before"]["ram_hits"], len(rows))
+        self.assertEqual(prefix_exact.ram_errors(ram), [])
+        recorded = {"family": prefix_exact.prefix_policy()["family"], "positions": rows, "prompt_end": [],
+                    "detokenized": {}, "hit_tier": "ram", "ram_hits": ram}
+        reference = {"schema": prefix_exact.prefix_policy()["reference_schema"], "texts": [entry]}
+        result = evaluate(recorded, reference)
+        self.assertTrue(result["checks"]["ram_hits"])
+        self.assertTrue(result["passed"], result["checks"])
+        self.assertEqual(result["hit_tier"], "ram")
+        # The GPU-hit arm's record has no such check.
+        gpu = evaluate({key: value for key, value in recorded.items() if key not in ("hit_tier", "ram_hits")},
+                       reference)
+        self.assertNotIn("ram_hits", gpu["checks"])
+        self.assertNotIn("hit_tier", gpu)
+
+    def test_a_gpu_hit_or_no_hit_fails_the_ram_hit_arm(self):
+        entry, rows, ram = self.scored(RamServer(64, self.ids, gpu_hits=1))
+        self.assertEqual(cache_errors(rows, 64), [])
+        errors = prefix_exact.ram_errors(ram)
+        self.assertEqual(len(errors), 1)
+        self.assertEqual((errors[0]["section"], errors[0]["ram_hits"], errors[0]["hits"]),
+                         ("positions", len(rows) - 1, len(rows)))
+        recorded = {"family": prefix_exact.prefix_policy()["family"], "positions": rows, "prompt_end": [],
+                    "detokenized": {}, "hit_tier": "ram", "ram_hits": ram}
+        result = evaluate(recorded, {"schema": prefix_exact.prefix_policy()["reference_schema"], "texts": [entry]})
+        self.assertFalse(result["checks"]["ram_hits"])
+        self.assertFalse(result["passed"])
+        # Reused tokens that were not RAM ones fail too.
+        tokens = copy.deepcopy(self.scored(RamServer(64, self.ids))[2])
+        tokens[0]["after"]["reused_tokens"] += 1
+        self.assertEqual(len(prefix_exact.ram_errors(tokens)), 1)
+        # An arm that never hit proves nothing; missing evidence is not a pass.
+        idle = [prefix_exact.ram_section("positions", ram[0]["before"], ram[0]["before"], [0, 0])]
+        self.assertEqual(prefix_exact.ram_errors(idle), [{"section": None, "reason": "no request hit"}])
+        self.assertTrue(prefix_exact.ram_errors([]))
+
+    def test_a_server_without_the_host_tier_is_refused(self):
+        server = RamServer(64, self.ids, counters=False)
+        with mock.patch.object(prefix_exact, "metrics_text", server.metrics), \
+                self.assertRaisesRegex(SystemExit, "refused: .*--debug-prefix-ram"):
+            prefix_exact.ram_counters(server)
+
+    def test_acceptance_and_split_hits_are_counted(self):
+        server = RamServer(64, [], granule=64)
+        prompts = [list(range(1000 + index, 1100 + index)) for index in range(2)]
+        ram = []
+        with mock.patch.object(prefix_exact, "acceptance_prompts", return_value=prompts), \
+                mock.patch.object(prefix_exact, "metrics_text", server.metrics):
+            result = prefix_exact.ram_scored(server, ram, "acceptance", lambda: prefix_exact.acceptance_check(
+                server, "m", "run", 2, 8, 64), prefix_exact.acceptance_cached)
+        self.assertTrue(result["passed"])
+        self.assertEqual(ram[0]["hit_requests"], 2)
+        self.assertEqual(prefix_exact.ram_errors(ram), [])
+        rows = [split_row(64, -0.5, -0.5)]
+        prefill = split_row(64, -0.5, -0.5)
+        for arm in ("hit", "control"):
+            prefill[arm] = {key: values[:1] for key, values in prefill[arm].items()}
+        rows[0]["concurrent_prefill"] = prefill
+        self.assertEqual(prefix_exact.scored_cached(rows), [0, 64, 0, 0, 64, 0])
+        section = prefix_exact.ram_section("split", dict.fromkeys(prefix_exact.RAM_COUNTERS, 0),
+                                           dict.fromkeys(prefix_exact.RAM_COUNTERS, 2), prefix_exact.scored_cached(rows))
+        with mock.patch.dict(os.environ, {"CHOPINFER_QUAL_CONFIG": str(declaration.path("qwen38"))}):
+            self.assertTrue(prefix_exact.judged_split({"rows": rows, "hit_tier": "ram", "ram_hits": [section]},
+                                                      64)["passed"])
+            failed = prefix_exact.judged_split({"rows": rows, "hit_tier": "ram", "ram_hits": []}, 64)
+            self.assertFalse(failed["passed"])
+            self.assertTrue(failed["ram_hit_errors"])
+            self.assertNotIn("ram_hit_errors", prefix_exact.judged_split({"rows": rows}, 64))
+
+    def test_the_record_carries_every_scored_sections_ram_evidence(self):
+        server = RamServer(64, self.ids)
+        server.identity = lambda model: {"model": "m"}
+        prompts = [list(range(2000 + index, 2100 + index)) for index in range(2)]
+        exact = {"schema": prefix_exact.prefix_policy()["reference_schema"],
+                 "texts": [text("a", self.ids, [-0.5] * 199, self.ids[1:])]}
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory, "exact.json")
+            path.write_text(json.dumps(exact))
+            args = mock.Mock(exact=str(path), url="http://unused", timeout=1, model=None, skip_media=True,
+                             shard=None, split=None, texts=None, block_tokens=64, stride=1, concurrency=2,
+                             prompt_end_stride=None, acceptance_prompts=2, acceptance_tokens=8,
+                             run_id="ram", ram_hit=True, server_log=None)
+            with mock.patch.object(prefix_exact, "Client", return_value=server), \
+                    mock.patch.object(prefix_exact, "load_exact", return_value=exact), \
+                    mock.patch.object(prefix_exact, "bind_server"), \
+                    mock.patch.object(prefix_exact, "confirm_live"), \
+                    mock.patch.object(prefix_exact, "acceptance_prompts", return_value=prompts), \
+                    mock.patch.object(prefix_exact, "metrics_text", server.metrics), \
+                    mock.patch.object(prefix_exact, "receipt") as receipt, \
+                    self.assertRaises(SystemExit):
+                prefix_exact.record(args)
+        recorded = receipt.call_args.args[2]
+        self.assertEqual(recorded["hit_tier"], "ram")
+        self.assertEqual([section["section"] for section in recorded["ram_hits"]],
+                         ["positions", "prompt_end", "acceptance"])
+        self.assertEqual(recorded["ram_hit_errors"], [])
+        self.assertTrue(recorded["checks"]["ram_hits"])
+        self.assertTrue(recorded["checks"]["hit_equals_cold"])
+        self.assertTrue(recorded["acceptance"]["passed"])
+        self.assertEqual(sum(section["hit_requests"] for section in recorded["ram_hits"]), server.counts["ram_hits"])
 
 
 class PromptLogprobPrimerTests(unittest.TestCase):

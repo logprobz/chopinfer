@@ -101,6 +101,18 @@ hits and chunk sizes on every run; this tool covers every page boundary of
 the reference, off-page primer ends whose prompt-end anchors are rounded
 down to the prefill granule, media keys and drafter acceptance.
 
+`record --ram-hit` records the RAM-hit arm against a server started with
+`--kv-offload-gib N --kv-offload-prefix on --debug-prefix-ram`, whose forced
+mode demotes every public capture to the host tier and drops its GPU anchor,
+so every hit restores an anchor copied back from RAM. The record is the
+GPU-hit arm's, judged the same way (hit rows bitwise equal to cold, the
+anchor rules' cached tokens, the drafter acceptance bound), and also
+`ram_hits`: around the scored positions, the acceptance check and a split
+record, the server's `chop_prefix_cache_ram_hits_total` must rise once for
+each request that reported cached tokens, as its all-hit counter does, and
+its reused tokens must all be RAM ones. Records of the two arms never
+merge in `report`.
+
 `record --split N --prompt-logprob-primer` adds the scored-producer pairing:
 the primer requests prompt logprobs, while its hit and cold control do not.
 Scoring disables guaranteed-grid prompt ends, so expected hits use the
@@ -146,6 +158,12 @@ SPLIT_TOKENS = 4
 # Acceptance after hits may trail cold acceptance by two binomial standard
 # errors, or by this much when there are few drafts.
 ACCEPTANCE_MARGIN = 0.02
+# The RAM-hit arm's counters (record --ram-hit): every prefix-cache hit and
+# RAM hit, and the tokens they reused.
+RAM_COUNTERS = {"hits": "chop_prefix_cache_hits_total",
+                "reused_tokens": "chop_prefix_cache_reused_tokens_total",
+                "ram_hits": "chop_prefix_cache_ram_hits_total",
+                "ram_reused_tokens": "chop_prefix_cache_ram_reused_tokens_total"}
 
 
 def positions(texts, block=BLOCK_TOKENS, stride=1):
@@ -579,6 +597,65 @@ def counter(text, name):
                if line.startswith((name + " ", name + "{")))
 
 
+def ram_counters(client):
+    """RAM_COUNTERS in one /metrics scrape. A server that exposes no RAM hit
+    counter has no host prefix tier, so the RAM-hit arm refuses it."""
+    text = metrics_text(client)
+    values = {}
+    for key, name in RAM_COUNTERS.items():
+        if not any(line.startswith((name + " ", name + "{")) for line in text.splitlines()):
+            raise SystemExit(f"refused: the server exposes no {name}; record --ram-hit needs a server started "
+                             "with --kv-offload-gib N --kv-offload-prefix on --debug-prefix-ram")
+        values[key] = counter(text, name)
+    return values
+
+
+def ram_section(name, before, after, cached):
+    """One scored section's RAM-hit evidence: the counters around it and how
+    many of its requests reported cached tokens (`cached`, every request's)."""
+    return {"section": name, "before": before, "after": after,
+            "hit_requests": sum(1 for tokens in cached if tokens)}
+
+
+def ram_errors(sections):
+    """The RAM-hit arm's failures: a section whose counters did not rise once
+    for each request that reported cached tokens in both the RAM and the
+    all-hit counter, or that reused tokens other than RAM ones; or an arm
+    in which no request hit at all."""
+    errors = []
+    for section in sections:
+        delta = {key: section["after"][key] - section["before"][key] for key in RAM_COUNTERS}
+        if not delta["ram_hits"] == delta["hits"] == section["hit_requests"] \
+                or delta["ram_reused_tokens"] != delta["reused_tokens"]:
+            errors.append({"section": section["section"], "hit_requests": section["hit_requests"], **delta})
+    if not any(section["hit_requests"] for section in sections):
+        errors.append({"section": None, "reason": "no request hit"})
+    return errors
+
+
+def ram_scored(client, ram, name, score, cached):
+    """score(), with its RAM-hit evidence appended to `ram` when the arm is
+    the RAM-hit arm (`ram` a list, else None); `cached` lists the cached
+    tokens of every request in score()'s result."""
+    before = ram_counters(client) if ram is not None else None
+    result = score()
+    if ram is not None:
+        ram.append(ram_section(name, before, ram_counters(client), cached(result)))
+    return result
+
+
+def scored_cached(rows):
+    """The cached tokens of every request of scored main, prompt-end or split
+    rows, a split row's concurrent prefill pass included."""
+    return [tokens for row in rows for tokens in (*row["cached"].values(),
+                                                  *scored_cached([row["concurrent_prefill"]]
+                                                                 if "concurrent_prefill" in row else []))]
+
+
+def acceptance_cached(result):
+    return [run[arm]["cached_tokens"] for run in result["runs"] for arm in ARMS]
+
+
 def media_cases(client, model, run_id, reuse):
     """Each media pair's prompts, with the text after the image grown until
     both prompts span two units of `reuse` tokens past the media start: a
@@ -870,6 +947,9 @@ def evaluate(recorded, exact):
         checks["media"] = recorded["media"]["passed"]
     if recorded.get("acceptance") is not None:
         checks["acceptance"] = recorded["acceptance"]["passed"]
+    if recorded.get("hit_tier") == "ram":
+        result.update(hit_tier="ram", ram_hit_errors=ram_errors(recorded.get("ram_hits") or []))
+        checks["ram_hits"] = not result["ram_hit_errors"]
     return {"passed": all(checks.values()), "checks": checks, "reuse_tokens": reuse, "cache_errors": errors,
             "scores": scores, **result}
 
@@ -895,10 +975,13 @@ def record_split(args, client, server, model, exact):
     entries = split_positions([ids for _, ids in prompts], args.split,
                               max_anchors=args.split_max_anchors)
     scored_primer = args.prompt_logprob_primer
-    rows = score_split_passes(client, model, prompts, entries, args.run_id, args.concurrency,
-                             prompt_logprob_primer=scored_primer)
+    ram = [] if args.ram_hit else None
+    rows = ram_scored(client, ram, "split", lambda: score_split_passes(
+        client, model, prompts, entries, args.run_id, args.concurrency,
+        prompt_logprob_primer=scored_primer), scored_cached)
     reuse = reuse_tokens(server)
-    summary = summarize_split(rows, reuse, prompt_logprob_primer=scored_primer)
+    recorded = {"hit_tier": "ram", "ram_hits": ram} if ram is not None else {}
+    summary = judged_split({**recorded, "rows": rows, "prompt_logprob_primer": scored_primer}, reuse)
     confirm_live(client, server)
     # Its per-request seconds are diagnostics of an accuracy check, not timing evidence, so no host load
     # samples bound them and the receipt's timing reads informational.
@@ -907,8 +990,18 @@ def record_split(args, client, server, model, exact):
         "prompt_logprob_primer": scored_primer,
         "prefill_concurrency": args.concurrency, "continuation_concurrency": 1,
         "family": prefix_policy()["family"],
-        "prompts": {name: len(ids) for name, ids in prompts}, "rows": rows, **summary})
+        "prompts": {name: len(ids) for name, ids in prompts}, **recorded, "rows": rows, **summary})
     raise SystemExit(0 if summary["passed"] else 1)
+
+
+def judged_split(split, reuse):
+    """summarize_split of a split record, which on the RAM-hit arm also
+    needs its hits to be RAM hits (`ram_errors`)."""
+    summary = summarize_split(split["rows"], reuse, prompt_logprob_primer=split.get("prompt_logprob_primer", False))
+    if split.get("hit_tier") == "ram":
+        summary["ram_hit_errors"] = ram_errors(split.get("ram_hits") or [])
+        summary["passed"] = summary["passed"] and not summary["ram_hit_errors"]
+    return summary
 
 
 def bind_server(args, server):
@@ -1036,7 +1129,7 @@ def merged_records(records):
         if None in counts or len(counts) != 1 or sorted(shard["index"] for shard in shards) != \
                 list(range(1, counts.pop() + 1)):
             raise SystemExit("shard records must be every shard of one count, once each")
-    for key in ("family", "reference_sha256", "block_tokens", "reuse_tokens", "top_logprobs"):
+    for key in ("family", "reference_sha256", "block_tokens", "reuse_tokens", "top_logprobs", "hit_tier"):
         if any(value.get(key) != first.get(key) for value in records):
             raise SystemExit(f"the records differ in {key}")
     merged = {**first, "shard": None, "serving_identity": identity, "inputs": input_provenance(records),
@@ -1045,6 +1138,8 @@ def merged_records(records):
               "prompt_end": [row for value in records for row in value.get("prompt_end") or []],
               "detokenized": {key: text for value in records
                               for key, text in value["detokenized"].items()}}
+    if first.get("hit_tier") == "ram":
+        merged["ram_hits"] = [section for value in records for section in value.get("ram_hits") or []]
     for name in ("media", "acceptance"):
         ran = [value[name] for value in records if value.get(name) is not None]
         if name == "media" and ran and all(row.get("status") == "not_applicable" for row in ran):
@@ -1080,13 +1175,17 @@ def record(args):
     media_prompts = media_cases(client, model, args.run_id, reuse) if media and not media_reason else None
     texts = [text for text in exact["texts"]
              if not args.texts or text["name"] in args.texts.split(",")]
-    scored = scored_concurrently(args.concurrency, lambda entry: score_position(
-        client, model, *entry, args.run_id), select(positions(texts, args.block_tokens, args.stride)))
+    # The RAM-hit arm's evidence, one entry per scored section.
+    ram = [] if args.ram_hit else None
+    scored = ram_scored(client, ram, "positions", lambda: scored_concurrently(
+        args.concurrency, lambda entry: score_position(client, model, *entry, args.run_id),
+        select(positions(texts, args.block_tokens, args.stride))), scored_cached)
     prompt_end_stride = (args.stride if policy["prompt_end"] else 0) if args.prompt_end_stride is None \
         else args.prompt_end_stride
-    prompt_end = scored_concurrently(args.concurrency, lambda entry: score_prompt_end(
-        client, model, *entry, args.run_id),
-        select(prompt_end_positions(texts, args.block_tokens, prompt_end_stride)) if prompt_end_stride else [])
+    prompt_end = ram_scored(client, ram, "prompt_end", lambda: scored_concurrently(
+        args.concurrency, lambda entry: score_prompt_end(client, model, *entry, args.run_id),
+        select(prompt_end_positions(texts, args.block_tokens, prompt_end_stride)) if prompt_end_stride else []),
+        scored_cached)
     top1_ids = [token for text in texts for token in text["exact"]["top1"]]
     acceptance = args.acceptance_prompts > 0 and policy["acceptance"]
     recorded = {
@@ -1098,8 +1197,11 @@ def record(args):
         "detokenized": detokenized(client, model, top1_ids),
         "media": ({"kind": "image", "status": "not_applicable", "passed": None, "reason": media_reason}
                   if media_reason else media_check(client, model, args.run_id, reuse, media_prompts) if media else None),
-        "acceptance": acceptance_check(client, model, args.run_id, args.acceptance_prompts,
-                                       args.acceptance_tokens, reuse) if acceptance else None}
+        "acceptance": ram_scored(client, ram, "acceptance", lambda: acceptance_check(
+            client, model, args.run_id, args.acceptance_prompts, args.acceptance_tokens, reuse),
+            acceptance_cached) if acceptance else None}
+    if ram is not None:
+        recorded.update(hit_tier="ram", ram_hits=ram)
     recorded["server"] = server
     result = evaluate(recorded, exact)
     if media_reason:
@@ -1137,6 +1239,8 @@ def report(args):
     if any(value["reference_sha256"] != digest for value in records):
         raise SystemExit("the record was scored against a different exact reference")
     split_records = [load_record(split, ("rows",)) for split in args.split_record]
+    if len({value.get("hit_tier") for value in (*records, *split_records)}) > 1:
+        raise SystemExit("the records mix the GPU-hit and RAM-hit arms")
     if verify_exact.pins_exact(path) and not all(bound_live(value.get("server", {}))
                                                  for value in (*records, *split_records)):
         raise SystemExit("a record's server was not bound live to the pinned checkpoint")
@@ -1157,9 +1261,7 @@ def report(args):
     if split_records:
         for split in split_records:
             validate_policy(exact, split)
-        splits = [summarize_split(split["rows"], record_reuse(split),
-                                 prompt_logprob_primer=split.get("prompt_logprob_primer", False))
-                  for split in split_records]
+        splits = [judged_split(split, record_reuse(split)) for split in split_records]
         result = {"main": result, "splits": splits,
                   "passed": result["passed"] and all(split["passed"] for split in splits)}
     if unpinned(path):
@@ -1226,6 +1328,9 @@ def main():
                         help="record: the server's startup log; when given, it must be the live server's")
     parser.add_argument("--split", type=int,
                         help="record: only the split receipt, with anchors every this many tokens")
+    parser.add_argument("--ram-hit", action="store_true",
+                        help="record: the RAM-hit arm, on a server started with --kv-offload-gib N "
+                             "--kv-offload-prefix on --debug-prefix-ram; every hit must be a RAM hit")
     parser.add_argument("--prompt-logprob-primer", action="store_true",
                         help="record --split: score the producer prompt, then compare its "
                              "unscored hit bitwise with cold (including every continuation row)")
@@ -1238,6 +1343,8 @@ def main():
     args = parser.parse_args()
     if args.prompt_logprob_primer and (args.command != "record" or not args.split):
         parser.error("--prompt-logprob-primer requires record --split")
+    if args.ram_hit and args.command != "record":
+        parser.error("--ram-hit records the RAM-hit arm; report reads it from the records")
     if args.command == "report":
         if not args.record:
             parser.error("report needs --record")

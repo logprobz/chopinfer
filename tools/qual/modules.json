@@ -325,6 +325,7 @@
    "MEDIA_TEXT_TOKENS": "int",
    "PREFILL_CHUNK_TOKENS": "int",
    "PROMPT_END_ARMS": "list",
+   "RAM_COUNTERS": "dict",
    "SPLIT_DELTAS": "number",
    "SPLIT_TOKENS": "int",
    "TOP_LOGPROBS": "int"

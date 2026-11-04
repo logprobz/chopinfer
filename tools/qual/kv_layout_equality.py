@@ -107,6 +107,8 @@ REQUEST_FIELDS = ("path", "body_sha256", "primer", "prompt_tokens", "cached_toke
 # The capture.json fields of a step that name its process or follow its KV
 # layout (the declared taps and their bytes).
 PROCESS_STEP_FIELDS = ("capture_id", "producer", "expected", "tensor_bytes")
+# The fields of a declared tap its index entry must hold, as tapdiff checks.
+DESCRIPTOR_FIELDS = ("dtype", "cols", "first_row", "rows")
 # A KV-state tap of a KV step: layer, plane, and a layout's raw stored part.
 KV_TAP = r"L(\d+)\.x\.kv\.([a-z0-9_]+)(?:\.(codes|scales))?"
 TAP_BYTES = {"bf16": 2, "f32": 4, "f64": 8, "u32": 4, "u8": 1}
@@ -302,6 +304,13 @@ class Step:
             raise tap_binding.Unbound(f"{directory} is incomplete: {completion.get('reason')}")
         if not empty and (len(set(stored)) != len(stored) or sorted(stored) != sorted(declared)):
             raise tap_binding.Unbound(f"{directory}: index.jsonl holds other taps than capture.json expects")
+        descriptors = {(entry["name"], entry.get("rank", 0)): entry for entry in capture.get("expected") or []}
+        for entry in self.index:
+            declared = descriptors[(entry["name"], entry["rank"])]
+            for field in DESCRIPTOR_FIELDS:
+                if not same(entry.get(field), declared.get(field)):
+                    raise tap_binding.Unbound(f"{directory}: {entry['name']} rank {entry['rank']} has {field} "
+                                              f"{entry.get(field)!r}; capture.json declares {declared.get(field)!r}")
         self.kv = items.get("kv")
         named = copy.deepcopy(items)
         self.positions, self.encoder = {}, {}

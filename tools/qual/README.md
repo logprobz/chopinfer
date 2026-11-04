@@ -474,8 +474,9 @@ identity and the KV layout fields: each `kv_cache_dtype` must be `bf16`,
 `fp8` or `mixed`, `kv_cache_planes` must be present exactly when it is
 `mixed`, the native planes must equal PLANES, and the comparison arm must
 report none.
-It also refuses a row no position or item names, and a comparison that
-compared no text rows or no KV-state rows of a plane or phase (a restore
+It also refuses a row no position or item names, an index entry whose
+dtype, columns or rows differ from the step's `capture.json` declaration,
+and a comparison that compared no text rows or no KV-state rows of a plane or phase (a restore
 when the captures hold a prefix-hit pair). Experimental captures compare
 only with `--experimental` and never qualify.
 

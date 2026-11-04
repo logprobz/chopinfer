@@ -509,6 +509,26 @@ class TapsTests(unittest.TestCase):
                                                             "names engine request True, not an integer ID"):
                 self.compare(comparison=boolean(self.capture("bf16", name), manifest_too))
 
+    def test_index_entries_must_match_their_declared_descriptors(self):
+        # The comparison's first window readback declares its first tap with
+        # another descriptor field than its index holds, or none.
+        for field, value in (("dtype", "u8"), ("cols", 999), ("first_row", 1), ("rows", 999), ("rows", 4.0),
+                             ("cols", None)):
+            with self.subTest(field=field, value=value):
+                root = self.capture("bf16", f"descriptor-{field}-{value}")
+                path = root / tap_binding.STEPS / "step0001" / "capture.json"
+                capture = json.loads(path.read_text())
+                declared = capture["expected"][0]
+                if value is None:
+                    declared.pop(field)
+                else:
+                    declared[field] = value
+                path.write_text(json.dumps(capture))
+                with self.assertRaisesRegex(tap_binding.Unbound,
+                                            rf"step0001: {re.escape(declared['name'])} rank 0 has {field} "
+                                            rf"\S+; capture\.json declares {re.escape(repr(value))}$"):
+                    self.compare(comparison=reseal(root))
+
     def test_logical_kv_values_must_be_bf16_rows(self):
         # Both captures declare L00.x.kv.window rank 0 of the primer's first
         # window readback F32, each row its BF16 bytes followed by others.

@@ -395,7 +395,10 @@ impl KvPool {
         if ram.entries.contains_key(&key) {
             ram.invalidations.entry(key).or_insert(reason);
         }
-        for (_, pending) in ram.pending.range_mut(PendingAnchorId::of(key)) {
+        for (_, pending) in ram
+            .pending
+            .range_mut(PendingAnchorId::of(key, 0..=u64::MAX))
+        {
             pending.invalidation.get_or_insert(reason);
         }
     }

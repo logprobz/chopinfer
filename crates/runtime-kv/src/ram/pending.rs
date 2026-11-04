@@ -6,6 +6,7 @@
 //! entry's host eviction, and a logical event on the key invalidates it as
 //! it does the entry.
 use std::ops::RangeInclusive;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use super::PrefixRam;
 use crate::ancestry::{PrefixAncestry, PrefixTier};
@@ -14,12 +15,17 @@ use crate::{
     PrefixChainV1, PrefixEvictionTierV1, PrefixHostInvalidationV1,
 };
 
-/// Names a pending anchor: the key it promotes and the serial of the host
-/// entry it copies. An entry has at most one pending anchor at a time.
+static NEXT_GENERATION: AtomicU64 = AtomicU64::new(1);
+
+/// Names one pending anchor: the key it promotes, the serial of the host
+/// entry it copies, and a generation no other pending anchor in the process
+/// shares, so a retry of the same entry never answers to an earlier
+/// attempt's id. An entry has at most one pending anchor at a time.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct PendingAnchorId {
     key: PrefixCacheKeyV1,
     serial: u64,
+    generation: u64,
 }
 
 impl PendingAnchorId {
@@ -34,11 +40,16 @@ impl PendingAnchorId {
         self.serial
     }
 
-    /// Every pending anchor of `key`.
-    pub(super) fn of(key: PrefixCacheKeyV1) -> RangeInclusive<Self> {
-        Self { key, serial: 0 }..=Self {
+    /// Every pending anchor of `key` whose entry serial is in `serials`.
+    pub(super) fn of(key: PrefixCacheKeyV1, serials: RangeInclusive<u64>) -> RangeInclusive<Self> {
+        Self {
             key,
-            serial: u64::MAX,
+            serial: *serials.start(),
+            generation: 0,
+        }..=Self {
+            key,
+            serial: *serials.end(),
+            generation: u64::MAX,
         }
     }
 }
@@ -112,11 +123,14 @@ impl KvPool {
             .get(&key)
             .filter(|entry| entry.ready && !ram.invalidations.contains_key(&key))
             .ok_or(KvError::StaleHandle)?;
-        let id = PendingAnchorId {
-            key,
-            serial: entry.serial,
-        };
-        if ram.pending.contains_key(&id) || self.anchors.contains_key(&key) {
+        let serial = entry.serial;
+        if ram
+            .pending
+            .range(PendingAnchorId::of(key, serial..=serial))
+            .next()
+            .is_some()
+            || self.anchors.contains_key(&key)
+        {
             return Err(KvError::StaleHandle);
         }
         let (chain, tokens) = (entry.chain, entry.tokens);
@@ -134,6 +148,14 @@ impl KvPool {
                 free,
             });
         }
+        let generation = NEXT_GENERATION
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_add(1))
+            .map_err(|_| KvError::SequenceGenerationExhausted)?;
+        let id = PendingAnchorId {
+            key,
+            serial,
+            generation,
+        };
         self.evict_anchors_for(total);
         if total > self.free_blocks.len() {
             return Err(KvError::PoolExhausted {
@@ -390,7 +412,12 @@ impl KvPool {
         ram: &PrefixRam,
         index: &PrefixAncestry,
     ) -> Result<(), KvError> {
+        let mut previous = None;
         for (id, pending) in &ram.pending {
+            // One pending anchor per entry.
+            if previous.replace((id.key, id.serial)) == Some((id.key, id.serial)) {
+                return Err(KvError::InvariantViolation);
+            }
             let usable = pending.invalidation.is_none();
             let copying = u32::from(matches!(pending.copy, PrefixPendingCopyV1::InFlight(_)));
             let entry = ram
@@ -630,8 +657,8 @@ mod tests {
                 pending.copy = PrefixPendingCopyV1::Waiting;
                 pool.ram.as_mut().unwrap().pending.insert(
                     PendingAnchorId {
-                        key: id.key,
                         serial: u64::MAX,
+                        ..id
                     },
                     pending,
                 );

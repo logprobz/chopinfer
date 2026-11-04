@@ -76,6 +76,8 @@ struct Tiers {
     copies: BTreeMap<KvTransferId, KvTransferSubmission>,
     /// The prompt and tokens of every public key captured.
     keys: BTreeMap<PrefixCacheKeyV1, (PrefixChainV1, usize)>,
+    /// Pending anchors published or abandoned, whose ids must stay dead.
+    retired: Vec<PendingAnchorId>,
 }
 
 impl Tiers {
@@ -88,6 +90,7 @@ impl Tiers {
             host: BTreeMap::new(),
             copies: BTreeMap::new(),
             keys: BTreeMap::new(),
+            retired: Vec::new(),
         };
         tiers.check();
         tiers
@@ -112,11 +115,15 @@ impl Tiers {
         self.pool.stats().free_blocks()
     }
 
-    /// Both audits, and the bytes of every GPU anchor and every ready,
-    /// usable host entry of a captured key.
+    /// Both audits, no retired pending anchor id answering, and the bytes
+    /// of every GPU anchor and every ready, usable host entry of a captured
+    /// key.
     fn check(&self) {
         self.pool.audit().unwrap();
         self.tier.audit(&self.pool).unwrap();
+        for id in &self.retired {
+            assert_eq!(self.pool.pending_anchor(*id), None, "retired {id:?}");
+        }
         for (key, (prompt, tokens)) in &self.keys {
             if let Some((held, blocks, state)) = self.pool.anchor_pages(*key) {
                 assert_eq!(held, *tokens);
@@ -280,8 +287,7 @@ impl Tiers {
                 Ok((pending, self.submit(plan)))
             }
             Err(error) => {
-                self.pool.abandon_pending_anchor(pending).unwrap();
-                self.check();
+                self.abandon(pending);
                 Err(error)
             }
         }
@@ -290,12 +296,34 @@ impl Tiers {
     fn publish(&mut self, pending: PendingAnchorId) -> PrefixPublishV1 {
         let prompt = self.keys[&pending.key()].0.clone();
         let outcome = self.pool.publish_pending_anchor(pending, &prompt).unwrap();
+        self.retired.push(pending);
         self.check();
         outcome
     }
 
     fn abandon(&mut self, pending: PendingAnchorId) {
         self.pool.abandon_pending_anchor(pending).unwrap();
+        self.retired.push(pending);
+        self.check();
+    }
+
+    /// A retired attempt's id answers to nothing: a lookup, an abandon, a
+    /// publish and a promotion all refuse it.
+    fn assert_retired(&mut self, id: PendingAnchorId) {
+        let prompt = self.keys[&id.key()].0.clone();
+        assert_eq!(self.pool.pending_anchor(id), None);
+        assert_eq!(
+            self.pool.abandon_pending_anchor(id),
+            Err(KvError::StaleHandle)
+        );
+        assert_eq!(
+            self.pool.publish_pending_anchor(id, &prompt),
+            Err(KvError::StaleHandle)
+        );
+        assert_eq!(
+            self.tier.begin_promotion(&mut self.pool, id).map(|_| ()),
+            Err(KvError::StaleHandle)
+        );
         self.check();
     }
 
@@ -589,6 +617,40 @@ fn a_shared_tail_appended_in_place_is_copied_again_by_a_new_demotion() {
 }
 
 #[test]
+fn a_retried_promotion_never_answers_to_an_earlier_attempts_id() {
+    let prompt = counting(9, 12);
+    let key = prompt.key_at(8).unwrap();
+    let mut tiers = Tiers::ram(32, 16);
+    tiers.capture_prompt(&prompt, &[8]);
+    tiers.move_to_host(key);
+    // An abandoned attempt, then a retry of the same entry.
+    let first = tiers.pool.create_pending_anchor(key, STATE).unwrap();
+    tiers.abandon(first);
+    let second = tiers.pool.create_pending_anchor(key, STATE).unwrap();
+    assert_ne!(first, second);
+    assert_eq!(
+        (first.key(), first.serial()),
+        (second.key(), second.serial())
+    );
+    tiers.assert_retired(first);
+    // A failed copy, then a retry that succeeds.
+    let plan = tiers.tier.begin_promotion(&mut tiers.pool, second).unwrap();
+    let copy = tiers.submit(plan);
+    tiers.complete(copy, KvTransferStatus::FailedIdle);
+    assert_eq!(tiers.publish(second), PrefixPublishV1::NotCopied);
+    let (third, copy) = tiers.promote(key).unwrap();
+    for retired in [first, second] {
+        tiers.assert_retired(retired);
+    }
+    tiers.complete(copy, KvTransferStatus::Complete);
+    tiers.assert_retired(second);
+    assert_eq!(tiers.publish(third), PrefixPublishV1::Published);
+    for retired in [first, second, third] {
+        tiers.assert_retired(retired);
+    }
+}
+
+#[test]
 fn followers_wait_on_one_promotion_and_then_resume_its_anchor() {
     let prompt = counting(7, 12);
     let key = prompt.key_at(8).unwrap();
@@ -771,8 +833,8 @@ const OPERATIONS: usize = 600;
 const DEPTHS: [usize; 8] = [4, 6, 8, 10, 12, 16, 20, 24];
 
 /// Operations by weight: the tier's own operations come up most.
-const OPERATION_WEIGHTS: [usize; 22] = [
-    0, 0, 1, 2, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 6, 6, 7, 8, 9, 10, 11, 12,
+const OPERATION_WEIGHTS: [usize; 24] = [
+    0, 0, 1, 2, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 6, 6, 7, 8, 9, 10, 11, 12, 14, 14,
 ];
 
 /// Six roots, each a trunk and two branches leaving it at 8 and 12.
@@ -792,12 +854,13 @@ fn prompts() -> Vec<PrefixChainV1> {
 /// Random operations on both tiers: requests that resume or start cold and
 /// capture, appends to live sequences, demotions, promotions and their
 /// publish or abandon, copy completions of every status, host drops, GPU
-/// removals, allocation pressure, owned swaps and touches. Seeds cycle
-/// through tier order and forced mode.
+/// removals, allocation pressure, owned swaps, touches, and calls with the
+/// ids of earlier promotion attempts. Seeds cycle through tier order and
+/// forced mode.
 #[test]
 fn a_seeded_model_check_of_both_tiers() {
     let prompts = prompts();
-    let (mut demoted, mut promoted, mut published) = (0usize, 0usize, 0usize);
+    let (mut demoted, mut promoted, mut published, mut probed) = (0usize, 0usize, 0usize, 0usize);
     for seed in 0..SEEDS {
         let mut rng = Rng(seed);
         let (ordered, forced) = (seed % 2 == 1, seed % 4 >= 2);
@@ -1022,6 +1085,13 @@ fn a_seeded_model_check_of_both_tiers() {
                         tiers.release(touched);
                     }
                 }
+                14 if !tiers.retired.is_empty() => {
+                    // An earlier attempt's id, perhaps of an entry promoted
+                    // again since.
+                    let retired = tiers.retired[rng.below(tiers.retired.len())];
+                    tiers.assert_retired(retired);
+                    probed += 1;
+                }
                 _ => {}
             }
             assert_eq!(
@@ -1059,7 +1129,10 @@ fn a_seeded_model_check_of_both_tiers() {
         }
     }
     // The seeds reach every path, not only its refusals.
-    eprintln!("{demoted} demotions, {promoted} promotions, {published} publishes");
+    eprintln!(
+        "{demoted} demotions, {promoted} promotions, {published} publishes, \
+         {probed} retired ids probed"
+    );
     assert!(
         demoted > 4 * SEEDS as usize && published > 4 * SEEDS as usize,
         "{demoted} demotions, {published} publishes"

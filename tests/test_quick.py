@@ -529,7 +529,10 @@ class CheckInputs(unittest.TestCase):
                                    'ROOT = Path(__file__).resolve().parents[2]\n'
                                    'for path in HERE.glob("*.py"):\n    ast.parse(path.read_text())\n'
                                    'for path in (ROOT / "fixtures" / "listed").rglob("*.py"):\n    pass\n'
-                                   'for path in (output / "fixtures").rglob("*.py"):\n    pass\n',
+                                   'for path in (output / "fixtures").rglob("*.py"):\n    pass\n'
+                                   'def scratch(ROOT):\n    return ROOT.rglob("*.py")\n',
+        "tools/listing/rebinding.py": 'from pathlib import Path\nROOT = Path(__file__).resolve().parents[2]\n'
+                                      'def staged(output):\n    ROOT = output\n    return ROOT.rglob("*.py")\n',
         "tools/listing/listed.py": "import tools.unlisted\n",
         "tools/unlisted.py": "",
         "fixtures/listed/deep/case.py": "",
@@ -609,9 +612,12 @@ class CheckInputs(unittest.TestCase):
         # Python included, and a file added where a listing looks.
         for path in ("tools/listing/listed.py", "tools/listing/added.py", "fixtures/listed/deep/case.py"):
             self.assertTrue(inputs.covers(path), path)
-        # Listed, not scanned in turn; a directory joined to an unknown name is not listed.
+        # Listed, not scanned in turn; a directory joined to an unknown name, or named by a
+        # parameter or local that shadows a module-level name, is not listed.
         for path in ("tools/unlisted.py", "fixtures/other/case.py"):
             self.assertFalse(inputs.covers(path), path)
+        rebinding = self.scanner().inputs(["python3", "-B", "tools/listing/rebinding.py"])
+        self.assertFalse(rebinding.covers("fixtures/other/case.py"))
 
     def test_the_model_inventory_check_covers_the_ci_modules_its_tests_load(self):
         import cpu

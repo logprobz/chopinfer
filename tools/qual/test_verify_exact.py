@@ -10,6 +10,7 @@ import io
 import json
 import os
 from pathlib import Path
+import random
 import sys
 import tempfile
 import unittest
@@ -106,6 +107,63 @@ class RowLabelTests(unittest.TestCase):
         self.assertEqual([(label["row"], label.get("drafts")) for label in labels],
                          [("prefill", None), ("verify", 1), ("verify", 1),
                           ("verify", 1), ("verify", 1)])
+
+
+def quadratic_agreed_continuations(texts, ids):
+    """The definition agreed_continuations computes in linear time: for each
+    history length h, the tokens after ids[:h] every reference longer than h
+    that starts with ids[:h] agrees on."""
+    agreed = []
+    for h in range(len(ids)):
+        matches = [text["prompt_token_ids"] for text in texts
+                   if len(text["prompt_token_ids"]) > h and text["prompt_token_ids"][:h] == ids[:h]]
+        length = len(ids) - h
+        for other in matches:
+            same = 0
+            while same < length and h + same < len(other) and other[h + same] == ids[h + same]:
+                same += 1
+            length = min(length, same)
+        agreed.append(length)
+    return agreed
+
+
+class AgreementTests(unittest.TestCase):
+    def check(self, references, ids):
+        texts = [{"prompt_token_ids": list(reference)} for reference in references]
+        self.assertEqual(agreed_continuations(texts, list(ids)), quadratic_agreed_continuations(texts, list(ids)),
+                         (references, ids))
+
+    def test_the_linear_sweep_returns_what_the_definition_does(self):
+        cases = [
+            ([], []), ([[]], []), ([], [1, 2]), ([[1, 2]], []),
+            ([[5]], [5]), ([[5]], [6]), ([[5], [6]], [5]),
+            ([[1, 2, 3]], [1, 2, 3]), ([[1, 2, 3], [1, 2, 3]], [1, 2, 3]),
+            ([[1, 2, 3], [9, 2, 3]], [1, 2, 3]), ([[1, 2, 3], [1, 2, 9]], [1, 2, 3]),
+            ([[1, 2, 3], [1, 2]], [1, 2, 3]), ([[1, 2, 3], [1]], [1, 2, 3]),
+            ([[1, 2, 3, 4], [1, 2, 3, 4, 5]], [1, 2, 3, 4]), ([[1, 2]], [1, 2, 3]),
+            ([[7, 7, 7, 7], [7, 7, 7], [7, 7, 8]], [7, 7, 7, 7]), ([[0, 0, 0, 0, 0]], [0, 0, 0, 0, 0])]
+        for references, ids in cases:
+            for chosen in ([*references, ids], references):
+                self.check(chosen, ids)
+        generator = random.Random(20261104)
+        for _ in range(3000):
+            alphabet = generator.randint(1, 4)
+            base = [generator.randrange(alphabet) for _ in range(generator.randint(0, 14))]
+            references = []
+            for _ in range(generator.randint(0, 5)):
+                cut = generator.randint(0, len(base))
+                tail = [generator.randrange(alphabet) for _ in range(generator.randint(0, 6))]
+                references.append(base[:cut] + tail)
+            ids = generator.choice(references) if references and generator.random() < 0.8 else base
+            self.check(references + ([ids] if generator.random() < 0.7 else []), ids)
+
+    def test_a_long_history_is_swept_in_linear_time(self):
+        long = list(range(131072))
+        texts = [{"prompt_token_ids": long}, {"prompt_token_ids": long[:3574] + [-1] * 522}]
+        agreed = agreed_continuations(texts, long)
+        self.assertEqual(agreed[:3575], [3574 - h for h in range(3575)])
+        self.assertEqual(agreed[130048], 131072 - 130048)
+        self.assertEqual(agreed[-1], 1)
 
 
 class TopOneTests(unittest.TestCase):

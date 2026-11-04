@@ -147,20 +147,37 @@ def row_labels(k, count, available=None):
     return labels
 
 
+def common_prefix(left, right):
+    """The length of the longest common prefix of two token lists."""
+    length = 0
+    for a, b in zip(left, right):
+        if a != b:
+            break
+        length += 1
+    return length
+
+
 def agreed_continuations(texts, ids):
     """For each history length h, the reference tokens after ids[:h] on which
-    every reference that starts with ids[:h] agrees (the host drafter's reach)."""
-    agreed = []
+    every reference that starts with ids[:h] agrees (the host drafter's reach).
+
+    A reference longer than h starts with ids[:h] exactly when its common
+    prefix p with ids is at least h, and then agrees on p - h tokens after
+    it. So agreed[h] is the least such p, less h (at most len(ids) - h), and
+    a sweep over the references by p finds it in time linear in the tokens,
+    which a 131,072-token history needs."""
+    prefixes = sorted((common_prefix(text["prompt_token_ids"], ids), len(text["prompt_token_ids"]))
+                      for text in texts)
+    agreed, first = [], 0
     for h in range(len(ids)):
-        matches = [text["prompt_token_ids"] for text in texts
-                   if len(text["prompt_token_ids"]) > h and text["prompt_token_ids"][:h] == ids[:h]]
-        length = len(ids) - h
-        for other in matches:
-            same = 0
-            while same < length and h + same < len(other) and other[h + same] == ids[h + same]:
-                same += 1
-            length = min(length, same)
-        agreed.append(length)
+        while first < len(prefixes) and prefixes[first][0] < h:
+            first += 1
+        # A reference of exactly h tokens that ids continues has nothing after
+        # ids[:h]: its common prefix is h, so it sorts first and is skipped.
+        index = first
+        while index < len(prefixes) and prefixes[index][1] <= h:
+            index += 1
+        agreed.append((prefixes[index][0] if index < len(prefixes) else len(ids)) - h)
     return agreed
 
 

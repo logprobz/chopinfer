@@ -14,9 +14,8 @@ includes DSpark target chunks. Smaller cone intervals keep the selected SM
 collective. Media, unsupported schedules and configurations without upper
 skip retain SM transport and allocate no unused DMA state.
 
-The adapter recognizes the F32-partial/BF16-result phased collective and
-the BF16-partial two-shot/turns entries, checking all four ranks' original
-input/output intervals. It cannot choose a different partial precision.
+The adapter recognizes the BF16-partial two-shot/turns entries, checking
+all four ranks' original input/output intervals. It cannot choose a different partial precision.
 The current native default reaches the BF16 payload path. The shared
 transport also supports F32 payloads for callers with that contract.
 

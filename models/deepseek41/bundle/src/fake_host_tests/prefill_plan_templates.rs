@@ -736,6 +736,8 @@ fn allocated() -> i64 {
     /// glibc's `struct mallinfo2`, ten `size_t` counters.
     #[repr(C)]
     struct Mallinfo2([usize; 10]);
+    // SAFETY-REVIEWED: matches glibc's declaration: no arguments, and ten size_t
+    // fields where index 4 is hblkhd and index 7 is uordblks.
     #[allow(unsafe_code)]
     unsafe extern "C" {
         fn mallinfo2() -> Mallinfo2;

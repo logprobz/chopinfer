@@ -50,6 +50,8 @@ const REVIEWED_UNSAFE_FILES: &[&str] = &[
     "crates/runtime-cuda/src/nvdec.rs",
     "crates/runtime-grammar/tests/retained_bytes.rs",
     "crates/runtime-media/tests/decode_bounds.rs",
+    "models/deepseek41/bundle/src/fake_host_tests/prefill_engram/legacy.rs",
+    "models/deepseek41/bundle/src/fake_host_tests/prefill_plan_templates.rs",
 ];
 
 fn check_portable() -> TaskResult {
@@ -274,6 +276,27 @@ mod tests {
             ),
         ] {
             audit_unsafe_source(Path::new(path), source).unwrap();
+        }
+    }
+
+    #[test]
+    fn model_fake_host_tests_have_reviewed_contracts() {
+        for (path, source) in [
+            (
+                "models/deepseek41/bundle/src/fake_host_tests/prefill_engram/legacy.rs",
+                include_str!(
+                    "../../../models/deepseek41/bundle/src/fake_host_tests/prefill_engram/legacy.rs"
+                ),
+            ),
+            (
+                "models/deepseek41/bundle/src/fake_host_tests/prefill_plan_templates.rs",
+                include_str!(
+                    "../../../models/deepseek41/bundle/src/fake_host_tests/prefill_plan_templates.rs"
+                ),
+            ),
+        ] {
+            audit_unsafe_source(Path::new(path), source).unwrap();
+            assert!(audit_unsafe_source(Path::new(path), "unsafe { call() }").is_err());
         }
     }
 

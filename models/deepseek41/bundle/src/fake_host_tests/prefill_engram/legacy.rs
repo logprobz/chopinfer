@@ -2,6 +2,7 @@ use super::*;
 
 // This adapter changes only the host-visible ABI extent; the backend still
 // implements every async callback, so consulting the hidden tail is observable.
+// SAFETY-REVIEWED: the real create gets a complete table copy and captures it by value.
 #[allow(unsafe_code)]
 unsafe extern "C" fn create_without_async_tail(
     services: *const BundleHostServicesV1,

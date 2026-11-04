@@ -175,6 +175,62 @@ class TraceReviewTests(unittest.TestCase):
         # Old trace receipts' first-hit booleans are not newest-frontier evidence.
         self.assertEqual(small['anchor_survival'], [None] * 19)
         self.assertEqual(small['first_prefix_retention'], [True] * 19)
+        # They predate warmth, so they report no returns.
+        self.assertEqual(small['sessions_kept_warm']['unavailable'], 'no trace returns')
+        self.assertEqual(small['return_ttft_ms']['samples'], 0)
+
+    def test_sessions_kept_warm_and_return_ttft_per_cell(self):
+        def row(warm, ttft):
+            return dict(warm=warm, warm_threshold_tokens=100, ttft_ms=ttft)
+        turns = [row(True, 10), row(False, 900), row(True, 20), row(True, 30)]
+        figures = metrics.summarize_returns(turns)
+        self.assertEqual(figures['sessions_kept_warm'], metrics.metric(.75, 4))
+        self.assertEqual((figures['return_ttft_ms']['samples'], figures['return_ttft_ms']['p50']), (4, 20))
+        # A return without a verdict leaves the share unavailable, not a tie.
+        figures = metrics.summarize_returns(turns + [row(None, None)])
+        self.assertIsNone(figures['sessions_kept_warm']['value'])
+        self.assertEqual(figures['sessions_kept_warm']['missing'], 1)
+        # A coding workload's turns are not trace returns.
+        figures = metrics.summarize_returns([dict(ttft_ms=5)])
+        self.assertEqual(figures['sessions_kept_warm']['unavailable'], 'no trace returns')
+        self.assertEqual(figures['return_ttft_ms']['samples'], 0)
+
+    def test_analysis_reports_warmth_return_ttft_rate_and_energy_per_cell(self):
+        from agentic_trace_analysis import analyze
+        rows = [dict(ended=1 + i / 10, append_class='1-63', ttft_ms=100 + i, output_tokens=10,
+                     prompt_tokens=100, cached_tokens=90 if i % 4 else 0, sse_events=[], output_events=[],
+                     turn_index=i, request_sha256=str(i), requested_idle_pages=0,
+                     warm_threshold_tokens=50, warm=bool(i % 4)) for i in range(20)]
+        level = dict(realtime_offset_ns=dict(start=0, end=0), window_start=0, window_end=10, concurrency=8,
+                     replica=0, sessions=[dict(turns=rows)], burst_window_ms=2)
+        power = [dict(at=at, watts={'0': 300, '1': 300}, limits={'0': 300, '1': 300}, sm_clocks={'0': 1, '1': 1})
+                 for at in (0, 10)]
+        cell = analyze(level, power=power)
+        self.assertEqual(cell['sessions_kept_warm'], metrics.metric(.75, 20))
+        self.assertEqual(cell['return_ttft_ms']['p95'], 118)
+        self.assertTrue(cell['return_ttft_ms']['supported']['p95'])
+        self.assertEqual(cell['output_tokens_per_second'], 20)
+        self.assertEqual(cell['energy']['joules'], 6000)
+        self.assertEqual(cell['energy']['joules_per_output_token'], 30)
+        unpowered = analyze(level)
+        self.assertIsNone(unpowered['energy']['joules_per_output_token'])
+        self.assertIsNotNone(unpowered['energy']['unavailable'])
+
+    def test_trace_levels_record_warmth_and_return_ttft(self):
+        from agentic_fake import fake_server
+        workload = trace.generate(2, 2, 'kept', [32], 0)
+        for session in workload['sessions']:
+            for turn in session['turns']:
+                turn.update(append_tokens=4, output_tokens=2, think_seconds=0)
+        profile = vars(mixed.parser().parse_args([]))
+        profile.update(seed='kept', run_id='test', arm='fixed', seconds=5, min_samples=1, session_timeout_seconds=5)
+        with fake_server({}) as url:
+            level = trace.run_level(mixed.Transport(url, 2), 'fake-agentic', profile, workload, 1)
+        self.assertTrue(level['verdict']['passed'], level['verdict'])
+        turns = [t for s in level['sessions'] for t in s['turns']]
+        self.assertEqual(level['sessions_kept_warm']['samples'], 4)
+        self.assertEqual(level['sessions_kept_warm']['value'], sum(t['warm'] for t in turns) / 4)
+        self.assertEqual(level['return_ttft_ms']['samples'], 4)
 
 
 

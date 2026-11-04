@@ -4,7 +4,7 @@ import argparse
 import json
 from pathlib import Path
 
-from agentic_metrics import TAIL_SAMPLES, burst_intervals, distribution, stall_stats, tail
+from agentic_metrics import TAIL_SAMPLES, burst_intervals, distribution, stall_stats, summarize_returns, tail, trace_returns
 from common import read_receipt
 
 
@@ -129,6 +129,9 @@ def analyze(level, steps=(), power=()):
         decoded.append(dict(turn_index=row['turn_index'], request_sha256=row['request_sha256'], **value))
     return dict(concurrency=level['concurrency'], replica=level['replica'], requests=len(rows),
                 requests_per_second=len(rows) / (end - start), output_tokens_per_second=output / (end - start),
+                sessions_kept_warm=summarize_returns(rows)['sessions_kept_warm'],
+                return_ttft_ms=supported_distribution([t['ttft_ms'] for t in trace_returns(rows)
+                                                       if t['ttft_ms'] is not None]),
                 ttft_by_append_class={k: supported_distribution(v) for k, v in by_class.items()},
                 gaps=decoded,
                 raw_sse_gaps=[dict(turn_index=t['turn_index'], request_sha256=t['request_sha256'],

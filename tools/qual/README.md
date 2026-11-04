@@ -512,7 +512,11 @@ and cached-token metrics. It is not a measurement of physical allocation.
 `agentic_trace_analysis.py RECEIPT --steps LOG --power SAMPLES` reports
 50/100/250/1000 ms event-gap counts, total and excess durations, and unioned
 prefill overlap, plus TTFT by append class, throughput, draft acceptance,
-computed/reused prefill and anchor survival. Power samples must bracket the
+computed/reused prefill and anchor survival. Per cell it also reports
+sessions kept warm (the share of returns whose `warm` is true), return TTFT
+p50 and p95, output tokens per second and joules per output token; each
+level of the replay receipt already carries the first two as
+`sessions_kept_warm` and `return_ttft_ms`. Power samples must bracket the
 window and retain each rank's limits and SM clocks; missing samples yield
 unavailable energy. SSE gaps include transport and parser effects. Profiled
 or busy-host results remain diagnostic. Run fresh-process warmup and ABBA

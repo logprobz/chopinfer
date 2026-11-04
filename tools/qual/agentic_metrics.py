@@ -86,7 +86,29 @@ def summarize(sessions, start, end, concurrency, stall_threshold_ms=100):
                 uncached_prompt_tokens=distribution([t['prompt_tokens'] - t['cached_tokens'] for t in turns
                                                      if type(t.get('prompt_tokens')) is int and type(t.get('cached_tokens')) is int
                                                      and 0 <= t['cached_tokens'] <= t['prompt_tokens']]),
-                **summarize_gaps(turns, stall_threshold_ms))
+                **summarize_gaps(turns, stall_threshold_ms), **summarize_returns(turns))
+
+
+def trace_returns(turns):
+    """The turns a trace judged for warmth (agentic_trace.warm_threshold):
+    each returns to a session whose previous prompt the server saw."""
+    return [t for t in turns if 'warm_threshold_tokens' in t]
+
+
+def summarize_returns(turns):
+    """Sessions kept warm, the share of returns whose cached tokens reached
+    their warm threshold, and the returns' TTFT. A coding workload has no
+    returns, so both are unavailable there."""
+    returns = trace_returns(turns)
+    judged = [t['warm'] for t in returns if type(t.get('warm')) is bool]
+    missing = len(returns) - len(judged)
+    if judged and not missing:
+        kept = metric(sum(judged) / len(judged), len(judged))
+    else:
+        kept = metric(samples=len(judged), missing=missing,
+                      unavailable='warmth missing' if missing else 'no trace returns')
+    return dict(sessions_kept_warm=kept,
+                return_ttft_ms=distribution([t['ttft_ms'] for t in returns if t['ttft_ms'] is not None]))
 
 
 SAMPLE = re.compile(r'^([a-zA-Z_:][a-zA-Z0-9_:]*)(?:\{(.*)\})?\s+([^\s]+)(?:\s+.*)?$')

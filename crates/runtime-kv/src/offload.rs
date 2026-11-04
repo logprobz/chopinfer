@@ -263,6 +263,8 @@ struct Transfer {
     quarantined: bool,
     receipt: Arc<AtomicBool>,
     destination: Option<SequenceHandle>,
+    /// The pending anchor a promotion fills.
+    pending: Option<PendingAnchorId>,
 }
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum KvTransferStatus {
@@ -641,6 +643,7 @@ impl HostTier {
                 quarantined: false,
                 receipt: Arc::clone(&receipt),
                 destination: None,
+                pending: None,
             },
         );
         if owner.is_none() {
@@ -727,12 +730,87 @@ impl HostTier {
                 quarantined: false,
                 receipt: Arc::clone(&receipt),
                 destination: Some(destination.handle),
+                pending: None,
             },
         );
         Ok(KvTransferPlan {
             id,
             direction: KvTransferDirection::In,
             class: KvTransferClass::SwapIn,
+            pages,
+            receipt,
+        })
+    }
+    /// Copies a pending anchor's source entry into its pages, as a
+    /// promotion. The entry must still be the one it copies, and no other
+    /// transfer may name the entry: followers wait for the publish. A host
+    /// eviction of the entry during the copy does not stop it, since the
+    /// transfer holds the host pages until it completes.
+    pub fn begin_promotion(
+        &mut self,
+        pool: &mut KvPool,
+        pending: PendingAnchorId,
+    ) -> Result<KvTransferPlan, KvError> {
+        self.check_pool(pool)?;
+        pool.ensure_no_prepared()?;
+        self.check_binding(pool)?;
+        let key = pending.key();
+        let entry = pool
+            .host_entry(key)
+            .filter(|entry| entry.serial == pending.serial() && entry.ready)
+            .ok_or(KvError::StaleHandle)?;
+        self.check_public(entry.host, key)?;
+        if self.transfers.values().any(|t| t.anchor == entry.host) {
+            return Err(KvError::StaleHandle);
+        }
+        let (blocks, state) = pool.pending_copy_pages(pending)?;
+        let a = &self.anchors[&entry.host];
+        if a.blocks.len() != blocks.len() || a.state.len() != state.len() {
+            return Err(KvError::StaleHandle);
+        }
+        let hosts: Vec<_> = a.blocks.iter().chain(&a.state).copied().collect();
+        if hosts.iter().any(|page| self.refs[page.0] == u32::MAX) {
+            return Err(KvError::InvariantViolation);
+        }
+        let allocations = blocks
+            .iter()
+            .chain(&state)
+            .map(|p| pool.page_allocation(*p))
+            .collect::<Result<Vec<_>, _>>()?;
+        let id = next_transfer()?;
+        let lease = pool.retain_transfer_pages(&allocations)?;
+        for page in &hosts {
+            self.refs[page.0] += 1;
+        }
+        let pages = allocations
+            .iter()
+            .zip(&hosts)
+            .map(|(a, h)| KvPagePair {
+                device: a.page,
+                host: *h,
+            })
+            .collect();
+        let receipt = Arc::new(AtomicBool::new(false));
+        pool.start_pending_copy(pending, id);
+        self.transfers.insert(
+            id,
+            Transfer {
+                lease,
+                hosts,
+                anchor: entry.host,
+                key,
+                direction: KvTransferDirection::In,
+                class: KvTransferClass::Promotion,
+                quarantined: false,
+                receipt: Arc::clone(&receipt),
+                destination: None,
+                pending: Some(pending),
+            },
+        );
+        Ok(KvTransferPlan {
+            id,
+            direction: KvTransferDirection::In,
+            class: KvTransferClass::Promotion,
             pages,
             receipt,
         })
@@ -777,6 +855,9 @@ impl HostTier {
         if t.class == KvTransferClass::Demotion {
             pool.finish_demotion(t.key, t.anchor, c.id, success);
         }
+        if let Some(pending) = t.pending {
+            pool.finish_pending_copy(pending, c.id, success);
+        }
         if success
             && t.direction == KvTransferDirection::Out
             && let Some(a) = self.anchors.get_mut(&t.anchor)
@@ -789,7 +870,10 @@ impl HostTier {
         {
             pool.sequences[slot].restoring = Some(true);
         }
-        if !success && self.anchors.contains_key(&t.anchor) {
+        // A failed promotion keeps its source entry: copying in never
+        // writes host pages.
+        if !success && t.class != KvTransferClass::Promotion && self.anchors.contains_key(&t.anchor)
+        {
             self.release_anchor(pool, t.anchor)?;
         }
         for page in t.hosts {
@@ -826,21 +910,46 @@ impl HostTier {
         }
         self.audit_public_entries(pool)
     }
-    /// The pool's host entries are exactly this tier's public anchors, and
-    /// its demotion marks exactly the demotions in flight.
+    /// The pool's host entries are exactly this tier's public anchors, its
+    /// demotion marks exactly the demotions in flight, and its pending
+    /// anchors in copy exactly the promotions in flight.
     fn audit_public_entries(&self, pool: &KvPool) -> Result<(), KvError> {
         let mut public = self.anchors.iter().filter(|(_, a)| a.owner.is_none());
         let mut demotions = self
             .transfers
             .iter()
             .filter(|(_, t)| t.class == KvTransferClass::Demotion);
+        let mut promotions = self
+            .transfers
+            .iter()
+            .filter(|(_, t)| t.class == KvTransferClass::Promotion);
         let Some(ram) = pool.ram.as_ref().filter(|ram| ram.tier == Some(self.tier)) else {
-            return if public.next().is_none() && demotions.next().is_none() {
+            return if public.next().is_none()
+                && demotions.next().is_none()
+                && promotions.next().is_none()
+            {
                 Ok(())
             } else {
                 Err(KvError::InvariantViolation)
             };
         };
+        let mut copying = 0usize;
+        for (id, t) in promotions {
+            copying += 1;
+            if t.direction != KvTransferDirection::In
+                || t.pending.is_none_or(|pending| {
+                    pending.key() != t.key
+                        || pool
+                            .pending_anchor(pending)
+                            .is_none_or(|anchor| anchor.copy != PrefixPendingCopyV1::InFlight(*id))
+                })
+            {
+                return Err(KvError::InvariantViolation);
+            }
+        }
+        if copying != pool.pending_copies().count() {
+            return Err(KvError::InvariantViolation);
+        }
         let mut count = 0usize;
         for (id, a) in public {
             count += 1;

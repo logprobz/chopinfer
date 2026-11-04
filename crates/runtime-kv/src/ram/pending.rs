@@ -316,12 +316,69 @@ impl KvPool {
         }
     }
 
+    /// The KV and snapshot pages a promotion fills: those of a pending
+    /// anchor no copy has started and no logical event invalidated.
+    pub(crate) fn pending_copy_pages(
+        &self,
+        id: PendingAnchorId,
+    ) -> Result<(Vec<BlockId>, Vec<BlockId>), KvError> {
+        let pending = self
+            .ram
+            .as_ref()
+            .and_then(|ram| ram.pending.get(&id))
+            .filter(|pending| {
+                pending.copy == PrefixPendingCopyV1::Waiting && pending.invalidation.is_none()
+            })
+            .ok_or(KvError::StaleHandle)?;
+        Ok((pending.blocks.clone(), pending.state.clone()))
+    }
+
+    /// Records a checked promotion's transfer.
+    pub(crate) fn start_pending_copy(&mut self, id: PendingAnchorId, transfer: KvTransferId) {
+        self.ram
+            .as_mut()
+            .and_then(|ram| ram.pending.get_mut(&id))
+            .expect("a checked promotion")
+            .copy = PrefixPendingCopyV1::InFlight(transfer);
+    }
+
+    /// Ends a promotion's copy: a confirmed success makes it publishable.
+    pub(crate) fn finish_pending_copy(
+        &mut self,
+        id: PendingAnchorId,
+        transfer: KvTransferId,
+        success: bool,
+    ) {
+        if let Some(pending) = self.ram.as_mut().and_then(|ram| ram.pending.get_mut(&id))
+            && pending.copy == PrefixPendingCopyV1::InFlight(transfer)
+        {
+            pending.copy = if success {
+                PrefixPendingCopyV1::Copied
+            } else {
+                PrefixPendingCopyV1::Failed
+            };
+        }
+    }
+
     /// Every page a pending anchor holds.
     pub(crate) fn pending_pages(&self) -> impl Iterator<Item = BlockId> + '_ {
         self.ram
             .iter()
             .flat_map(|ram| ram.pending.values())
             .flat_map(|pending| pending.blocks.iter().chain(&pending.state).copied())
+    }
+
+    /// Every pending anchor whose copy is in flight, with its transfer.
+    pub(crate) fn pending_copies(
+        &self,
+    ) -> impl Iterator<Item = (PendingAnchorId, KvTransferId)> + '_ {
+        self.ram
+            .iter()
+            .flat_map(|ram| ram.pending.iter())
+            .filter_map(|(id, pending)| match pending.copy {
+                PrefixPendingCopyV1::InFlight(transfer) => Some((*id, transfer)),
+                _ => None,
+            })
     }
 
     /// Each pending anchor began from a ready, usable entry, and every
@@ -478,9 +535,79 @@ mod tests {
     }
 
     #[test]
+    fn publish_keeps_the_lifetime_flags_of_a_node_only_it_held() {
+        let chain = prompt();
+        let key = |depth| chain.key_at(depth).unwrap();
+        let mut pool = ram_pool(32).with_prefix_ancestry(true);
+        let mut tier = HostTier::new(&pool, 16).unwrap();
+        // The frontier is extended, so the ancestor below it is consumed.
+        capture(&mut pool, &chain, &[4, 20, 24]);
+        let hit = pool.resume_anchor(key(24), 24).unwrap();
+        pool.finish_restore(hit.handle()).unwrap();
+        pool.release(hit.handle()).unwrap();
+        demote(&mut pool, &mut tier, key(24));
+        let pending = pool.create_pending_anchor(key(24), 1).unwrap();
+        let plan = tier.begin_promotion(&mut pool, pending).unwrap();
+        // The host tier drops the source entry; only the pending anchor
+        // holds the node now.
+        assert!(tier.drop_public_entry(&mut pool, key(24)).unwrap());
+        complete(&mut pool, &mut tier, plan);
+        assert_eq!(
+            pool.publish_pending_anchor(pending, &chain),
+            Ok(PrefixPublishV1::Published)
+        );
+        tier.audit(&pool).unwrap();
+        // A new anchor between them learns that the frontier is still
+        // extended, and ranks below recency.
+        capture(&mut pool, &chain, &[22]);
+        assert_ne!(pool.anchor_tier(key(22)), Some(PrefixEvictionTierV1::Live));
+        tier.audit(&pool).unwrap();
+    }
+
+    #[test]
+    fn publish_checks_its_identity_and_refuses_a_gpu_resident_key() {
+        let chain = prompt();
+        let key = chain.key_at(8).unwrap();
+        for case in ["identity", "gpu resident"] {
+            let mut pool = ram_pool(16);
+            let mut tier = HostTier::new(&pool, 8).unwrap();
+            capture(&mut pool, &chain, &[8]);
+            demote(&mut pool, &mut tier, key);
+            let pending = pool.create_pending_anchor(key, 1).unwrap();
+            let plan = tier.begin_promotion(&mut pool, pending).unwrap();
+            complete(&mut pool, &mut tier, plan);
+            if case == "identity" {
+                let before = pool.clone();
+                let other = PrefixChainV1::new(4, vec![1u32; 8].into(), vec![]).unwrap();
+                assert_eq!(
+                    pool.publish_pending_anchor(pending, &other),
+                    Err(KvError::StaleHandle)
+                );
+                assert_eq!(pool, before);
+                continue;
+            }
+            // A recapture always invalidates, so clear the flag to reach
+            // the GPU anchor check.
+            capture(&mut pool, &chain, &[8]);
+            pool.ram
+                .as_mut()
+                .unwrap()
+                .pending
+                .get_mut(&pending)
+                .unwrap()
+                .invalidation = None;
+            assert_eq!(
+                pool.publish_pending_anchor(pending, &chain),
+                Ok(PrefixPublishV1::GpuResident)
+            );
+            assert!(pool.pending_anchor(pending).is_none());
+        }
+    }
+
+    #[test]
     fn audits_reject_pending_anchors_out_of_step() {
         type Tamper = fn(&mut KvPool, PendingAnchorId, KvTransferId);
-        let tampers: [(&str, Tamper); 3] = [
+        let tampers: [(&str, Tamper); 4] = [
             ("tokens", |pool, id, _| {
                 pool.ram
                     .as_mut()
@@ -494,6 +621,9 @@ mod tests {
                 let page = pool.ram.as_ref().unwrap().pending[&id].blocks[0];
                 let refs = pool.blocks[page.index()];
                 pool.set_block_references(page, refs, 0, 1);
+            }),
+            ("copy without a transfer", |pool, id, finished| {
+                pool.start_pending_copy(id, finished);
             }),
             ("serial", |pool, id, _| {
                 let mut pending = pool.ram.as_mut().unwrap().pending.remove(&id).unwrap();

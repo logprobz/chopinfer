@@ -39,7 +39,7 @@ def historical_mode_evidence(before, after, model, startup_before=None, startup_
                 if mode:
                     claims.append(dict(mode=mode, source='metrics mode label', point=point, metric=name))
         for mode, prefixes in POLICY_METRICS.items():
-            found = sorted({name for name, _ in rows if name.startswith(prefixes)})
+            found = sorted({name for name, _ in rows if name.startswith(tuple(prefixes))})
             if found:
                 claims.append(dict(mode=mode, source='policy-specific metrics', point=point, metric=found[0]))
     old, new = snapshots

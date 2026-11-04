@@ -10,9 +10,11 @@ from agentic_metrics import parse_metrics
 
 # Public serving policies. TBT metrics are shared by tbt and adaptive.
 MODES = ('fixed', 'tbt', 'adaptive')
-RETIRED_METRICS = ('chop_prefill_budget_decode_estimate_', 'chop_prefill_budget_prefill_token_')
-RETIRED_FLAGS = ('--prefill-budget', '--prefill-timing-cuts', '--prefill-itl-target-ms',
-                 '--prefill-decode-steps', '--mixed-min-prefill-tokens', '--mixed-decode-steps')
+# Evidence of retired prefill controls. As set literals they have no JSON
+# form, so a declaration cannot override them (module_metadata.kind).
+RETIRED_METRICS = {'chop_prefill_budget_decode_estimate_', 'chop_prefill_budget_prefill_token_'}
+RETIRED_FLAGS = {'--prefill-budget', '--prefill-timing-cuts', '--prefill-itl-target-ms',
+                 '--prefill-decode-steps', '--mixed-min-prefill-tokens', '--mixed-decode-steps'}
 
 
 def normalize_mode(value):
@@ -69,7 +71,7 @@ def mode_evidence(before, after, model, startup_before=None, startup_after=None)
         snapshots.append(rows)
         for (name, labels), value in rows.items():
             labels = dict(labels)
-            if name.startswith(RETIRED_METRICS):
+            if any(name.startswith(prefix) for prefix in RETIRED_METRICS):
                 errors.append('retired decode-aware metric evidence')
             if name == 'chop_prefill_policy_info':
                 policy = normalize_mode(labels.get('policy'))

@@ -17,6 +17,15 @@ class ModuleMetadataTests(unittest.TestCase):
                           (None, (True,), (3,), (0.5,), ("a",), ((1,),), ([1],), ({},), (None,), ({1},))],
                          ["number", "bool", "int", "number", "str", "list", "list", "dict", "null", "set"])
 
+    def test_guard_constants_take_no_override(self):
+        # A declaration that blanked these could adopt proof inputs in a
+        # scoped refs check or hide a server's retired prefill controls.
+        modules = module_metadata.metadata()["modules"]
+        guards = {"refs": ("CODE_INPUTS", "KEPT_SECTIONS", "LOCK_KEYS", "PROOF_INPUTS", "SNAPSHOT_FIELDS"),
+                  "agentic_server": ("RETIRED_FLAGS", "RETIRED_METRICS")}
+        self.assertEqual({(module, name): modules[module][name] for module, names in guards.items() for name in names},
+                         {(module, name): "set" for module, names in guards.items() for name in names})
+
 
 if __name__ == "__main__":
     unittest.main()

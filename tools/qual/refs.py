@@ -11,17 +11,19 @@ import sys
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(Path(__file__).parent))
 
-CODE_INPUTS = ("media_cases", "media_images")
-LOCK_KEYS = ("schema", "model", "entries", "objects")
+# These guards decide what an adopt pins and keeps. As set literals they have
+# no JSON form, so a declaration cannot override them (module_metadata.kind).
+CODE_INPUTS = {"media_cases", "media_images"}
+LOCK_KEYS = {"schema", "model", "entries", "objects"}
 # The fields of an entry `snapshot` writes; adopt keeps any other field.
-SNAPSHOT_FIELDS = ("path", "directory", "members", "scope")
+SNAPSHOT_FIELDS = {"path", "directory", "members", "scope"}
 # Lock sections adopt keeps as they are: each configuration's own entries.
-KEPT_SECTIONS = ("configurations",)
+KEPT_SECTIONS = {"configurations"}
 # The inputs a runner proof in `snapshot` verifies or reads besides each
 # reference and its workload. Only a full adopt repins them, since a scoped
 # one would pin their bytes without the proof that binds them.
-PROOF_INPUTS = ("media_mixed_generation", "media_mixed_generation_workload", "media_preprocessing_reference",
-                "media_preprocessing_integer_fixture", "media_preprocessing_ab", "media_preprocessing_ab_probes")
+PROOF_INPUTS = {"media_mixed_generation", "media_mixed_generation_workload", "media_preprocessing_reference",
+                "media_preprocessing_integer_fixture", "media_preprocessing_ab", "media_preprocessing_ab_probes"}
 
 
 def digest(path):

@@ -701,3 +701,64 @@ fn host_tier_evicts_public_entries_by_last_gpu_use_after_a_fit_check() {
     assert_eq!(held(&pool), [false, false, false, false, true, true]);
     tier.audit(&pool).unwrap();
 }
+
+#[test]
+fn the_allocation_counter_adds_every_page_taken_from_the_free_list() {
+    let mut pool = ram_pool(32);
+    let mut tier = HostTier::new(&pool, 32).unwrap();
+    let taken = |pool: &KvPool, since: u64| pool.allocated_pages() - since;
+    let source = pool.create_sequence(12).unwrap();
+    pool.append(source, 6).unwrap();
+    assert_eq!(taken(&pool, 0), 2);
+    // A fork's first append copies the shared partial page.
+    let child = pool.fork(source, 12).unwrap();
+    let mark = pool.allocated_pages();
+    pool.append(child, 1).unwrap();
+    assert_eq!(taken(&pool, mark), 1);
+    pool.release(child).unwrap();
+    // A rolled-back append gives its page back.
+    let mark = pool.allocated_pages();
+    let prepared = pool.prepare_append_batch(&[(source, 6)]).unwrap();
+    assert_eq!(taken(&pool, mark), 1);
+    pool.rollback_prepared(prepared.id()).unwrap();
+    assert_eq!(taken(&pool, mark), 0);
+    // A snapshot takes its state page; a capture of a key that has an
+    // anchor takes none.
+    pool.append(source, 6).unwrap();
+    let prompt = chain(&(0..12).collect::<Vec<_>>());
+    let key = prompt.key_at(8).unwrap();
+    let mark = pool.allocated_pages();
+    pool.insert_content_anchor(&prompt, source, 8, 1)
+        .unwrap()
+        .unwrap();
+    assert_eq!(taken(&pool, mark), 1);
+    let serial = pool.anchor_serial(key);
+    assert!(serial.is_some());
+    assert!(
+        pool.insert_content_anchor(&prompt, source, 8, 1)
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(taken(&pool, mark), 1);
+    assert_eq!(pool.anchor_serial(key), serial);
+    pool.release(source).unwrap();
+    // Restore staging and a pending anchor take theirs.
+    let mark = pool.allocated_pages();
+    let staged = pool.create_initialized_sequence(8, 12, 1).unwrap();
+    assert_eq!(taken(&pool, mark), 3);
+    pool.release(staged.handle()).unwrap();
+    demote(&mut pool, &mut tier, key);
+    assert!(pool.remove_anchor(key).unwrap());
+    assert_eq!(pool.anchor_serial(key), None);
+    let mark = pool.allocated_pages();
+    let pending = pool.create_pending_anchor(key, 1).unwrap();
+    assert_eq!(taken(&pool, mark), 3);
+    pool.abandon_pending_anchor(pending).unwrap();
+    // A later capture of the key is another anchor lifetime.
+    capture(&mut pool, &prompt, &[8]);
+    assert!(
+        pool.anchor_serial(key)
+            .is_some_and(|later| Some(later) != serial)
+    );
+    tier.audit(&pool).unwrap();
+}

@@ -487,6 +487,9 @@ pub struct KvPool {
     produced_operations: AtomicU64,
     prepared: Option<PreparedAppendBatch>,
     next_prepared_id: u64,
+    /// Pages allocations took from the free list; see
+    /// [`KvPool::allocated_pages`].
+    allocated_pages: u64,
     /// Whether an append may rewrite committed rows of the sequence's last
     /// page (drafter rows that need later tokens), so a shared last page is
     /// copied even when full.
@@ -526,6 +529,7 @@ impl Clone for KvPool {
             produced_operations: AtomicU64::new(self.produced_operations()),
             prepared: self.prepared.clone(),
             next_prepared_id: self.next_prepared_id,
+            allocated_pages: self.allocated_pages,
             rewrites_last_page: self.rewrites_last_page,
             metrics: self.metrics.detached_clone(),
         }
@@ -560,6 +564,7 @@ impl PartialEq for KvPool {
             && self.produced == other.produced
             && self.prepared == other.prepared
             && self.next_prepared_id == other.next_prepared_id
+            && self.allocated_pages == other.allocated_pages
             && self.rewrites_last_page == other.rewrites_last_page
     }
 }
@@ -653,6 +658,7 @@ impl KvPool {
             produced_operations: AtomicU64::new(0),
             prepared: None,
             next_prepared_id: 1,
+            allocated_pages: 0,
             rewrites_last_page: false,
             metrics,
         })
@@ -706,6 +712,23 @@ impl KvPool {
     #[must_use]
     pub const fn prefix_index_enabled(&self) -> bool {
         self.ancestry.is_some()
+    }
+
+    /// The lifetime of `key`'s anchor, which no later capture of the key
+    /// shares.
+    #[must_use]
+    pub fn anchor_serial(&self, key: PrefixCacheKeyV1) -> Option<u64> {
+        self.anchors.get(&key).map(|anchor| anchor.serial)
+    }
+
+    /// Pages allocations have taken from the free list since the pool was
+    /// created: appends with their copies, anchor snapshots, restore staging
+    /// and pending anchors. A rolled-back append gives its pages back. The
+    /// difference of two reads is the gross allocation between them, however
+    /// many pages were freed meanwhile.
+    #[must_use]
+    pub const fn allocated_pages(&self) -> u64 {
+        self.allocated_pages
     }
 
     #[must_use]
@@ -1219,6 +1242,7 @@ impl KvPool {
             self.allocation_serials[page.index()] += 1;
             state.push(page);
         }
+        self.allocated_pages += state_pages as u64;
         for block in blocks.iter().chain(&state) {
             self.retain_anchor_block(*block);
         }
@@ -1670,6 +1694,7 @@ impl KvPool {
         for page in self.free_blocks.iter().rev().take(total_needed) {
             self.allocation_serials[page.index()] += 1;
         }
+        self.allocated_pages += total_needed as u64;
         self.free_blocks
             .truncate(self.free_blocks.len() - total_needed);
         self.prepared = Some(prepared);
@@ -1967,6 +1992,7 @@ impl KvPool {
             .take()
             .expect("prepared transaction was validated");
         for append in prepared.appends.into_iter().rev() {
+            self.allocated_pages -= append.allocated.len() as u64;
             for block in append.allocated.into_iter().rev() {
                 self.free_blocks.push(block);
             }

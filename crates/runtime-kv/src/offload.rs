@@ -177,6 +177,7 @@ impl KvPool {
             self.set_block_references(page, 1, 0, 0);
             pages.push(page);
         }
+        self.allocated_pages += total as u64;
         let state = pages.split_off(count);
         let sequence = &mut self.sequences[handle.slot];
         sequence.blocks = Arc::new(pages);

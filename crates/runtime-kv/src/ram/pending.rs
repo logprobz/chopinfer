@@ -171,6 +171,7 @@ impl KvPool {
             self.set_block_references(page, 1, 0, 0);
             blocks.push(page);
         }
+        self.allocated_pages += total as u64;
         let state = blocks.split_off(count);
         self.ram.as_mut().expect("tier checked").pending.insert(
             id,

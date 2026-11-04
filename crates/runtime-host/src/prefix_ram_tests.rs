@@ -122,7 +122,7 @@ impl SnapshotBundle {
     fn image(&self, rank: usize, tokens: &[u32]) -> Vec<u8> {
         let mut bytes: Vec<u8> = std::iter::once(tokens.len() as u32)
             .chain(tokens.iter().copied())
-            .flat_map(|word| (word ^ (rank as u32 + 1) * 0x0101_0101).to_le_bytes())
+            .flat_map(|word| (word ^ ((rank as u32 + 1) * 0x0101_0101)).to_le_bytes())
             .collect();
         assert!(bytes.len() <= self.page_bytes as usize);
         bytes.resize(self.page_bytes as usize, rank as u8 + 1);
@@ -565,7 +565,7 @@ fn a_fake_host_serve_restores_an_anchor_the_gpu_evicted_from_ram() {
     assert_eq!(outputs[&3].cached, Some(a.len()));
     let kv = engine.kv_metrics().snapshot();
     assert_eq!((kv.prefix_cache_hits, kv.prefix_cache_ram_hits), (1, 1));
-    assert_eq!(*restores.borrow(), [a.clone()]);
+    assert_eq!(*restores.borrow(), std::slice::from_ref(&a));
     let text = prometheus(&engine);
     assert!(metric(&text, "chop_prefix_ram_demotions_total{result=\"ok\"}") >= 1);
     assert_eq!(

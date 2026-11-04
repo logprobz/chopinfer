@@ -6,8 +6,9 @@ pub use ancestry::{PrefixAncestryWorkV1, PrefixAnchorClassV1, PrefixEvictionTier
 mod ram;
 use ram::PrefixRam;
 pub use ram::{
-    PREFIX_EVICTION_LOG_V1, PrefixDemotionCandidateV1, PrefixEvictionV1, PrefixHostEntryV1,
-    PrefixHostInvalidationV1,
+    PREFIX_EVICTION_LOG_V1, PendingAnchorId, PrefixDemotionCandidateV1, PrefixEvictionV1,
+    PrefixHostEntryV1, PrefixHostInvalidationV1, PrefixPendingAnchorV1, PrefixPendingCopyV1,
+    PrefixPublishV1,
 };
 mod context_parallel;
 mod declared_pages;
@@ -2143,13 +2144,16 @@ impl KvPool {
             .try_reserve_exact(self.blocks.len())
             .map_err(|_| KvError::MetadataAllocationFailed)?;
         expected_anchor_refs.resize(self.blocks.len(), 0u32);
-        for sequence in self.sequences.iter().filter(|sequence| sequence.active) {
-            for block in &sequence.pinned {
-                let refs = expected_refs
-                    .get_mut(block.index())
-                    .ok_or(KvError::InvariantViolation)?;
-                *refs = refs.checked_add(1).ok_or(KvError::InvariantViolation)?;
-            }
+        let pinned = self
+            .sequences
+            .iter()
+            .filter(|sequence| sequence.active)
+            .flat_map(|sequence| sequence.pinned.iter().copied());
+        for block in pinned.chain(self.pending_pages()) {
+            let refs = expected_refs
+                .get_mut(block.index())
+                .ok_or(KvError::InvariantViolation)?;
+            *refs = refs.checked_add(1).ok_or(KvError::InvariantViolation)?;
         }
         if self
             .ancestry

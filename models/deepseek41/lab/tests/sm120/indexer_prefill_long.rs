@@ -21,9 +21,9 @@ use std::time::{Duration, Instant};
 /// Batch extents: the first above the short tile band, 64K, the profiled
 /// 100K and 200K mixed steps, the cached 128K extent and the 256K limit.
 const CONTEXTS: [u32; 6] = [32832, 65536, 100544, 131072, 200512, 262144];
-/// Step rows: a 512-row mixed step, a full chunk, and upper-skip and
-/// adaptive tails.
-const STEPS: [u32; 6] = [512, 8192, 64, 192, 448, 2048];
+/// Step rows: a 512-row mixed step, a full chunk, upper-skip and adaptive
+/// tails, and the batch sizes on both sides of the table's row-range edges.
+const STEPS: [u32; 11] = [512, 8192, 64, 192, 448, 2048, 32, 256, 320, 384, 1536];
 const CTAS: [u32; 4] = [8, 16, 32, 192];
 /// Shared fixture kinds that apply to full sources (ties, repair scale
 /// edges, NaN and off-grid queries, non-finite weights, scale bytes, page
@@ -103,7 +103,9 @@ fn units(layer: u32, context: u32, steps: u32, positions: &[i32], live: u32) -> 
     .map(|b| Unit {
         rows: first + b.rows.start..first + b.rows.end,
         width: b.width,
-        live: live.saturating_sub(b.rows.start).min(b.rows.end - b.rows.start),
+        live: live
+            .saturating_sub(b.rows.start)
+            .min(b.rows.end - b.rows.start),
     })
     .collect()
 }
@@ -209,7 +211,11 @@ fn adapt(mut calls: Vec<Launch>, arm: Arm, ratio: u32, width: u32) -> LabResult<
     Ok(calls)
 }
 
-fn load_all(m: &Memory<'_>, modules: &mut BTreeMap<String, Module>, calls: &[Launch]) -> LabResult<()> {
+fn load_all(
+    m: &Memory<'_>,
+    modules: &mut BTreeMap<String, Module>,
+    calls: &[Launch],
+) -> LabResult<()> {
     for call in calls {
         let (name, data) = bundle_deepseek41::sm120::fold_cubin_for_symbol(&call.symbol)
             .ok_or_else(|| format!("missing served cubin for {}", call.symbol))?;
@@ -239,7 +245,11 @@ fn compare_rows(
         (a.ids, b.ids, 2048),
         (a.candidates.ids, b.candidates.ids, 8192),
         (a.candidates.row_tags, b.candidates.row_tags, 8),
-        (a.candidates.visible_positions, b.candidates.visible_positions, 4),
+        (
+            a.candidates.visible_positions,
+            b.candidates.visible_positions,
+            4,
+        ),
         (a.candidates.status, b.candidates.status, 4),
     ];
     for (x, y, row) in pairs {
@@ -486,7 +496,10 @@ fn cpu_long_prefill_arms_change_only_the_scorer_grid_and_selector() {
     assert_eq!(distinct("_select_v3_cached4_v1"), 2);
     // Every 131072-extent batch of at least 32 rows keeps the cached route.
     assert!(cached_units > 0);
-    assert_eq!(groups().len(), 12 + EDGES.len() * LAYERS.len() * KINDS.len());
+    assert_eq!(
+        groups().len(),
+        12 + EDGES.len() * LAYERS.len() * KINDS.len()
+    );
     assert!(timed > 0);
     assert_eq!(arms().len(), 9);
 }
@@ -622,9 +635,11 @@ fn gpu_long_prefill_scores_and_selection_pair() {
                             return Err("tied scores did not keep position order".into());
                         }
                     }
-                    let inactive = m.slice(a.status, u64::from(live) * 4, 4);
-                    if kind == 12 && m.read(inactive)? != POISON.to_le_bytes() {
-                        return Err("inactive row was written".into());
+                    if kind == 12 {
+                        let inactive = m.slice(a.status, u64::from(live) * 4, 4);
+                        if m.read(inactive)? != POISON.to_le_bytes() {
+                            return Err("inactive row was written".into());
+                        }
                     }
                 }
                 println!(

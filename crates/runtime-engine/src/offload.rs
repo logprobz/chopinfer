@@ -1,6 +1,8 @@
 //! Copy completion is the only authority that releases transfer leases.
 use super::*;
-use runtime_kv::{HostTier, KvTransferDirection, KvTransferId, KvTransferPlan};
+use runtime_kv::{
+    HostTier, KvTransferDirection, KvTransferId, KvTransferPlan, PendingAnchorId, PrefixCacheKeyV1,
+};
 use runtime_scheduler::PrefixCaptureV1;
 
 #[derive(Debug)]
@@ -8,15 +10,37 @@ pub(super) struct OffloadState {
     pub tier: HostTier,
     info: KvOffloadInfo,
     force_host: bool,
-    transfers: BTreeMap<KvTransferId, Transfer>,
+    pub(super) transfers: BTreeMap<KvTransferId, Transfer>,
+    /// The RAM prefix tier's driver, while the engine runs the tier.
+    pub(super) ram: Option<prefix_ram::PrefixRamDriver>,
 }
 #[derive(Debug)]
-struct Transfer {
-    request: RequestId,
+pub(super) struct Transfer {
+    pub(super) owner: TransferOwner,
     direction: KvTransferDirection,
     started: u64,
     stall_after_micros: u64,
     warned: bool,
+}
+/// What a transfer copies for: a request's own boundary, or a public anchor
+/// of the RAM prefix tier, which no request owns.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum TransferOwner {
+    /// A swap out of a preempted request's boundary, or its reload.
+    Request(RequestId),
+    /// A demotion of a public GPU anchor.
+    Demotion { key: PrefixCacheKeyV1 },
+    /// A promotion of a public host entry into a pending anchor.
+    Promotion(PendingAnchorId),
+}
+impl fmt::Display for TransferOwner {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Request(id) => write!(formatter, "request {id:?}"),
+            Self::Demotion { key, .. } => write!(formatter, "demotion of {key:?}"),
+            Self::Promotion(id) => write!(formatter, "promotion {id:?}"),
+        }
+    }
 }
 impl OffloadState {
     /// A startup scheduler has a separate pool identity and transfer ledger.
@@ -24,7 +48,9 @@ impl OffloadState {
         let tier = scheduler
             .new_host_tier(self.tier.capacity())
             .map_err(EngineError::Scheduler)?;
-        Ok(Self::new(tier, self.info, self.force_host))
+        let mut state = Self::new(tier, self.info, self.force_host);
+        state.ram = self.ram.as_ref().map(|ram| ram.isolated(scheduler));
+        Ok(state)
     }
 
     pub(super) fn audit_transfers(&self) -> Result<(), EngineError> {
@@ -39,6 +65,7 @@ impl OffloadState {
             info,
             force_host,
             transfers: BTreeMap::new(),
+            ram: None,
         }
     }
 }
@@ -99,6 +126,60 @@ impl<E: ModelExecutor> Engine<E> {
         request: RequestId,
         plan: KvTransferPlan,
     ) -> Result<(), EngineError> {
+        let direction = plan.direction();
+        if let Some(error) = self.submit_plan(TransferOwner::Request(request), plan)? {
+            let state = self.offload.as_mut().expect("offload configured");
+            self.metrics
+                .offload_fallback(if direction == KvTransferDirection::Out {
+                    "out_refused"
+                } else {
+                    "in_refused"
+                });
+            if direction == KvTransferDirection::In {
+                self.scheduler
+                    .abandon_prefix_restore(request)
+                    .map_err(EngineError::Scheduler)?;
+            }
+            self.scheduler
+                .discard_swap(&mut state.tier, request)
+                .map_err(EngineError::Scheduler)?;
+            // A refused submission promises no DMA. A fatal executor error
+            // still stops serving, even though these leases are safe.
+            if error.is_fatal() {
+                self.model_state_failed = true;
+                self.metrics.poison();
+                return Err(EngineError::Executor(error));
+            }
+        }
+        self.release_unused_swaps()
+    }
+
+    /// Submits a RAM tier copy, which no request owns. A refused one ends
+    /// like a confirmed failure: a demotion's incomplete entry is dropped,
+    /// and a promotion settles as not copied at the next step.
+    pub(super) fn submit_anchor_transfer(
+        &mut self,
+        owner: TransferOwner,
+        plan: KvTransferPlan,
+    ) -> Result<(), EngineError> {
+        if let Some(error) = self.submit_plan(owner, plan)?
+            && error.is_fatal()
+        {
+            self.model_state_failed = true;
+            self.metrics.poison();
+            return Err(EngineError::Executor(error));
+        }
+        Ok(())
+    }
+
+    /// Submits a plan and records it in the ledger. A refused submission
+    /// queued no copy: its plan's cancellation is accepted at once and the
+    /// executor's error returned for the owner's fallback.
+    fn submit_plan(
+        &mut self,
+        owner: TransferOwner,
+        plan: KvTransferPlan,
+    ) -> Result<Option<ExecutorError>, EngineError> {
         let id = plan.id();
         let direction = plan.direction();
         let submitted = match direction {
@@ -114,7 +195,7 @@ impl<E: ModelExecutor> Engine<E> {
                     .insert(
                         id,
                         Transfer {
-                            request,
+                            owner,
                             direction,
                             started: self.clock.now_micros(),
                             stall_after_micros: self
@@ -127,36 +208,16 @@ impl<E: ModelExecutor> Engine<E> {
                             warned: false,
                         },
                     );
+                Ok(None)
             }
             Err((error, plan)) => {
                 let state = self.offload.as_mut().expect("offload configured");
                 self.scheduler
                     .accept_kv_transfer(&mut state.tier, plan.cancel())
                     .map_err(EngineError::Scheduler)?;
-                self.metrics
-                    .offload_fallback(if direction == KvTransferDirection::Out {
-                        "out_refused"
-                    } else {
-                        "in_refused"
-                    });
-                if direction == KvTransferDirection::In {
-                    self.scheduler
-                        .abandon_prefix_restore(request)
-                        .map_err(EngineError::Scheduler)?;
-                }
-                self.scheduler
-                    .discard_swap(&mut state.tier, request)
-                    .map_err(EngineError::Scheduler)?;
-                // A refused submission promises no DMA. A fatal executor error
-                // still stops serving, even though these leases are safe.
-                if error.is_fatal() {
-                    self.model_state_failed = true;
-                    self.metrics.poison();
-                    return Err(EngineError::Executor(error));
-                }
+                Ok(Some(error))
             }
         }
-        self.release_unused_swaps()
     }
     pub(super) fn start_reloads(&mut self) -> Result<(), EngineError> {
         for id in self.scheduler.pending_reloads() {
@@ -208,55 +269,72 @@ impl<E: ModelExecutor> Engine<E> {
             let KvTransferPoll::Finished(completion) = polled else {
                 continue;
             };
-            if completion.id() != id {
-                return Err(EngineError::InvariantViolation);
-            }
-            let status = completion.status();
-            let state = self.offload.as_mut().expect("offload configured");
-            self.scheduler
-                .accept_kv_transfer(&mut state.tier, completion)
-                .map_err(EngineError::Scheduler)?;
-            if status == KvTransferStatus::Unconfirmed {
-                self.prefix_state_unconfirmed = true;
-                self.metrics.poison();
-                self.metrics.offload_fallback("unconfirmed");
-                return Err(EngineError::PrefixStateUnconfirmed);
-            }
-            let transfer = state
-                .transfers
-                .remove(&id)
-                .ok_or(EngineError::InvariantViolation)?;
-            if status == KvTransferStatus::Complete {
-                self.metrics.offload_copy(
-                    transfer.direction == KvTransferDirection::In,
-                    self.clock.now_micros().saturating_sub(transfer.started),
-                );
-            } else {
-                self.metrics
-                    .offload_fallback(if transfer.direction == KvTransferDirection::In {
-                        "in_failed"
-                    } else {
-                        "out_failed"
-                    });
-            }
-            if transfer.direction == KvTransferDirection::In
-                && let Some(restore) = self.scheduler.reload_restore(transfer.request, id)
-            {
-                if status == KvTransferStatus::Complete && !self.model_state_failed {
-                    self.restore_reloaded(restore)?;
-                } else {
-                    self.scheduler
-                        .abandon_prefix_restore(transfer.request)
-                        .map_err(EngineError::Scheduler)?;
-                }
-                let state = self.offload.as_mut().expect("offload configured");
-                self.scheduler
-                    .discard_swap(&mut state.tier, transfer.request)
-                    .map_err(EngineError::Scheduler)?;
-            }
+            self.finish_transfer(id, completion)?;
         }
         self.update_transfer_health();
         self.release_unused_swaps()
+    }
+
+    /// Accepts a transfer's terminal evidence and ends it for its owner.
+    /// Unconfirmed evidence keeps the leases and stops serving.
+    pub(super) fn finish_transfer(
+        &mut self,
+        id: KvTransferId,
+        completion: runtime_kv::KvTransferCompletion,
+    ) -> Result<(), EngineError> {
+        if completion.id() != id {
+            return Err(EngineError::InvariantViolation);
+        }
+        let status = completion.status();
+        let state = self.offload.as_mut().expect("offload configured");
+        self.scheduler
+            .accept_kv_transfer(&mut state.tier, completion)
+            .map_err(EngineError::Scheduler)?;
+        if status == KvTransferStatus::Unconfirmed {
+            self.prefix_state_unconfirmed = true;
+            self.metrics.poison();
+            self.metrics.offload_fallback("unconfirmed");
+            return Err(EngineError::PrefixStateUnconfirmed);
+        }
+        let transfer = state
+            .transfers
+            .remove(&id)
+            .ok_or(EngineError::InvariantViolation)?;
+        let request = match transfer.owner {
+            TransferOwner::Request(request) => request,
+            // A failed demotion's entry is dropped; the next step settles a
+            // promotion from its pending anchor.
+            TransferOwner::Demotion { .. } | TransferOwner::Promotion(_) => return Ok(()),
+        };
+        if status == KvTransferStatus::Complete {
+            self.metrics.offload_copy(
+                transfer.direction == KvTransferDirection::In,
+                self.clock.now_micros().saturating_sub(transfer.started),
+            );
+        } else {
+            self.metrics
+                .offload_fallback(if transfer.direction == KvTransferDirection::In {
+                    "in_failed"
+                } else {
+                    "out_failed"
+                });
+        }
+        if transfer.direction == KvTransferDirection::In
+            && let Some(restore) = self.scheduler.reload_restore(request, id)
+        {
+            if status == KvTransferStatus::Complete && !self.model_state_failed {
+                self.restore_reloaded(restore)?;
+            } else {
+                self.scheduler
+                    .abandon_prefix_restore(request)
+                    .map_err(EngineError::Scheduler)?;
+            }
+            let state = self.offload.as_mut().expect("offload configured");
+            self.scheduler
+                .discard_swap(&mut state.tier, request)
+                .map_err(EngineError::Scheduler)?;
+        }
+        Ok(())
     }
 
     fn update_transfer_health(&mut self) {
@@ -274,9 +352,9 @@ impl<E: ModelExecutor> Engine<E> {
                 overdue += 1;
                 if !transfer.warned {
                     runtime_log::warn!(
-                        "KV transfer {id:?} ({:?}, request {:?}) is overdue after {} ms; retaining leases and continuing polls",
+                        "KV transfer {id:?} ({:?}, {}) is overdue after {} ms; retaining leases and continuing polls",
                         transfer.direction,
-                        transfer.request,
+                        transfer.owner,
                         age / 1000
                     );
                     transfer.warned = true;

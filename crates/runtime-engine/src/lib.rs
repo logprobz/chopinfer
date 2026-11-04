@@ -9,6 +9,7 @@ pub mod logging;
 mod media;
 mod metrics;
 mod positions;
+mod prefix_ram;
 pub mod profile;
 mod prompt_lookup;
 mod reply_history;
@@ -28,6 +29,7 @@ pub use metrics::{
     SystemMonotonicClock,
 };
 pub use positions::{PositionAxesError, PositionAxesV1, PositionSpanV1};
+pub use prefix_ram::{PrefixRamStatusV1, PrefixRamUnavailableV1};
 pub use prompt_lookup::{PromptLookupConfig, PromptLookupConfigError, PromptLookupExecutor};
 pub use speculation::confidence;
 pub use speculation::{
@@ -110,6 +112,22 @@ impl EngineConfig {
     pub const fn with_forced_swaps(mut self) -> Self {
         self.force_host_swap = true;
         self
+    }
+
+    /// Puts the RAM prefix tier behind the prefix cache
+    /// ([`SchedulerConfig::with_prefix_ram`]). The engine runs it only with
+    /// prefix caching, KV offload and demotion cancel support
+    /// ([`Engine::prefix_ram_status`]); `forced` is the debug mode for
+    /// exactness runs, in which every hit is a RAM hit.
+    #[must_use]
+    pub const fn with_prefix_ram(mut self, tier: runtime_scheduler::PrefixRamConfig) -> Self {
+        self.scheduler = self.scheduler.with_prefix_ram(Some(tier));
+        self
+    }
+
+    #[must_use]
+    pub const fn prefix_ram(self) -> Option<runtime_scheduler::PrefixRamConfig> {
+        self.scheduler.prefix_ram()
     }
 
     /// Limits safe batch refusals before the worker must restart. A zero limit
@@ -1848,6 +1866,8 @@ pub struct Engine<E: ModelExecutor> {
     reply_history: Option<Arc<Mutex<reply_history::Registry>>>,
     startup_checkpoint: Option<StartupCheckpoint>,
     offload: Option<offload::OffloadState>,
+    /// Whether the RAM prefix tier runs; its driver lives in `offload`.
+    prefix_ram: PrefixRamStatusV1,
     executor: E,
     refusal_guard: refusal::RefusalGuard,
     pending_retirements: Vec<RequestId>,
@@ -2028,8 +2048,9 @@ impl<E: ModelExecutor> Engine<E> {
         } else {
             None
         };
+        let (scheduler_config, prefix_ram) = prefix_ram::resolve(&config, &executor);
         let mut scheduler =
-            Scheduler::new_with_kv_metrics(config.scheduler, config.kv_geometry, kv_metrics)
+            Scheduler::new_with_kv_metrics(scheduler_config, config.kv_geometry, kv_metrics)
                 .map_err(EngineError::Scheduler)?;
         let mut pending_retirements = Vec::new();
         pending_retirements
@@ -2069,11 +2090,18 @@ impl<E: ModelExecutor> Engine<E> {
                     .map(|tier| offload::OffloadState::new(tier, info, config.force_host_swap))
             })
             .transpose()
-            .map_err(EngineError::Scheduler)?;
+            .map_err(EngineError::Scheduler)?
+            .map(|mut state| {
+                if matches!(prefix_ram, PrefixRamStatusV1::Active { .. }) {
+                    state.ram = prefix_ram::PrefixRamDriver::new(&config, &scheduler);
+                }
+                state
+            });
         let engine = Self {
             reply_history,
             startup_checkpoint: None,
             offload,
+            prefix_ram,
             executor,
             refusal_guard: refusal::RefusalGuard::new(config.refusal_limits),
             pending_retirements,
@@ -2337,15 +2365,23 @@ impl<E: ModelExecutor> Engine<E> {
         admitted: &mut dyn FnMut(RequestId),
     ) -> Result<StepStatus, EngineError> {
         self.poll_transfers(false)?;
+        self.begin_prefix_ram_step()?;
         let status = self.step_scheduled_batch(admitted);
         // The batch function has released every model transaction borrow.
         // Anchors capture executor state before a finished request retires.
         let captured = self.capture_prefixes();
+        // Demotions start once the step's captures are in.
+        let demoted = if status.is_ok() && captured.is_ok() {
+            self.drive_prefix_ram()
+        } else {
+            Ok(())
+        };
         let terminal_transition = !self.pending_retirements.is_empty();
         let retirement = self.notify_retirements();
         self.publish_kv_occupancy();
         retirement?;
         captured?;
+        demoted?;
         if terminal_transition {
             self.retire_terminals()?;
         }
@@ -3231,6 +3267,7 @@ impl<E: ModelExecutor> Engine<E> {
             return Err(EngineError::Executor(error));
         }
         self.start_reloads()?;
+        self.after_prefix_ram_admission()?;
         let retry_admission = self.scheduler.swap_needs_discard();
         if retry_admission {
             self.metrics.offload_fallback("staging_capacity");

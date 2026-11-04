@@ -3,8 +3,9 @@
 //! must agree on the status, the error text and the metrics to the bit. The
 //! live capture and Python's `record` run against the same fake server and
 //! must send the same requests and write the same receipt, as must `eval
-//! capture --kind determinism`. The comparisons with Python are skipped
-//! when python3 is missing.
+//! capture --kind determinism`; with each shipped frontend, the image
+//! request carries that frontend's answer-only switch as Python's does. The
+//! comparisons with Python are skipped when python3 is missing.
 
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read, Write};
@@ -19,7 +20,7 @@ use runtime_eval::http::{BoundServer, Client, ServerIdentity};
 use runtime_eval::json::{canonical, canonical_sha256, compact, parse};
 use runtime_eval::kind::{self, Capture, Kind, KindError};
 use runtime_eval::kinds;
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 
 fn root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
@@ -565,6 +566,12 @@ fn fake_server(extra_cached: u64) -> (String, Log) {
 /// A root whose model declares the determinism check with `args` and a
 /// frontend whose thinking switch is `thinking`.
 fn declared(name: &str, args: &[&str]) -> Loaded {
+    let frontend = json!({"reasoning": {"thinking_keywords": ["thinking", "think"]}});
+    declared_with(name, args, &frontend).0
+}
+
+/// As [`declared`] with `frontend` as the declared frontend, and its path.
+fn declared_with(name: &str, args: &[&str], frontend: &Value) -> (Loaded, PathBuf) {
     let root = std::env::temp_dir().join(format!(
         "runtime-eval-determinism-{name}-{}",
         std::process::id()
@@ -579,12 +586,8 @@ fn declared(name: &str, args: &[&str]) -> Loaded {
         root.join("tools/qual/modules.json"),
     )
     .unwrap();
-    let frontend = json!({"reasoning": {"thinking_keywords": ["thinking", "think"]}});
-    std::fs::write(
-        root.join("fixtures/example/frontend.json"),
-        frontend.to_string(),
-    )
-    .unwrap();
+    let frontend_path = root.join("fixtures/example/frontend.json");
+    std::fs::write(&frontend_path, frontend.to_string()).unwrap();
     let lock = json!({"model.safetensors": {"sha256": "ab", "size": 1}});
     std::fs::write(model.join("checkpoint-files.json"), lock.to_string()).unwrap();
     let pin = json!({"repository": "org/example", "revision": "abc",
@@ -606,7 +609,7 @@ fn declared(name: &str, args: &[&str]) -> Loaded {
         "receipts": {"env": "RUNTIME_EVAL_TEST_UNSET", "path": "qual/example"}
     });
     std::fs::write(model.join("qual.json"), declaration.to_string()).unwrap();
-    declaration::load(&model).unwrap()
+    (declaration::load(&model).unwrap(), frontend_path)
 }
 
 /// The determinism capture of the declared check against `url`, within
@@ -641,18 +644,35 @@ fn capture(loaded: &Loaded, url: &str, budget: Duration) -> Result<Value, KindEr
     determinism().capture(&mut capture)
 }
 
-/// Python's `determinism.record` against `url`: its receipt.
+/// Python's `determinism.record` against `url`: its receipt. With a
+/// `frontend`, the answer-only switch is the one `common` reads from it;
+/// otherwise the template keyword `thinking`.
 const RECORD: &str = "
 import argparse
 import json
+import common
 import determinism
-determinism.answer_control = lambda: {'chat_template_kwargs': {'thinking': False}}
-determinism.record(argparse.Namespace(**json.load(sys.stdin)))
+spec = json.load(sys.stdin)
+if spec['frontend']:
+    declared = json.loads(open(spec['frontend']).read())
+    common.frontend = lambda: declared
+else:
+    determinism.answer_control = lambda: {'chat_template_kwargs': {'thinking': False}}
+determinism.record(argparse.Namespace(**spec['arguments']))
 ";
 
 /// The receipt Python's `record` writes for `arguments` against a fresh
 /// fake server, and what that server read; `None` without python3.
 fn python_record(name: &str, arguments: Value) -> Option<(Value, Log)> {
+    python_record_with(name, arguments, None)
+}
+
+/// As [`python_record`], with the switch `frontend` declares.
+fn python_record_with(
+    name: &str,
+    arguments: Value,
+    frontend: Option<&Path>,
+) -> Option<(Value, Log)> {
     let (url, log) = fake_server(0);
     let receipts = std::env::temp_dir().join(format!(
         "runtime-eval-determinism-receipts-{name}-{}",
@@ -663,9 +683,10 @@ fn python_record(name: &str, arguments: Value) -> Option<(Value, Log)> {
     arguments["url"] = json!(url);
     arguments["model"] = Value::Null;
     arguments["timeout"] = json!(30);
+    let spec = json!({"arguments": arguments, "frontend": frontend});
     let output = python(
         RECORD,
-        arguments.to_string().as_bytes(),
+        spec.to_string().as_bytes(),
         &[("CHOPINFER_QUAL_RECEIPTS", &receipts)],
     )?;
     let printed = parse(String::from_utf8(output).unwrap().trim().as_bytes()).unwrap();
@@ -800,6 +821,96 @@ fn the_record_sends_and_writes_what_python_does() {
 #[test]
 fn the_record_with_the_image_sends_and_writes_what_python_does() {
     records_as_python_does("image", true);
+}
+
+/// Each shipped frontend, and its other answer-only case (a template
+/// frontend with the switch declared, a thinking-object frontend that
+/// refuses disabled thinking), sends the image request with the answer-only
+/// switch Python's record sends: thinking disabled as an object, or the
+/// template keyword false as before the switch was declared, or no switch
+/// where thinking cannot be disabled. The receipts match Python's.
+#[test]
+fn the_image_request_carries_the_declared_answer_switch_as_python_does() {
+    let args = [
+        "--arm",
+        "spec",
+        "--run-id",
+        "run-1",
+        "--image",
+        "--image-reason",
+        "the test serves images",
+    ];
+    let arguments = json!({"arm": "spec", "run_id": "run-1", "image": true,
+                           "image_reason": "the test serves images"});
+    let (mut covered, mut failures) = (Vec::new(), Vec::new());
+    for entry in std::fs::read_dir(root().join("models")).unwrap() {
+        let directory = entry.unwrap().path();
+        let path = directory.join("compiler/src/frontend.json");
+        if !path.is_file() {
+            continue;
+        }
+        let shipped = parse(&std::fs::read(path).unwrap()).unwrap();
+        let name = directory.file_name().unwrap().to_str().unwrap().to_owned();
+        let object = shipped["reasoning"]["switch"] == "thinking-object";
+        let mut other = shipped.clone();
+        if object {
+            other["reasoning"]["allow_disabled"] = json!(false);
+        } else {
+            other["reasoning"]["switch"] = json!("template-keywords");
+        }
+        for (variant, frontend) in [("shipped", &shipped), ("other", &other)] {
+            let label = format!("{name} {variant}");
+            let (loaded, frontend_path) =
+                declared_with(&format!("switch-{name}-{variant}"), &args, frontend);
+            let (url, log) = fake_server(0);
+            let receipt = capture(&loaded, &url, Duration::from_secs(60)).unwrap();
+            let (requests, _) = posts(&log);
+            let chats: Vec<Value> = log
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|(line, _)| line.starts_with("POST /v1/chat/completions"))
+                .map(|(_, body)| body.clone())
+                .collect();
+            assert_eq!(chats.len(), 1, "{label}");
+            let image = &chats[0];
+            let disabled = frontend["reasoning"]["allow_disabled"] != false;
+            let keyword = frontend["reasoning"]["thinking_keywords"][0]
+                .as_str()
+                .unwrap();
+            let expected = match (object, disabled) {
+                (true, true) => json!({"thinking": {"type": "disabled"}}),
+                (false, true) => json!({"chat_template_kwargs": {keyword: false}}),
+                (_, false) => json!({}),
+            };
+            let sent: Map<String, Value> = ["thinking", "chat_template_kwargs"]
+                .into_iter()
+                .filter_map(|key| Some((key.to_owned(), image.get(key)?.clone())))
+                .collect();
+            if Value::Object(sent.clone()) != expected {
+                failures.push(format!("{label}: sent {sent:?}, expected {expected}"));
+            }
+            let python = format!("switch-{name}-{variant}");
+            if let Some((python, python_log)) =
+                python_record_with(&python, arguments.clone(), Some(&frontend_path))
+            {
+                if requests != posts(&python_log).0 {
+                    failures.push(format!("{label}: requests differ from Python's"));
+                }
+                if canonical(&comparable(&receipt)) != canonical(&comparable(&python)) {
+                    failures.push(format!("{label}: receipt differs from Python's"));
+                }
+            }
+        }
+        covered.push((name, object));
+    }
+    eprintln!("determinism image switches: {covered:?}");
+    assert!(failures.is_empty(), "{failures:#?}");
+    assert!(covered.iter().any(|(_, object)| *object), "{covered:?}");
+    assert!(
+        covered.iter().filter(|(_, object)| !*object).count() >= 3,
+        "{covered:?}"
+    );
 }
 
 #[test]

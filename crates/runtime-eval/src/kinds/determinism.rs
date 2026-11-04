@@ -591,9 +591,10 @@ fn base64(bytes: &[u8]) -> String {
     text
 }
 
-/// Every text request, then the image chat request when its chat template
-/// arguments are given (`determinism.request_set`).
-fn request_set(image: Option<&Value>) -> Vec<Request> {
+/// Every text request, then the image chat request when its answer-only
+/// switch is given (`determinism.request_set`); an empty member, the
+/// template options of a frontend that cannot disable thinking, is left out.
+fn request_set(image: Option<&Map<String, Value>>) -> Vec<Request> {
     let mut requests: Vec<Request> = SHORT_PROMPTS
         .iter()
         .map(|(name, prompt)| {
@@ -607,7 +608,7 @@ fn request_set(image: Option<&Value>) -> Vec<Request> {
     let long = completion(json!(long_prompt()), MAX_TOKENS);
     requests.push((LONG.into(), "/v1/completions", long.clone()));
     requests.push((LONG_REPEAT.into(), "/v1/completions", long));
-    if let Some(chat_template_kwargs) = image {
+    if let Some(control) = image {
         let url = format!("data:image/png;base64,{}", base64(IMAGE_PNG));
         let mut body = json!({
             "messages": [{"role": "user", "content": [
@@ -615,8 +616,13 @@ fn request_set(image: Option<&Value>) -> Vec<Request> {
                 {"type": "text", "text": IMAGE_QUESTION}]}],
             "temperature": 0, "top_p": 1, "max_tokens": MAX_TOKENS, "logprobs": true,
             "top_logprobs": TOP_LOGPROBS, "return_token_ids": true});
-        if truthy(chat_template_kwargs) {
-            body["chat_template_kwargs"] = chat_template_kwargs.clone();
+        if let Some(body) = body.as_object_mut() {
+            body.extend(
+                control
+                    .iter()
+                    .filter(|(_, value)| truthy(value))
+                    .map(|(key, value)| (key.clone(), value.clone())),
+            );
         }
         requests.push((IMAGE.into(), "/v1/chat/completions", body));
     }
@@ -872,12 +878,12 @@ impl Kind for Determinism {
             }
             .into()
         });
-        let chat_template_kwargs = if image {
-            Some(capture::answer_kwargs(capture)?)
+        let control = if image {
+            Some(capture::answer_control(capture)?)
         } else {
             None
         };
-        let mut requests = request_set(chat_template_kwargs.as_ref());
+        let mut requests = request_set(control.as_ref());
         // One request at a time: C1.
         let mut rows = Vec::new();
         for request in &requests {

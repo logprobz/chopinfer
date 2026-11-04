@@ -84,6 +84,91 @@
     }
   },
   {
+    "name": "json_schema_typed_const",
+    "schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "age",
+        "status",
+        "kind",
+        "address",
+        "tags",
+        "active",
+        "nickname",
+        "note"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "maxLength": 40
+        },
+        "age": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 150
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "active",
+            "inactive",
+            "pending"
+          ]
+        },
+        "kind": {
+          "type": "string",
+          "const": "person"
+        },
+        "address": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "city",
+            "zip"
+          ],
+          "properties": {
+            "city": {
+              "type": "string",
+              "maxLength": 40
+            },
+            "zip": {
+              "type": "string",
+              "maxLength": 10
+            }
+          }
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 20
+          },
+          "minItems": 1,
+          "maxItems": 3
+        },
+        "active": {
+          "type": "boolean"
+        },
+        "nickname": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 20
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "note": {
+          "type": "null"
+        }
+      }
+    }
+  },
+  {
     "name": "json_schema_compact",
     "schema": {
       "type": "object",

@@ -5,9 +5,12 @@
 //! Python's `structured.main --mechanics-only` must send the same requests
 //! and write the same receipt but for timing; every other capture must
 //! send and write what the retired Python capture did
-//! (tests/data/retired-captures.json). Python's `json.loads` and the port
-//! decode the same texts alike. The comparisons with Python are skipped
-//! when python3 is missing.
+//! (tests/data/retired-captures.json). Each shipped frontend that switches
+//! thinking with template keywords sends those recorded requests with its
+//! own keyword, and one with a thinking object sends what Python sends with
+//! that frontend's controls. Python's `json.loads` and the port decode the
+//! same texts alike. The comparisons with Python are skipped when python3
+//! is missing.
 
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read, Write};
@@ -298,9 +301,13 @@ fn case_of(path: &str, body: &Value) -> &'static str {
         }
     }
     let format = &body["response_format"];
+    let thinking = body["chat_template_kwargs"]
+        .as_object()
+        .is_some_and(|switches| switches.values().any(|value| *value == true))
+        || body["thinking"]["type"] == "enabled";
     if format["type"] == "json_object" {
         "chat_json_object"
-    } else if body["chat_template_kwargs"]["thinking"] == true {
+    } else if thinking {
         "reasoning_json_schema"
     } else if format["json_schema"]["strict"] == true {
         "chat_json_schema_strict"
@@ -572,17 +579,22 @@ fn capture(
 }
 
 /// Python's `structured.main` (a mechanics capture: `flags` hold
-/// --mechanics-only) against `url` with the frontend's thinking keyword and
-/// the module constants: its receipt.
+/// --mechanics-only) against `url` with the module constants: its receipt.
+/// Where `declared`, the frontend's controls are those `common` reads from
+/// it; otherwise the switch is the template keyword `thinking`.
 const MAIN: &str = "
 import json
 import common
 import structured
 spec = json.load(sys.stdin)
-structured.thinking_control = lambda enabled: {'chat_template_kwargs': {'thinking': enabled}}
-allowed = json.loads(open(spec['frontend']).read())['reasoning'].get('allow_disabled', True) is not False
-structured.thinking_can_be_disabled = lambda: allowed
-structured.answer_control = lambda: {'chat_template_kwargs': {'thinking': False} if allowed else {}}
+if spec['declared']:
+    declared = json.loads(open(spec['frontend']).read())
+    common.frontend = lambda: declared
+else:
+    structured.thinking_control = lambda enabled: {'chat_template_kwargs': {'thinking': enabled}}
+    allowed = json.loads(open(spec['frontend']).read())['reasoning'].get('allow_disabled', True) is not False
+    structured.thinking_can_be_disabled = lambda: allowed
+    structured.answer_control = lambda: {'chat_template_kwargs': {'thinking': False} if allowed else {}}
 structured.arguments = lambda description, model_facts=False: common.arguments(description)
 for name, entry in spec['constants'].get('structured', {}).items():
     setattr(structured, name, entry['value'])
@@ -602,6 +614,7 @@ fn python_main(
     flags: &[&str],
     constants: &Value,
     frontend: &Path,
+    declared: bool,
 ) -> Option<(Value, Log)> {
     let (url, log) = fake_server(outputs);
     let receipts = std::env::temp_dir().join(format!(
@@ -610,7 +623,7 @@ fn python_main(
     ));
     let _ = std::fs::remove_dir_all(&receipts);
     let spec = json!({"url": url, "constants": constants, "flags": flags,
-                      "frontend": frontend.to_str().unwrap()});
+                      "frontend": frontend.to_str().unwrap(), "declared": declared});
     let output = python(
         MAIN,
         spec.to_string().as_bytes(),
@@ -742,7 +755,7 @@ fn captured_as_python_does(
     if !mechanics {
         as_retired_python_wrote(&format!("structured/{name}"), &invariant(&log, &receipt));
     } else if let Some((python, python_log)) =
-        python_main(name, outputs, &flags, &constants, &frontend)
+        python_main(name, outputs, &flags, &constants, &frontend, false)
     {
         assert_eq!(requests(&log), requests(&python_log));
         let (ours, theirs) = (comparable(&receipt), comparable(&python));
@@ -798,22 +811,27 @@ fn rescored(receipt: &Value, mechanics: bool) -> kind::Rescored {
     kind::rescore(structured().as_ref(), receipt, None, &check, mechanics)
 }
 
+/// The arguments of the recorded `pass` capture.
+const PASS_ARGS: [&str; 11] = [
+    "--stream",
+    "--repeat",
+    "2",
+    "--seed",
+    "7",
+    "--temperature",
+    "0.5",
+    "--max-tokens",
+    "64",
+    "--reasoning-max-tokens",
+    "128",
+];
+
+/// The arguments of the recorded `reasons` capture.
+const REASONS_ARGS: [&str; 4] = ["--max-tokens", "64", "--reasoning-max-tokens", "128"];
+
 #[test]
 fn every_case_passes_against_a_conforming_server_as_in_python() {
-    let args = [
-        "--stream",
-        "--repeat",
-        "2",
-        "--seed",
-        "7",
-        "--temperature",
-        "0.5",
-        "--max-tokens",
-        "64",
-        "--reasoning-max-tokens",
-        "128",
-    ];
-    let receipt = captures_as_python_does("pass", valid, &args, json!({}), false);
+    let receipt = captures_as_python_does("pass", valid, &PASS_ARGS, json!({}), false);
     assert_eq!(statuses(&receipt), vec!["passed"; 48]);
     assert_eq!(receipt["passed"], true);
     assert_eq!(
@@ -831,10 +849,9 @@ fn every_case_passes_against_a_conforming_server_as_in_python() {
 /// send no switch and the reasoning budget, as in Python.
 #[test]
 fn answer_only_cases_reason_where_thinking_cannot_be_disabled() {
-    let args = ["--max-tokens", "64", "--reasoning-max-tokens", "128"];
-    let receipt = captured_as_python_does("reasons", valid, &args, json!({}), false, true);
+    let receipt = captured_as_python_does("reasons", valid, &REASONS_ARGS, json!({}), false, true);
     assert_eq!(receipt["passed"], true);
-    let (loaded, frontend) = declared("reasons-requests", &args, json!({}));
+    let (loaded, frontend) = declared("reasons-requests", &REASONS_ARGS, json!({}));
     let value = json!({"reasoning": {"thinking_keywords": ["thinking"], "allow_disabled": false}});
     std::fs::write(&frontend, value.to_string()).unwrap();
     let (url, log) = fake_server(valid);
@@ -855,6 +872,191 @@ fn answer_only_cases_reason_where_thinking_cannot_be_disabled() {
         assert_eq!(switch, &json!({}), "{body}");
         assert_eq!(body["max_tokens"], 128, "{body}");
     }
+}
+
+/// The shipped frontends' declarations with `switch` and their names.
+fn shipped_frontends(switch: &str) -> Vec<(String, Value)> {
+    let mut frontends = Vec::new();
+    for entry in std::fs::read_dir(root().join("models")).unwrap() {
+        let directory = entry.unwrap().path();
+        let path = directory.join("compiler/src/frontend.json");
+        if !path.is_file() {
+            continue;
+        }
+        let frontend = parse(&std::fs::read(path).unwrap()).unwrap();
+        let declared = frontend["reasoning"]["switch"]
+            .as_str()
+            .unwrap_or("template-keywords");
+        if declared == switch {
+            let name = directory.file_name().unwrap().to_str().unwrap().to_owned();
+            frontends.push((name, frontend));
+        }
+    }
+    frontends.sort_by(|a, b| a.0.cmp(&b.0));
+    frontends
+}
+
+/// A capture of `args` against a fresh server answering valid outputs,
+/// with `frontend` as the declared frontend: its receipt and what the
+/// server read.
+fn captured_with(name: &str, args: &[&str], frontend: &Value, mechanics: bool) -> (Value, Log) {
+    let (loaded, path) = declared(name, args, json!({}));
+    std::fs::write(&path, frontend.to_string()).unwrap();
+    let (url, log) = fake_server(valid);
+    let receipt = capture(&loaded, &url, Duration::from_secs(120), mechanics).unwrap();
+    (receipt, log)
+}
+
+/// Each shipped template-keyword frontend, as shipped and with the switch
+/// declared, sends the recorded requests byte for byte, its first keyword
+/// in place of `thinking`, and writes the recorded receipt.
+#[test]
+fn shipped_template_frontends_send_the_recorded_requests() {
+    let frontends = shipped_frontends("template-keywords");
+    for (name, frontend) in &frontends {
+        let reasons = frontend["reasoning"]["allow_disabled"] == false;
+        let (recorded, args) = if reasons {
+            ("reasons", &REASONS_ARGS[..])
+        } else {
+            ("pass", &PASS_ARGS[..])
+        };
+        let baseline = json!({"reasoning": {"thinking_keywords": ["thinking", "think"],
+                                            "allow_disabled": !reasons}});
+        let (baseline_receipt, baseline_log) =
+            captured_with(&format!("baseline-{name}"), args, &baseline, false);
+        as_retired_python_wrote(
+            &format!("structured/{recorded}"),
+            &invariant(&baseline_log, &baseline_receipt),
+        );
+        let keyword = frontend["reasoning"]["thinking_keywords"][0]
+            .as_str()
+            .unwrap();
+        let expected: Vec<_> = requests(&baseline_log)
+            .into_iter()
+            .map(|(line, body)| {
+                (
+                    line,
+                    body.replace("\"thinking\":", &format!("\"{keyword}\":")),
+                )
+            })
+            .collect();
+        let mut switched = frontend.clone();
+        switched["reasoning"]["switch"] = json!("template-keywords");
+        for (variant, frontend) in [("shipped", frontend), ("switched", &switched)] {
+            let (receipt, log) = captured_with(&format!("{variant}-{name}"), args, frontend, false);
+            let actual = requests(&log);
+            assert_eq!(actual.len(), expected.len(), "{name} {variant}: requests");
+            for (index, (actual, expected)) in actual.iter().zip(&expected).enumerate() {
+                assert_eq!(actual, expected, "{name} {variant}: request {index}");
+            }
+            assert_eq!(
+                canonical(&comparable(&receipt)),
+                canonical(&comparable(&baseline_receipt)),
+                "{name} {variant}: receipt"
+            );
+        }
+    }
+    let names: Vec<&str> = frontends.iter().map(|(name, _)| name.as_str()).collect();
+    eprintln!("template-keyword structured requests: {}", names.join(", "));
+    assert!(
+        names.len() >= 3,
+        "must cover the shipped template frontends"
+    );
+}
+
+/// Each shipped thinking-object frontend, as shipped and refusing disabled
+/// thinking, sends its switch as an object and never as template keywords:
+/// disabled on every answer-only chat case, the forced tool choices
+/// included, or absent with the reasoning budget where it cannot be
+/// disabled, and enabled on the reasoning case. A mechanics capture sends
+/// and writes what Python's does with the same frontend.
+#[test]
+fn thinking_object_frontends_send_the_declared_switch_as_python_does() {
+    let frontends = shipped_frontends("thinking-object");
+    for (name, frontend) in &frontends {
+        let mut reasons = frontend.clone();
+        reasons["reasoning"]["allow_disabled"] = json!(false);
+        for (variant, frontend) in [("shipped", frontend), ("reasons", &reasons)] {
+            let label = format!("{name} {variant}");
+            let disabled = frontend["reasoning"]["allow_disabled"] != false;
+            let (_, log) = captured_with(
+                &format!("object-{name}-{variant}"),
+                &REASONS_ARGS,
+                frontend,
+                false,
+            );
+            let chats: Vec<Value> = log
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|(line, _)| line.starts_with("POST /v1/"))
+                .map(|(_, body)| body.clone())
+                .collect();
+            assert_eq!(chats.len(), 12, "{label}");
+            for body in &chats {
+                assert!(
+                    body.get("chat_template_kwargs").is_none(),
+                    "{label}: {body}"
+                );
+                if body.get("messages").is_none() {
+                    assert!(body.get("thinking").is_none(), "{label}: {body}");
+                } else if case_of("/v1/chat/completions", body) == "reasoning_json_schema" {
+                    assert_eq!(body["thinking"], json!({"type": "enabled"}), "{label}");
+                    assert_eq!(body["max_tokens"], 128, "{label}");
+                } else if disabled {
+                    assert_eq!(
+                        body["thinking"],
+                        json!({"type": "disabled"}),
+                        "{label}: {body}"
+                    );
+                    assert_eq!(body["max_tokens"], 64, "{label}: {body}");
+                } else {
+                    assert!(body.get("thinking").is_none(), "{label}: {body}");
+                    assert_eq!(body["max_tokens"], 128, "{label}: {body}");
+                }
+            }
+            let forced = chats
+                .iter()
+                .filter(|body| body.get("tool_choice").is_some());
+            let switches: Vec<&Value> = forced.map(|body| &body["thinking"]).collect();
+            let expected = if disabled {
+                json!({"type": "disabled"})
+            } else {
+                Value::Null
+            };
+            assert_eq!(switches, [&expected, &expected], "{label}");
+            let (loaded, path) = declared(
+                &format!("object-{name}-{variant}-mechanics"),
+                &[],
+                json!({}),
+            );
+            std::fs::write(&path, frontend.to_string()).unwrap();
+            let (url, log) = fake_server(valid);
+            let receipt = capture(&loaded, &url, Duration::from_secs(120), true).unwrap();
+            let python = format!("object-{name}-{variant}");
+            if let Some((python, python_log)) = python_main(
+                &python,
+                valid,
+                &["--mechanics-only"],
+                &json!({}),
+                &path,
+                true,
+            ) {
+                assert_eq!(requests(&log), requests(&python_log), "{label}");
+                assert_eq!(
+                    String::from_utf8(canonical(&comparable(&receipt))).unwrap(),
+                    String::from_utf8(canonical(&comparable(&python))).unwrap(),
+                    "{label}"
+                );
+            }
+        }
+    }
+    let names: Vec<&str> = frontends.iter().map(|(name, _)| name.as_str()).collect();
+    eprintln!("thinking-object structured requests: {}", names.join(", "));
+    assert!(
+        !names.is_empty(),
+        "must cover the shipped thinking-object frontends"
+    );
 }
 
 #[test]

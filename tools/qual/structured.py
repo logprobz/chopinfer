@@ -30,7 +30,7 @@ PERSON = {
         "name": {"type": "string", "maxLength": 40},
         "age": {"type": "integer", "minimum": 0, "maximum": 150},
         "status": {"type": "string", "enum": ["active", "inactive", "pending"]},
-        "kind": {"const": "person"},
+        "kind": {"type": "string", "const": "person"},
         "address": {"type": "object", "additionalProperties": False, "required": ["city", "zip"],
                     "properties": {"city": {"type": "string", "maxLength": 40},
                                    "zip": {"type": "string", "maxLength": 10}}},

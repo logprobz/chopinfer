@@ -33,11 +33,12 @@ from test_gsm8k import examples
 
 
 # SHA-256 of all 43 request bodies serialized by json.dumps before the
-# transport change, including field order. The template frontends differ
-# here only in whether they allow thinking to be disabled.
+# transport change, including field order, with structured.PERSON's `kind`
+# typed as a string since. The template frontends differ here only in
+# whether they allow thinking to be disabled.
 LEGACY_BODIES = {
-    False: "cd45bf0aefdbfd9ebcef690704e7e884842b9f031103a7bda2fe5b9aa40e23f2",
-    True: "054e8ae5c49e6b6003fc0e8a315b88bfc50307245b5896a72f18be0909303544",
+    False: "a68cc0a94d79b0221442bb12903bb245d6d11c471f2b18f470f31028688b5040",
+    True: "8300ae3301ce2cb80a26951b505f0b947df72e80ad5fd91aba819a9d138aac42",
 }
 
 

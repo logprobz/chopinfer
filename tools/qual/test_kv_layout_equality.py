@@ -603,8 +603,6 @@ class TapsTests(unittest.TestCase):
                  "the captures differ in profile max_sequences"),
                 (lambda m: m["server"]["model_options"].update(fast_route=False),
                  "the captures differ in model_options"),
-                (lambda m: [m["server"].pop(key) for key in tap_binding.OPTIONS],
-                 "the comparison capture records no complete model_options and model_options_qualified"),
                 (lambda m: m["server"]["profile"].update(kv_cache_planes=NATIVE_PLANES),
                  "the comparison profile reports kv_cache_planes"),
                 (lambda m: m["server"]["profile"].update(kv_cache_dtype="mixed"),
@@ -660,6 +658,18 @@ class TapsTests(unittest.TestCase):
                 self.assertFalse(result["passed"])
                 self.assertIn(error, result["errors"])
                 self.assertNotIn("equal", result)
+        # Every recorded identity and option field is required, even when
+        # both captures lack it, before anything is compared.
+        for name, change, error in (
+                *((f"no {key}", lambda m, _, key=key: m["server"].pop(key), f"the server reports no {key}")
+                  for key in ("bundle_id", "version", "source_commit")),
+                ("blank version", lambda m, _: m["server"].update(version=" "), "the server reports no version"),
+                ("no options", lambda m, _: [m["server"].pop(key) for key in tap_binding.OPTIONS],
+                 "the capture records no complete model_options and model_options_qualified"),
+                ("empty options", lambda m, _: m["server"].update(model_options={}),
+                 "the capture records no complete model_options and model_options_qualified")):
+            with self.subTest(name), self.assertRaisesRegex(tap_binding.Unbound, error):
+                both(name, change)
         # Paired steps' metadata is compared with its types too.
         roots = [self.capture(layout, f"{layout}-typed-step") for layout in ("native", "bf16")]
         items = roots[1] / tap_binding.STEPS / "step0002" / "items.json"

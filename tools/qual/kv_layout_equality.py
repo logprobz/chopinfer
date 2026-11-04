@@ -21,8 +21,9 @@ The package identity may differ with the KV layout; both are reported.
 
 `taps` compares the two layouts' diagnostic taps instead: two captures from
 tools/qual/tap_binding.py capture, one from a diagnostic-taps server of each
-layout, each read offline (tap_binding.recorded: every step holds its
-recorded digests and names its process and its own request). It refuses
+layout, each read offline (tap_binding.recorded: every identity and option
+field is recorded, and every step holds its recorded digests and names its
+process and its own request). It refuses
 captures that differ in prompts (each request's name, path, body digest,
 primer and reported prompt and cached tokens, under tap_binding's cache
 rules), in steps (each request's steps, their capture.json and items.json
@@ -214,10 +215,6 @@ def capture_identities(native, comparison, native_planes, experimental=False):
         if not same(profiles[0].get(key), profiles[1].get(key)):
             errors.append(f"the captures differ in profile {key}")
     errors += layout_errors(*profiles, native_planes)
-    for side, server in zip(SIDES, servers):
-        if not (isinstance(server.get("model_options"), dict) and server["model_options"]
-                and type(server.get("model_options_qualified")) is bool):
-            errors.append(f"the {side} capture records no complete model_options and model_options_qualified")
     for key in tap_binding.OPTIONS:
         if not same(servers[0].get(key), servers[1].get(key)):
             errors.append(f"the captures differ in {key}")

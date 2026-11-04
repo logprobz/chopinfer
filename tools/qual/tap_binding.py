@@ -43,8 +43,9 @@ candidate is the process that wrote the steps; each step's files must
 hold their recorded digests (read without following links) and its own
 producer nonce and engine request IDs must be the recorded ones. An
 experimental capture is refused. `recorded` reads a capture offline with
-the same step checks, for a comparison of two captures
-(kv_layout_equality.py taps). A missing or differing binding raises
+the same step checks, requiring every IDENTITY and OPTIONS field, for a
+comparison of two captures (kv_layout_equality.py taps). A missing or
+differing binding raises
 Unbound: the evidence is insufficient.
 
 Usage:
@@ -101,6 +102,21 @@ def identity_of(serving):
     if not isinstance(identity["profile"], dict) or not identity["profile"].get("tensor_parallel_size"):
         raise Unbound("the server reports no serving profile")
     return identity
+
+
+def recorded_identity(server):
+    """The IDENTITY and OPTIONS fields a capture's manifest records, each
+    required: the fields identity_of checks, a nonblank bundle ID and
+    version, and the complete option map with its qualification flag. A tap
+    gate admits against identity_of alone."""
+    identity = identity_of(server)
+    for key in IDENTITY:
+        if key not in HEX and key != "profile" and not (isinstance(identity[key], str) and identity[key].strip()):
+            raise Unbound(f"the server reports no {key}")
+    options = server.get("model_options")
+    if not (isinstance(options, dict) and options and type(server.get("model_options_qualified")) is bool):
+        raise Unbound("the capture records no complete model_options and model_options_qualified")
+    return identity | {key: server[key] for key in OPTIONS}
 
 
 def options_of(serving):
@@ -310,11 +326,16 @@ def admit(directory, url, config):
 
 def recorded(directory):
     """(directory, manifest) of the capture in `directory`, read offline:
-    its identity fields and steps checked as `admit` checks them, but bound
-    to no live candidate. An experimental capture is returned; its caller
-    judges it (`experimental_marker`)."""
+    every identity and option field it records required
+    (`recorded_identity`), and its steps checked as `admit` checks them, but
+    bound to no live candidate. An experimental capture is returned; its
+    caller judges it (`experimental_marker`)."""
     directory, manifest = manifest_of(directory)
-    verify_steps(directory, manifest, identity_of(manifest["server"])["startup_nonce"])
+    try:
+        nonce = recorded_identity(manifest["server"])["startup_nonce"]
+    except Unbound as error:
+        raise Unbound(f"{directory}: {error}") from error
+    verify_steps(directory, manifest, nonce)
     return directory, manifest
 
 

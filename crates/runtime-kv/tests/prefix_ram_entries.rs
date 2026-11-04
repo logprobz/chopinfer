@@ -791,3 +791,28 @@ fn the_eviction_counter_adds_the_pages_each_eviction_frees() {
     pool.release(filler).unwrap();
     assert_eq!(pool.evicted_pages(), 3);
 }
+
+#[test]
+fn host_evictions_for_room_count_in_the_pool_metrics() {
+    let mut pool = ram_pool(32);
+    // Room for one three-page entry and a little more.
+    let mut tier = HostTier::new(&pool, 5).unwrap();
+    let first = chain(&(0..8).collect::<Vec<_>>());
+    let second = chain(&(100..108).collect::<Vec<_>>());
+    capture(&mut pool, &first, &[8]);
+    demote(&mut pool, &mut tier, first.key_at(8).unwrap());
+    assert_eq!(tier.public_entries(), (1, 3));
+    assert_eq!(pool.metrics().snapshot().prefix_ram_evictions, 0);
+    // The second demotion evicts the older entry for room.
+    capture(&mut pool, &second, &[8]);
+    demote(&mut pool, &mut tier, second.key_at(8).unwrap());
+    assert_eq!(tier.public_entries(), (1, 3));
+    assert!(pool.host_entry(first.key_at(8).unwrap()).is_none());
+    let snapshot = pool.metrics().snapshot();
+    assert_eq!(snapshot.prefix_ram_evictions, 1);
+    assert!(
+        snapshot
+            .prometheus()
+            .contains("\nchop_prefix_ram_evictions_total 1\n")
+    );
+}

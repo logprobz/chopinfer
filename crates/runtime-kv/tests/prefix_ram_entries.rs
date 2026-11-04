@@ -540,6 +540,33 @@ fn host_lookup_matches_ready_usable_entries_of_the_prompt() {
 }
 
 #[test]
+fn demotion_lookup_matches_usable_entries_whose_copy_is_in_flight() {
+    let prompt = chain(&(0..16).collect::<Vec<_>>());
+    let key = |depth| prompt.key_at(depth).unwrap();
+    let mut pool = ram_pool(48).with_prefix_ram_forced(true);
+    let mut tier = HostTier::new(&pool, 32).unwrap();
+    capture(&mut pool, &prompt, &[6]);
+    demote(&mut pool, &mut tier, key(6));
+    assert!(pool.remove_anchor(key(6)).unwrap());
+    assert_eq!(pool.lookup_host_demotion(&prompt, 15), None);
+    capture(&mut pool, &prompt, &[12]);
+    let (_, plan) = tier.begin_offload(&mut pool, key(12), None).unwrap();
+    assert!(pool.remove_anchor(key(12)).unwrap());
+    assert_eq!(pool.lookup_host_demotion(&prompt, 15), Some((key(12), 12)));
+    assert_eq!(pool.lookup_host_demotion(&prompt, 11), None);
+    assert_eq!(pool.lookup_host_anchor(&prompt, 15), Some((key(6), 6)));
+    // A recapture makes the entry in flight unusable.
+    capture(&mut pool, &prompt, &[12]);
+    assert_eq!(pool.lookup_host_demotion(&prompt, 15), None);
+    assert!(pool.remove_anchor(key(12)).unwrap());
+    tier.complete_transfer(&mut pool, completed(plan)).unwrap();
+    tier.drop_invalidated_entries(&mut pool).unwrap();
+    assert_eq!(pool.lookup_host_demotion(&prompt, 15), None);
+    assert_eq!(pool.lookup_host_anchor(&prompt, 15), Some((key(6), 6)));
+    tier.audit(&pool).unwrap();
+}
+
+#[test]
 fn eviction_skips_the_demotion_in_flight_and_logs_public_victims() {
     let prompts: Vec<_> = (1..=3).map(|n| chain(&[n; 8])).collect();
     let keys: Vec<_> = prompts.iter().map(|c| c.key_at(8).unwrap()).collect();

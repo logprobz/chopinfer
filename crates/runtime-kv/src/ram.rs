@@ -215,6 +215,25 @@ impl KvPool {
         })
     }
 
+    /// Finds the longest usable host entry of this prompt whose demotion is
+    /// still in flight, under the rules of [`Self::lookup_host_anchor`]. In
+    /// forced mode a capture's GPU anchor goes once its demotion starts, so
+    /// a repeat that finds one waits for the copy instead of recomputing.
+    #[must_use]
+    pub fn lookup_host_demotion(
+        &self,
+        chain: &PrefixChainV1,
+        limit: usize,
+    ) -> Option<(PrefixCacheKeyV1, usize)> {
+        let ram = self.ram.as_ref().filter(|ram| !ram.entries.is_empty())?;
+        self.longest_match(chain, limit, &ram.chains, |key| {
+            ram.entries
+                .get(key)
+                .filter(|entry| !entry.ready && !ram.invalidations.contains_key(key))
+                .map(|entry| entry.tokens)
+        })
+    }
+
     /// Takes the public evictions logged since the last call, oldest first,
     /// with how many the bound of [`PREFIX_EVICTION_LOG_V1`] discarded.
     pub fn drain_prefix_evictions(&mut self) -> (Vec<PrefixEvictionV1>, u64) {

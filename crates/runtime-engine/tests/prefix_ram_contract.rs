@@ -811,8 +811,10 @@ fn a_forced_recapture_is_demoted_once_its_older_copy_ends() {
         }
         let waited = !waiting.contains_key(&RequestId::new(3));
         release(engine);
+        // Each step progresses while B is queued: a step that reported
+        // idle would stop a serving worker with B still waiting.
         while !finished(&waiting, &[(3, &b, 3)]) {
-            step(engine, &mut waiting);
+            assert_eq!(step(engine, &mut waiting), StepStatus::Progressed);
         }
         outputs.extend(waiting);
         (outputs, waited)
@@ -831,12 +833,16 @@ fn a_forced_recapture_is_demoted_once_its_older_copy_ends() {
             ..model()
         },
     );
+    // Released, the older copy completes in the next step's first poll,
+    // with B the only request and no other copy pending.
     let (outputs, waited) = workload(&mut forced, &|engine| {
         assert_eq!(
             engine.executor().pending_copies(KvTransferClass::Demotion),
             1
         );
-        engine.executor_mut().held_sizes.clear();
+        let model = engine.executor_mut();
+        model.held_sizes.clear();
+        model.delay = 0;
     });
     // B resumed from no GPU anchor of A2's recapture: it waited for its
     // demotion, which started once the older copy ended.

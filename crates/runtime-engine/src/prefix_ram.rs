@@ -38,8 +38,9 @@
 //! the end of its step, in capture order and without the bounds above; the
 //! scheduler removes each GPU anchor as its demotion begins, so every hit
 //! is a RAM hit. A recapture whose key's older demotion still copies is
-//! demoted once that copy ends, and no admission resumes from it on the GPU
-//! meanwhile. A capture the host tier has no room for stays on the GPU.
+//! demoted at the first step start after that copy ends, before admission,
+//! and no admission resumes from it on the GPU meanwhile. A capture the host
+//! tier has no room for stays on the GPU.
 //!
 //! Each public GPU eviction without a ready host copy counts a miss, with
 //! the reason the driver last planned for its anchor (metrics::MissReason).
@@ -292,8 +293,11 @@ impl<E: ModelExecutor> Engine<E> {
 
     /// Starts the tier's step, after accepting completed transfers and
     /// before admission: settles promotions whose copies ended, drops the
-    /// host entries their publishes made unusable, and submits promotions
-    /// admission planned and left unsubmitted.
+    /// host entries their publishes made unusable, starts the forced
+    /// demotions deferred behind an older copy of their key, and submits
+    /// promotions admission planned and left unsubmitted. A deferred
+    /// demotion starts here rather than after the step's captures, so the
+    /// admission it unblocks, and the step's status, see its copy.
     pub(super) fn begin_prefix_ram_step(&mut self) -> Result<(), EngineError> {
         let Some(state) = self.offload.as_mut() else {
             return Ok(());
@@ -317,6 +321,9 @@ impl<E: ModelExecutor> Engine<E> {
             self.metrics.prefix_ram_promotion(settled.outcome);
         }
         self.drop_invalidated_host_entries()?;
+        for key in self.scheduler.forced_demotions() {
+            self.start_demotion(key)?;
+        }
         self.start_promotions()
     }
 
@@ -525,15 +532,7 @@ impl<E: ModelExecutor> Engine<E> {
         self.scheduler
             .drop_invalidated_host_entries(&mut state.tier)
             .map_err(EngineError::Scheduler)?;
-        let keys = match forced {
-            // The demotions deferred behind their key's older copy go first.
-            Some(captured) => {
-                let mut keys = self.scheduler.forced_demotions();
-                keys.extend(captured);
-                keys
-            }
-            None => self.plan_demotion().into_iter().collect(),
-        };
+        let keys = forced.unwrap_or_else(|| self.plan_demotion().into_iter().collect());
         for key in keys {
             self.start_demotion(key)?;
         }

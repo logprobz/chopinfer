@@ -359,13 +359,18 @@ impl<E: ModelExecutor> Engine<E> {
     /// are never cancelled.
     ///
     /// A cancel still pending at the executor's drain timeout is an overdue
-    /// copy like any other: it keeps its leases and its ledger entry, every
-    /// step polls it, and past its stall deadline it warns once and marks
-    /// the engine's copies stalled. No caller acts as if its pages were
-    /// free: a capture falls back as one that found no pages, batch
+    /// copy like any other: it keeps its leases, host references and ledger
+    /// entry, every step polls it, and past its stall deadline it warns once
+    /// and marks the engine's copies stalled. No caller acts as if its pages
+    /// were free: a capture falls back as one that found no pages, batch
     /// formation waits as it does for any pending copy, and admission does
     /// not run again. `chop_prefix_ram_cancel_timeouts_total` counts these
     /// cancels.
+    ///
+    /// Settlement, and with it a capture's retry, therefore holds only when
+    /// the issued DMA completes. A cancel that never settles leaves its
+    /// pages unusable for good: a device fault that health reports through
+    /// the stalled copies, not a state scheduling can resolve.
     pub(super) fn cancel_demotion_for_headroom(&mut self) -> Result<HeadroomCancel, EngineError> {
         let Some(state) = self.offload.as_mut() else {
             return Ok(HeadroomCancel::None);

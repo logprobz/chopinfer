@@ -71,6 +71,37 @@ def item(request, start, positions, tokens):
             "positions": positions, "tokens": tokens}
 
 
+class IndexDescriptorTests(unittest.TestCase):
+    """check_index holds a chopinfer.taps.v1 step's index to the descriptors
+    capture.json declares, compared with their JSON types. Needs no numpy."""
+
+    DESCRIPTOR = {"name": "L00.out", "rank": 0, "dtype": "f32", "cols": 1, "first_row": 0, "rows": 4}
+
+    def check(self, declared):
+        # tools/qual is on the path both as a script and under discover.
+        import tapdiff as module
+        with tempfile.TemporaryDirectory(dir=os.environ.get("TMPDIR")) as directory:
+            step = Path(directory) / "step0000"
+            step.mkdir()
+            (step / "capture.json").write_text(json.dumps({"schema": "chopinfer.taps.v1", "ranks": 1,
+                                                           "expected": [declared]}))
+            (step / "items.json").write_text(json.dumps({"items": []}))
+            (step / "index.jsonl").write_text(json.dumps(self.DESCRIPTOR) + "\n")
+            (step / "completion.json").write_text(json.dumps({"completion": "full", "reason": None}))
+            module.check_index(module.Step(step))
+
+    def test_declared_descriptors_must_equal_the_index_with_their_types(self):
+        self.check(self.DESCRIPTOR)
+        # A field capture.json does not declare is not compared.
+        self.check({key: value for key, value in self.DESCRIPTOR.items() if key != "rows"})
+        for field, value in (("rows", 4.0), ("cols", True), ("first_row", False), ("first_row", 0.0),
+                             ("rows", 5), ("dtype", "bf16")):
+            with self.subTest(field=field, value=value), self.assertRaisesRegex(
+                    ValueError, rf"L00\.out rank 0 has {field} {self.DESCRIPTOR[field]}, capture\.json declares "
+                                rf"{value}$"):
+                self.check(dict(self.DESCRIPTOR, **{field: value}))
+
+
 @unittest.skipIf(np is None, "needs numpy (set CHOPINFER_REFRUN_PYTHON)")
 class TapDiffTests(unittest.TestCase):
     def setUp(self):

@@ -459,7 +459,8 @@ class TapDir:
 def check_index(step):
     """Refuses a chopinfer.taps.v1 step whose index holds a tap and rank
     capture.json does not declare, or whose declared dtype, columns or rows
-    differ from the index."""
+    differ from the index, compared with their JSON types: `true` is not 1,
+    nor 4.0 4."""
     expected = step.capture.get("expected")
     if not isinstance(expected, list):
         raise ValueError(f"{step.dir}: capture.json declares no expected taps")
@@ -476,7 +477,7 @@ def check_index(step):
                 raise ValueError(f"{step.dir}: {name} rank {rank} is in the index but not in capture.json "
                                  "expected")
             for field in ("dtype", "cols", "first_row", "rows"):
-                if field in entry and entry[field] != part[field]:
+                if field in entry and diagnostic.canonical(entry[field]) != diagnostic.canonical(part[field]):
                     raise ValueError(f"{step.dir}: {name} rank {rank} has {field} {part[field]}, capture.json "
                                      f"declares {entry[field]}")
 

@@ -37,7 +37,9 @@
 //! Forced mode, for exactness runs only, demotes every public capture at
 //! the end of its step, in capture order and without the bounds above; the
 //! scheduler removes each GPU anchor as its demotion begins, so every hit
-//! is a RAM hit. A capture the host tier has no room for stays on the GPU.
+//! is a RAM hit. A recapture whose key's older demotion still copies is
+//! demoted once that copy ends, and no admission resumes from it on the GPU
+//! meanwhile. A capture the host tier has no room for stays on the GPU.
 //!
 //! Each public GPU eviction without a ready host copy counts a miss, with
 //! the reason the driver last planned for its anchor (metrics::MissReason).
@@ -518,7 +520,15 @@ impl<E: ModelExecutor> Engine<E> {
         self.scheduler
             .drop_invalidated_host_entries(&mut state.tier)
             .map_err(EngineError::Scheduler)?;
-        let keys = forced.unwrap_or_else(|| self.plan_demotion().into_iter().collect());
+        let keys = match forced {
+            // The demotions deferred behind their key's older copy go first.
+            Some(captured) => {
+                let mut keys = self.scheduler.forced_demotions();
+                keys.extend(captured);
+                keys
+            }
+            None => self.plan_demotion().into_iter().collect(),
+        };
         for key in keys {
             self.start_demotion(key)?;
         }
@@ -530,9 +540,11 @@ impl<E: ModelExecutor> Engine<E> {
             .offload
             .as_mut()
             .ok_or(EngineError::InvariantViolation)?;
-        // A forced capture may have gone since: evicted, recaptured or
-        // already copied.
+        // A forced capture may have gone since, evicted or already demoted.
+        // A recapture whose key's older demotion still copies is deferred
+        // until that copy ends.
         if !self.scheduler.prefix_demotable(&state.tier, key) {
+            self.scheduler.defer_forced_demotion(key);
             return Ok(());
         }
         match self.scheduler.begin_demotion(&mut state.tier, key) {

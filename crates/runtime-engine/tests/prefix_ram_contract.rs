@@ -87,6 +87,9 @@ struct Model {
     copies: BTreeMap<KvTransferId, Copy>,
     /// Classes whose copies stay pending until cancelled.
     held: Vec<KvTransferClass>,
+    /// Copies of these classes and page counts stay pending until
+    /// cancelled too.
+    held_sizes: Vec<(KvTransferClass, usize)>,
     /// Polls each copy stays pending first.
     delay: usize,
     /// The terminal status of each class's copies; complete otherwise.
@@ -205,7 +208,11 @@ impl ModelExecutor for Model {
             }
             return Ok(KvTransferPoll::Finished(completion));
         }
-        if self.held.contains(&class) {
+        if self.held.contains(&class)
+            || self
+                .held_sizes
+                .contains(&(class, copy.submission.pages().len()))
+        {
             return Ok(KvTransferPoll::Pending);
         }
         if copy.polls < self.delay {
@@ -788,6 +795,60 @@ fn forced_mode_turns_every_hit_into_a_ram_hit() {
         assert_eq!(promotions(&text, "ok"), hits);
         assert_eq!(metric(&text, "chop_prefix_ram_restore_seconds_count"), hits);
     }
+}
+
+#[test]
+fn a_forced_recapture_is_demoted_once_its_older_copy_ends() {
+    let a = prompt(1, 16);
+    let b = extended(&a, 4, 2);
+    let workload = |engine: &mut Engine<Model>, release: &dyn Fn(&mut Engine<Model>)| {
+        let mut outputs = run(engine, &[(1, &a, 1)]);
+        outputs.extend(run(engine, &[(2, &a, 1)]));
+        submit(engine, &[(3, &b, 3)]);
+        let mut waiting = Outputs::new();
+        for _ in 0..10 {
+            step(engine, &mut waiting);
+        }
+        let waited = !waiting.contains_key(&RequestId::new(3));
+        release(engine);
+        while !finished(&waiting, &[(3, &b, 3)]) {
+            step(engine, &mut waiting);
+        }
+        outputs.extend(waiting);
+        (outputs, waited)
+    };
+    let mut gpu = engine(64, None, model());
+    let (gpu_outputs, _) = workload(&mut gpu, &|_| {});
+    assert_eq!(gpu_outputs[&RequestId::new(3)].cached, Some(16));
+    // A's five-page demotion of its end stays copying, so A2, which
+    // resumes from A's eight-token entry, recaptures A's end while it
+    // copies.
+    let mut forced = engine(
+        64,
+        Some(tier(true, 16)),
+        Model {
+            held_sizes: vec![(KvTransferClass::Demotion, 5)],
+            ..model()
+        },
+    );
+    let (outputs, waited) = workload(&mut forced, &|engine| {
+        assert_eq!(
+            engine.executor().pending_copies(KvTransferClass::Demotion),
+            1
+        );
+        engine.executor_mut().held_sizes.clear();
+    });
+    // B resumed from no GPU anchor of A2's recapture: it waited for its
+    // demotion, which started once the older copy ended.
+    assert!(waited);
+    assert_eq!(outputs, gpu_outputs);
+    let kv = forced.kv_metrics().snapshot();
+    assert_eq!(
+        kv.prefix_cache_hits,
+        gpu.kv_metrics().snapshot().prefix_cache_hits
+    );
+    assert_eq!(kv.prefix_cache_ram_hits, kv.prefix_cache_hits);
+    assert_eq!(restored(&forced, 3), std::slice::from_ref(&a));
 }
 
 /// A pool of 12 pages whose only anchor, X's three pages, is under a

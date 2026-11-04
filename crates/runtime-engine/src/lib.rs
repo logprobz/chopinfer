@@ -3382,6 +3382,7 @@ impl<E: ModelExecutor> Engine<E> {
                     .prefix_state_call(true, self.clock.now_micros().saturating_sub(started));
                 match captured {
                     Ok(()) => {
+                        self.note_prefix_capture(&capture);
                         if self.scheduler.capture_swaps(&capture)
                             && let Err(error) = self.start_offload(&capture, true)
                         {

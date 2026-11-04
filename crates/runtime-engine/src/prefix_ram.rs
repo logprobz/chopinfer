@@ -31,10 +31,15 @@
 //! the pool exhausted, and when a promotion larger than the step's budget
 //! waits for no demotion to be outstanding. No demotion starts in a step
 //! that cancelled one, nor while such a promotion waits.
+//!
+//! Forced mode, for exactness runs only, demotes every public capture at
+//! the end of its step, in capture order and without the bounds above; the
+//! scheduler removes each GPU anchor as its demotion begins, so every hit
+//! is a RAM hit. A capture the host tier has no room for stays on the GPU.
 use super::*;
 use offload::TransferOwner;
 use runtime_kv::{KvError, KvTransferPoll, PrefixCacheKeyV1};
-use runtime_scheduler::{AdmissionReport, PrefixRamConfig};
+use runtime_scheduler::{AdmissionReport, PrefixCaptureV1, PrefixRamConfig};
 
 /// Steps the measured bounds look back over.
 const WINDOW_STEPS: usize = 16;
@@ -142,6 +147,8 @@ pub(super) struct PrefixRamDriver {
     evicted_mark: u64,
     /// A demotion was cancelled this step.
     cancelled: bool,
+    /// Forced mode: the public anchors captured since the last demotions.
+    captured: Vec<PrefixCacheKeyV1>,
 }
 
 impl PrefixRamDriver {
@@ -158,6 +165,7 @@ impl PrefixRamDriver {
             allocated_mark: scheduler.kv_allocated_pages(),
             evicted_mark: scheduler.kv_evicted_pages(),
             cancelled: false,
+            captured: Vec::new(),
         })
     }
 
@@ -169,6 +177,7 @@ impl PrefixRamDriver {
             allocated_mark: scheduler.kv_allocated_pages(),
             evicted_mark: scheduler.kv_evicted_pages(),
             cancelled: false,
+            captured: Vec::new(),
             ..self.clone()
         }
     }
@@ -349,9 +358,20 @@ impl<E: ModelExecutor> Engine<E> {
         Ok(())
     }
 
+    /// Notes a capture the bundle wrote, which forced mode demotes after the
+    /// step's captures.
+    pub(super) fn note_prefix_capture(&mut self, capture: &PrefixCaptureV1) {
+        if let (Some(ram), Some(key)) = (self.prefix_ram_driver(), capture.public_key())
+            && ram.config.forced
+        {
+            ram.captured.push(key);
+        }
+    }
+
     /// After the step's captures: measures the step's allocation and
     /// eviction, drops the host entries the captures made unusable, and
-    /// starts a demotion when none is outstanding and one fits.
+    /// starts a demotion when none is outstanding and one fits, or in forced
+    /// mode demotes every capture.
     pub(super) fn drive_prefix_ram(&mut self) -> Result<(), EngineError> {
         let Some(state) = self.offload.as_mut() else {
             return Ok(());
@@ -360,16 +380,27 @@ impl<E: ModelExecutor> Engine<E> {
             return Ok(());
         };
         ram.measure(&self.scheduler);
+        let forced = ram.config.forced.then(|| std::mem::take(&mut ram.captured));
         self.scheduler
             .drop_invalidated_host_entries(&mut state.tier)
             .map_err(EngineError::Scheduler)?;
-        let Some(key) = self.plan_demotion() else {
-            return Ok(());
-        };
+        let keys = forced.unwrap_or_else(|| self.plan_demotion().into_iter().collect());
+        for key in keys {
+            self.start_demotion(key)?;
+        }
+        Ok(())
+    }
+
+    fn start_demotion(&mut self, key: PrefixCacheKeyV1) -> Result<(), EngineError> {
         let state = self
             .offload
             .as_mut()
             .ok_or(EngineError::InvariantViolation)?;
+        // A forced capture may have gone since: evicted, recaptured or
+        // already copied.
+        if !self.scheduler.prefix_demotable(&state.tier, key) {
+            return Ok(());
+        }
         match self.scheduler.begin_demotion(&mut state.tier, key) {
             Ok(plan) => self.submit_anchor_transfer(
                 TransferOwner::Demotion {
@@ -436,6 +467,7 @@ mod tests {
             allocated_mark: 0,
             evicted_mark: 0,
             cancelled: false,
+            captured: Vec::new(),
         };
         // With nothing measured, the lead is one chunk and one snapshot past
         // the deferred promotion, and F is the promotion and the swap-ins.

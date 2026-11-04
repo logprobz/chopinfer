@@ -17,6 +17,10 @@ selects an install whose output bits differ, including sampled A/B requests.
 TUNE_STUB_TOKEN_INSTALL changes a token ID instead; TUNE_STUB_LOADED_INSTALL
 reports normally loaded weights for one install. TUNE_STUB_IGNORE_FULL_ALLOCATION
 omits allocation at one concurrency, while smaller cohorts may still allocate.
+TUNE_STUB_ENGRAM_WAIT_US adds that Engram wait, as exposed prepared-gather time,
+to every step of the visits TUNE_STUB_ENGRAM_WAIT_LABELS lists (comma-separated);
+TUNE_STUB_MAPPED_RESIDENCY sets the mapped-view residency /metrics reports
+(default 1).
 """
 import argparse
 import hashlib
@@ -73,6 +77,9 @@ def stub(args):
         provenance['identity_sha256'] = hashlib.sha256(body).hexdigest()
     (Path(args.directory) / 'stub-install.json').write_text(json.dumps(provenance) + '\n')
     preempt = os.environ.get('TUNE_STUB_PREEMPT') == label
+    engram_wait = (int(os.environ.get('TUNE_STUB_ENGRAM_WAIT_US', '0'))
+                   if label in os.environ.get('TUNE_STUB_ENGRAM_WAIT_LABELS', '').split(',') else 0)
+    residency = float(os.environ.get('TUNE_STUB_MAPPED_RESIDENCY', '1'))
     ignore = os.environ.get('TUNE_STUB_IGNORE_DEPTHS') == label
     ignore_confidence = os.environ.get('TUNE_STUB_IGNORE_CONFIDENCE') == label
     claim_confidence = os.environ.get('TUNE_STUB_CLAIM_CONFIDENCE') == label
@@ -160,10 +167,10 @@ def stub(args):
                     state['accepted'][j] = state['accepted'].get(j, 0) + 1
                 emitted.append(1 + accepted)
             state['verify_items'] += verify_items
-            micros = 12_000 + 600 * rows + 4000 * bool(verify_items)
+            micros = 12_000 + 600 * rows + 4000 * bool(verify_items) + engram_wait
             state['clock_ns'] = time.time_ns() if os.environ.get('TUNE_STUB_CLOSED_LOOP') else state['clock_ns'] + micros * 1000
             if os.environ.get('TUNE_STUB_CLOSED_LOOP'):
-                micros = 1000
+                micros = 1000 + engram_wait
             print(json.dumps({
                 'schema': 'chopinfer.step.v1', 'batch': state['batch'], 'prefill_tokens': prefill,
                 'prefill_items': items if prefill else 0, 'decode_rows': 0 if prefill else items - verify_items,
@@ -173,7 +180,7 @@ def stub(args):
                 'accepted_tokens': sum(emitted) - items,
                 'verify_emitted_tokens': sum(n for n, k in zip(emitted, drafts) if k or allocated),
                 'execution_us': micros, 'completed_unix_ns': state['clock_ns'],
-                'host': {'mapped_gather_us': 300 if prefill else 10},
+                'host': {'mapped_gather_us': 300 if prefill else 10, 'mapped_gather_exposed_us': engram_wait},
                 'route': {'fallback_launches': 0, 'families': {}},
                 'speculation': {'mode': mode, 'items': items, 'reason': 'balanced'}}), flush=True)
         time.sleep(.0005)
@@ -243,6 +250,8 @@ def stub(args):
                 lines += [f'chop_spec_drafted_position_total{{{label},position="{j}"}} {n}' for j, n in drafted.items()]
                 lines += [f'chop_spec_accepted_position_total{{{label},position="{j}"}} {accepted.get(j, 0)}'
                           for j in drafted]
+                lines += ['chop_mapped_view_bytes 1000000', 'chop_mapped_view_residency_visible 1',
+                          f'chop_mapped_view_resident_bytes {round(residency * 1_000_000)}']
                 self.respond('\n'.join(lines) + '\n', 'text/plain')
             else:
                 self.send_error(404)

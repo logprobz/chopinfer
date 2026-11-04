@@ -628,6 +628,47 @@ costs, sweep or recorded adapters. Leave `EXPECTED_POWER_W` and
 `--expected-power-w` unset. The tuner never changes limits or clocks, and
 neither is a tuning key.
 
+## Engram-adjusted step time
+
+Mapped Engram rows that miss the page cache make steps wait, so host
+residency adds variance to DeepSeek A/B step times. A `mode: ab` model
+config may declare:
+
+```json
+"step_time": {"primary": "adjusted", "changes_engram": false}
+```
+
+Adjusted time subtracts each step's Engram wait, step.v1
+`host.mapped_gather_us` plus `host.mapped_gather_exposed_us`
+([trace fields](operations-observability.md#trace-scheduler-steps)), from the
+completion-to-completion cycle of decode and verify cells and from the
+execution time of prefill cells. The primary metric decides verdicts,
+weights and the A1 control check; `ab.json` and `ab.md` report the other
+metric's visit medians and verdict beside it. Without the declaration, or
+with `"primary": "raw"`, raw time decides as before.
+
+Request-rate cells (`decode:cN`) stay raw, because a window's boundary steps
+hold waits from outside it. Under adjusted time they carry weight 0 and
+cannot be targets or carry positive `cell_weights`, so jobs with table arms,
+which those cells decide, must choose raw. Adjusted time is also refused
+outside `mode: ab`, with `cold_engram`, with `changes_engram` true (a change
+to an Engram path is judged on raw time) and when an arm's `env` names a
+mapped-row or Engram control. Staging validates the declaration, and the
+report checks `config.json` against the sealed capture, so the metric cannot
+change after a result. A receipt without that binding, or without both wait
+fields in every decided step, reads only as raw.
+
+The 1,000-major-fault visit limit applies unchanged to both metrics:
+adjusted time removes only the wait on the critical path, not the CPU and
+I/O contention faults cause. `ab.json` and `ab.md` also list each visit's
+measured-window faults and the range of the server's `chop_mapped_view_*`
+residency samples at its windows' starts and ends; the server refreshes
+them every 60 seconds. `summary.md` window lines add raw and adjusted median
+step times, and `costs.md` an adjusted column per step shape.
+`TUNE_STUB_ENGRAM_WAIT_US` with `TUNE_STUB_ENGRAM_WAIT_LABELS`
+(comma-separated visit labels) adds an Engram wait to the stub's steps;
+`TUNE_STUB_MAPPED_RESIDENCY` sets the residency it reports.
+
 ## Cold Engram workload
 
 For matched latency acceptance, opt in with:
@@ -680,7 +721,8 @@ Without `matched`, the existing unmatched cold behavior below is unchanged.
 Select `tools/tune/workloads/cold-engram.json` with `mode: ab`. Cold cells are
 labelled **cold, unmatched prompts**, excluded from automatic timing and
 energy acceptance. They report each arm's TTFT, prefill execution time,
-step.v1 `host.mapped_gather_us` and residency. Metric spread is max/min minus
+step.v1 `host.mapped_gather_us` and `host.mapped_gather_exposed_us`, and
+residency. Metric spread is max/min minus
 one across visit medians. Priming is excluded; cold request latencies and
 prefill steps can include drain when a prefill outlasts the measurement.
 Such a window can have zero timed output tokens and no J/token result.
@@ -719,8 +761,8 @@ It requires the applied acknowledgement, then issues
 resume with unseen prompts. Untouched mappings and `mincore` measure each
 view before/after advice and after the window. Any post-advice resident
 fraction at least `warm_fraction` labels it `partly warm`; advice alone
-never proves eviction. `mapped_gather_us` covers synchronous gathers;
-prepared asynchronous reads require their own attribution trace.
+never proves eviction. `mapped_gather_us` covers synchronous gathers and
+`mapped_gather_exposed_us` the waits on prepared ones.
 
 CPU clocks and residency are synthetic. `TUNE_STUB_RESIDENCY` tests partly
 warm labeling, and `TUNE_STUB_PREFILL_DELAY_SECONDS` tests prefill drain.

@@ -438,6 +438,10 @@ with an in-job A/A help locate work to improve.
   are not counted.
 - Report each cell and weight cells by served shapes: decode C1, C2, C4,
   C8, C16 and C32, and DSpark verify widths 6, 8, 16, 32 and 64.
+- A comparison may declare before the job that
+  [Engram-adjusted step time](depth-tuning.md#engram-adjusted-step-time)
+  decides its step cells. A change to an Engram path is judged on raw
+  time, and the major-fault limit applies to both.
 
 For a prefill route, declare `prefill_rows` by concurrency in the tuner
 model, for example `{"1": [192, 256]}`, and name the affected target as

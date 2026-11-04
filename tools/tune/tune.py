@@ -443,15 +443,22 @@ def full_concurrency(steps, c):
 def cells(steps):
     """Each decode or verify step's cycle time (from the previous step's
     completion) and execution time in milliseconds, by `i{items}-r{rows}`,
-    over steps without prefill in either."""
+    over steps without prefill in either; and, aligned with the cycle
+    times, each step's Engram wait when every step of the cell reports it."""
     out = {}
     for a, b in zip(steps, steps[1:]):
         if b['prefill_items'] or a['prefill_items'] or b['batch'] != a['batch'] + 1:
             continue
-        cell = out.setdefault(shape_key(b), {'cycle_ms': [], 'execution_ms': []})
+        cell = out.setdefault(shape_key(b), {'cycle_ms': [], 'execution_ms': [], 'engram_wait_ms': []})
         cell['cycle_ms'].append((b['completed_unix_ns'] - a['completed_unix_ns']) / 1e6)
         if b.get('execution_us') is not None:
             cell['execution_ms'].append(b['execution_us'] / 1000)
+        wait = report.engram_wait_us(b)
+        if cell['engram_wait_ms'] is not None:
+            cell['engram_wait_ms'] = None if wait is None else cell['engram_wait_ms'] + [wait / 1000]
+    for cell in out.values():
+        if cell['engram_wait_ms'] is None:
+            del cell['engram_wait_ms']
     return out
 
 
@@ -459,10 +466,25 @@ def merge_cells(parts):
     out = {}
     for part in parts:
         for key, cell in part.items():
-            into = out.setdefault(key, {'cycle_ms': [], 'execution_ms': []})
+            into = out.setdefault(key, {'cycle_ms': [], 'execution_ms': [], 'engram_wait_ms': []})
             into['cycle_ms'] += cell['cycle_ms']
             into['execution_ms'] += cell['execution_ms']
+            if 'engram_wait_ms' in into:
+                if 'engram_wait_ms' in cell:
+                    into['engram_wait_ms'] += cell['engram_wait_ms']
+                else:
+                    del into['engram_wait_ms']
     return out
+
+
+def step_medians(step_cells):
+    """A window's median decode and verify step time in milliseconds, raw
+    and less each step's Engram wait (None without that evidence)."""
+    raw = [v for cell in step_cells.values() for v in cell['cycle_ms']]
+    adjusted = ([c - w for cell in step_cells.values() for c, w in zip(cell['cycle_ms'], cell['engram_wait_ms'])]
+                if all('engram_wait_ms' in cell for cell in step_cells.values()) else [])
+    return {'raw': statistics.median(raw) if raw else None,
+            'adjusted': statistics.median(adjusted) if adjusted else None}
 
 
 def batched_finishes(steps, c, sent_ns):
@@ -681,8 +703,29 @@ def tokenize(server, prompts):
     return out
 
 
-def scrape(server):
-    return spec_metrics.snapshot(r.http(server.url, '/metrics'), 'chopinfer', r.MODEL)
+def scrape(server, text=None):
+    return spec_metrics.snapshot(r.http(server.url, '/metrics') if text is None else text, 'chopinfer', r.MODEL)
+
+
+MAPPED_GAUGES = ('chop_mapped_view_bytes', 'chop_mapped_view_resident_bytes', 'chop_mapped_view_residency_visible')
+
+
+def mapped_residency(text):
+    """The server's latest mapped-view residency sample (refreshed every
+    60 s) from /metrics text; None without mapped views or while residency
+    is hidden."""
+    values = {}
+    for line in text.splitlines():
+        name, _, value = line.partition(' ')
+        if name in MAPPED_GAUGES:
+            try:
+                values[name] = float(value)
+            except ValueError:
+                return None
+    mapped, resident = values.get('chop_mapped_view_bytes'), values.get('chop_mapped_view_resident_bytes')
+    if not mapped or resident is None or values.get('chop_mapped_view_residency_visible') != 1:
+        return None
+    return {'bytes': int(mapped), 'resident_bytes': int(resident), 'resident_fraction': resident / mapped}
 
 
 def acceptance(before, after):
@@ -1005,7 +1048,8 @@ def closed_loop(server, name, inputs, tokens, sampling, seeds, power, seconds=15
             cold_state = before_measure() if before_measure else None
             if errors:
                 raise errors[0]
-            before = scrape(server)
+            text = r.http(server.url, '/metrics')
+            before, residency = scrape(server, text), {'start': mapped_residency(text)}
             initial = faults.snapshot(server)
             started, start_ns = time.monotonic(), time.time_ns()
             deadline = timing['deadline'] = started + duration
@@ -1016,7 +1060,8 @@ def closed_loop(server, name, inputs, tokens, sampling, seeds, power, seconds=15
                 stop.wait(min(.01, max(0, deadline - time.monotonic())))
             final = faults.snapshot(server)
             ended, end_ns = final['monotonic_seconds'], time.time_ns()
-            after = scrape(server)
+            text = r.http(server.url, '/metrics')
+            after, residency['end'] = scrape(server, text), mapped_residency(text)
         finally:
             stop.set()
             resume.set()
@@ -1038,7 +1083,7 @@ def closed_loop(server, name, inputs, tokens, sampling, seeds, power, seconds=15
         energy['joules_per_token'] = None
     return {'started': started, 'ended': ended, 'steps': measured, 'requests': requests,
             'cold_steps': [s for s in steps if s['completed_unix_ns'] >= start_ns],
-            'faults': faults.difference(initial, final), 'tokens': emitted,
+            'faults': faults.difference(initial, final), 'mapped_residency': residency, 'tokens': emitted,
             'energy': energy, 'window_seconds': duration,
             'cached_prompt_tokens': sum(row['cached_prompt_tokens'] for row in requests),
             'priming': {'completed_requests': len(primed), 'per_slot_completed': primed,
@@ -1113,7 +1158,8 @@ def run_ab_windows(server, arm, state, power, root, cold=None):
                      'priming': w['priming'], 'replacement_submissions': w['replacement_submissions'],
                      'prefill_share': w['prefill_share'], 'request_tokens_per_second': w['tokens'] / (w['ended'] - w['started']),
                      'request_seconds': w['ended'] - w['started'], 'synthetic': server.dry,
-                     'full': full, 'cells': step_cells, 'faults': w['faults'],
+                     'full': full, 'cells': step_cells, 'step_ms_median': step_medians(step_cells),
+                     'faults': w['faults'], 'mapped_residency': w.get('mapped_residency'),
                      'fallback_launches': route['fallback_launches'], 'acceptance': w['acceptance'],
                      'allocated_steps': check_allocations(name, w['cold_steps'] if cold else w['steps'], record['confidence']['enabled'],
                                                          allocation_possible(config, arm, c)),
@@ -1122,8 +1168,8 @@ def run_ab_windows(server, arm, state, power, root, cold=None):
                 cold_state = w['cold_preparation']
                 cold_state['after_window'] = cold.sample()
                 value['cold_engram'] = cold_state
-                value['mapped_gather_us'] = [s['host']['mapped_gather_us'] for s in w['cold_steps']
-                                            if 'mapped_gather_us' in s.get('host', {})]
+                for field in ('mapped_gather_us', 'mapped_gather_exposed_us'):
+                    value[field] = [s['host'][field] for s in w['cold_steps'] if field in s.get('host', {})]
                 value['prefill_execution_us'] = [s['execution_us'] for s in w['cold_steps'] if s['prefill_items']]
                 value['ttft_seconds'] = [row['first_token'] - row['submitted'] for row in w['requests']
                                          if row['submitted'] >= w['started']]
@@ -1389,12 +1435,14 @@ def run_windows(server, arm, state, power, root, passes, reference):
                      'energy': merge_energy([w['energy'] for w in parts], groups * c * tokens),
                      'faults': [w['faults'] for w in parts],
                      'prompts': [p['sha256'] for p in SEAL['prompts'][:groups * c]]}
+            value['step_ms_median'] = step_medians(value['cells'])
             if not value['full']['steps']:
                 raise RuntimeError(f'{label} {name} {tag}: no full-concurrency steps')
             r.write(root / 'windows' / f'{name}-r{repeat}.json',
                     {**value, 'steps': [w['steps'] for w in parts], 'exact': exact})
             record['windows'][f'{name}-r{repeat}'] = {k: value[k] for k in
-                                                    ('request_tokens_per_second', 'full', 'install', 'revision')}
+                                                    ('request_tokens_per_second', 'full', 'install', 'revision',
+                                                     'step_ms_median')}
             wanted = state['reference'].get(name)
             if wanted is None:
                 raise RuntimeError(f'{label} {name}: no reference output')
@@ -1536,6 +1584,23 @@ def run_arm(run, arm, state, dry, keep, reference_pass, warmup_only=False):
                 save(run, state)
 
 
+def window_conditions(value):
+    """A summary line's median step times, raw and less the Engram wait, the
+    window's major faults and its mapped-view residency samples."""
+    out = ''
+    medians = value.get('step_ms_median') or {}
+    if medians.get('raw') is not None:
+        out += f", step {medians['raw']:.2f} ms"
+        if medians.get('adjusted') is not None:
+            out += f" (adjusted {medians['adjusted']:.2f} ms)"
+    if isinstance(value.get('faults'), dict) and 'major_faults' in value['faults']:
+        out += f", {value['faults']['major_faults']} major faults"
+    samples = [sample['resident_fraction'] for sample in (value.get('mapped_residency') or {}).values() if sample]
+    if samples:
+        out += f", residency {min(samples):.1%}-{max(samples):.1%}"
+    return out
+
+
 def save(run, state):
     out = {k: v for k, v in state.items() if k not in ('reference', 'tokens', 'deferred', 'unseen', 'cold_pools')}
     r.write(run / 'summary.json', out)
@@ -1552,7 +1617,8 @@ def save(run, state):
         for name, value in row['windows'].items():
             full = value['full']
             lines.append(f"  {name}: {value['request_tokens_per_second']:.1f} tok/s, full {full['steps']} steps "
-                         f"{full['tokens_per_second']:.1f} tok/s, {dict(Counter(full['histogram']).most_common(3))}")
+                         f"{full['tokens_per_second']:.1f} tok/s, {dict(Counter(full['histogram']).most_common(3))}"
+                         + window_conditions(value))
     exact_label = 'Paired exactness' if state['mode'] == 'ab' else 'Exact against W0'
     lines += ['', *(f'{exact_label}: {k} in {n} timed windows' for k, n in sorted(state['exact'].items()))]
     if state.get('windows'):

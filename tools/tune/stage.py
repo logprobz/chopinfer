@@ -432,6 +432,10 @@ def main():
         if not args.template and not cold.get('images'):
             raise SystemExit('cold_engram needs explicit rank image sources and Engram view ranges')
     tune.check_kv_config(config)
+    if 'step_time' in model:
+        # Sealed with the capture, so the metric cannot change after a result.
+        import report
+        report.step_time(config)
     if model.get('mode') == 'ab' and model.get('speculation_mode') != 'off' and not model.get('keeper', True):
         raise SystemExit('A/B speculative visits require keeper staging')
     seconds = check_budget(config, len(built['prompts']))

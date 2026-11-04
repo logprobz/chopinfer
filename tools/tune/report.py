@@ -40,6 +40,61 @@ sys.path.insert(0, str(HERE))
 import prefill_report  # noqa: E402
 
 
+def engram_wait_us(step):
+    """A step's Engram wait on its critical path: synchronous mapped-gather
+    host time plus prepared gathers' exposed device waits (step.v1
+    `host.mapped_gather_us` and `host.mapped_gather_exposed_us`); None when
+    the build reports either one not."""
+    host = step.get('host') or {}
+    values = [host.get(key) for key in ('mapped_gather_us', 'mapped_gather_exposed_us')]
+    return sum(values) if all(type(v) is int and v >= 0 for v in values) else None
+
+
+def step_time(config):
+    """The declared primary step-time metric: `raw` unless the model's
+    `step_time` selects `adjusted`, which subtracts each step's Engram wait.
+    A change that can alter Engram timing, and any verdict that adjusted
+    times cannot decide, keeps raw time."""
+    model = config['model']
+    declared = model.get('step_time')
+    if declared is None:
+        return 'raw'
+    if (not isinstance(declared, dict) or set(declared) != {'primary', 'changes_engram'}
+            or declared['primary'] not in ('raw', 'adjusted') or type(declared['changes_engram']) is not bool):
+        raise ValueError('step_time needs primary "raw" or "adjusted" and a boolean changes_engram')
+    if declared['primary'] == 'raw':
+        return 'raw'
+    if declared['changes_engram']:
+        raise ValueError('a change to an Engram path must choose raw step time')
+    if model.get('mode') != 'ab':
+        raise ValueError('adjusted step time decides only mode ab verdicts')
+    if config.get('cold_engram') or model.get('cold_engram'):
+        raise ValueError('cold Engram jobs measure Engram timing; they must choose raw step time')
+    for arm in model.get('arms', []):
+        if arm.get('speculation') == 'table':
+            raise ValueError('table arms are decided by request rates, which stay raw; choose raw step time')
+        if any('MAPPED' in key or 'ENGRAM' in key for key in arm.get('env') or {}):
+            raise ValueError(f"{arm.get('label')}: an arm that sets a mapped-row or Engram control must "
+                             'choose raw step time')
+    weighted = [key for key, weight in model.get('cell_weights', {}).items() if weight]
+    rates = {key for key in [*(model.get('target_cells') or []), *weighted] if re.fullmatch(r'decode:c\d+', key)}
+    if rates:
+        raise ValueError(f"request-rate cells stay raw under adjusted step time: {', '.join(sorted(rates))}")
+    return 'adjusted'
+
+
+def bind_config(config, summary):
+    """Refuse a config.json that differs from the capture its job sealed. A
+    receipt without the binding predates it and reads only as raw."""
+    capture = summary.get('capture_identity')
+    if capture is not None:
+        import depth_identity
+        if capture.get('config_sha256') != depth_identity.digest(config):
+            raise ValueError('config.json differs from the sealed capture')
+    elif 'step_time' in config['model']:
+        raise ValueError('a declared step_time needs the sealed capture binding')
+
+
 def load(run, allow_void=False):
     run = Path(run)
     summary = run / 'summary.json'
@@ -54,7 +109,8 @@ def load(run, allow_void=False):
             steps = record.pop('steps', [])
             if config['model'].get('prefill_rows'):
                 fields = ('prefill_items', 'prefill_tokens', 'decode_rows', 'verify_items', 'execution_us')
-                record['prefill_steps'] = [{key: step.get(key, 0) for key in fields}
+                record['prefill_steps'] = [{**{key: step.get(key, 0) for key in fields},
+                                            'engram_wait_us': engram_wait_us(step)}
                                            for step in steps if step.get('prefill_items')]
             del steps
             rows.append({**record, 'label': directory.parent.name, '_file': path.stem})
@@ -338,7 +394,12 @@ def costs(run):
     for row in rows:
         for key, cell in (row.get('cells') or {}).items():
             into = table.setdefault((row['arm'] if separate else '', key),
-                                    {'cycle_ms': [], 'execution_ms': [], 'arms': set()})
+                                    {'cycle_ms': [], 'execution_ms': [], 'adjusted_ms': [], 'arms': set()})
+            waits = cell.get('engram_wait_ms')
+            # Adjusted times need every merged step's Engram wait.
+            into['adjusted_ms'] = (None if into['adjusted_ms'] is None or waits is None
+                                   or len(waits) != len(cell['cycle_ms']) else
+                                   into['adjusted_ms'] + [c - w for c, w in zip(cell['cycle_ms'], waits)])
             into['cycle_ms'] += cell['cycle_ms']
             into['execution_ms'] += cell['execution_ms']
             into['arms'].add(row['label'])
@@ -352,7 +413,8 @@ def costs(run):
         cells[key] = {'items': items, 'rows': rows_, 'steps': len(cell['cycle_ms']),
                       'cycle_ms_median': median(cell['cycle_ms']), 'cycle_ms_p10': percentile(cell['cycle_ms'], .1),
                       'cycle_ms_p90': percentile(cell['cycle_ms'], .9),
-                      'execution_ms_median': median(cell['execution_ms']), 'arms': sorted(cell['arms'])}
+                      'execution_ms_median': median(cell['execution_ms']),
+                      'adjusted_ms_median': median(cell['adjusted_ms'] or []), 'arms': sorted(cell['arms'])}
         if shape[3] is not None:
             cells[key].update(verify_items=int(shape[3]), reserved=int(shape[4]))
         if separate:
@@ -395,8 +457,9 @@ def costs(run):
     (run / 'costs.json').write_text(json.dumps(out, indent=2, sort_keys=True) + '\n')
     lines = [f"# {config['name']}: step cost per verify width", '', *install_lines(out['arm_installs']),
              'Per (items, rows): steps, median / p10 / p90 cycle ms (completion to completion), median execution '
-             'ms, arms.', '', '| items | rows | steps | cycle median | p10 | p90 | execution | arms |',
-             '|---:|---:|---:|---:|---:|---:|---:|---|']
+             'ms, median cycle ms less each step\'s Engram wait (`-` without that evidence), arms.', '',
+             '| items | rows | steps | cycle median | p10 | p90 | execution | adjusted | arms |',
+             '|---:|---:|---:|---:|---:|---:|---:|---:|---|']
     for cell in out['cells'].values():
         form = lambda v: '-' if v is None else f'{v:.2f}'
         shape = str(cell['rows'])
@@ -404,7 +467,8 @@ def costs(run):
             shape += f" (v{cell['verify_items']}, R{cell['reserved']})"
         lines.append(f"| {cell['items']} | {shape} | {cell['steps']} | {form(cell['cycle_ms_median'])} | "
                      f"{form(cell['cycle_ms_p10'])} | {form(cell['cycle_ms_p90'])} | "
-                     f"{form(cell['execution_ms_median'])} | {' '.join(cell['arms'])} |")
+                     f"{form(cell['execution_ms_median'])} | {form(cell['adjusted_ms_median'])} | "
+                     f"{' '.join(cell['arms'])} |")
     lines += ['', '| window | repeats | request tok/s | spread | full tok/s | J/token |', '|---|---:|---:|---:|---:|---:|']
     for key, value in windows.items():
         lines.append(f"| {key} | {value['repeats']} | {value['request_median']:.1f} | {value['request_spread']:.1%} | "
@@ -590,24 +654,50 @@ def energy_check(cells):
             'rule': 'Equal-weight mean J/token increase above 3%, positive at every active concurrency.'}
 
 
+def primary_metric(model):
+    """The metric that decides step-time verdicts: the declared `step_time`
+    primary, which `step_time()` validates, or raw."""
+    return (model.get('step_time') or {}).get('primary', 'raw')
+
+
+def other_verdict(values, change):
+    """A paired result for the metric that does not decide; None when its
+    visit medians are missing or not positive."""
+    try:
+        result = paired([1 / v for v in values], change)
+    except (TypeError, ValueError, ZeroDivisionError):
+        return None
+    return {key: result[key] for key in ('d1', 'd2', 'mean', 'spread', 'verdict')}
+
+
 def decision_cells(model, selected, c, change):
-    """Only adequately sampled full-concurrency shapes can decide timing."""
+    """Only adequately sampled full-concurrency shapes can decide timing. Each
+    cell keeps raw cycle times and, where every step reports its Engram wait,
+    adjusted ones (cycle less the wait); the declared primary decides."""
     weights = model.get('cell_weights', {})
     minimum = model.get('min_cell_steps', 20)
     share = model.get('min_cell_time_share')
+    primary = primary_metric(model)
     if type(minimum) is not int or minimum < 1 or (share is not None and not 0 < share <= 1):
         raise ValueError('invalid minimum cell evidence')
-    normalized = []
+    normalized, adjusted_rows = [], []
     for row in selected:
-        cells = {}
+        cells, adjusted = {}, {}
         for shape, data in row['cells'].items():
             if not re.fullmatch(r'i\d+-r\d+(?:-v\d+-R\d+)?', shape):
                 raise ValueError('invalid served cell shape')
             values = data['cycle_ms']
             if any(not math.isfinite(v) or v <= 0 for v in values):
                 raise ValueError('invalid step cycle time')
-            cells.setdefault(shape.split('-v')[0], []).extend(values)
+            key = shape.split('-v')[0]
+            cells.setdefault(key, []).extend(values)
+            waits = data.get('engram_wait_ms')
+            part = (None if waits is None or len(waits) != len(values)
+                    else [cycle - wait for cycle, wait in zip(values, waits)])
+            previous = adjusted.get(key, [])
+            adjusted[key] = None if previous is None or part is None else previous + part
         normalized.append(cells)
+        adjusted_rows.append(adjusted)
     required = set(model.get('required_shapes', {}).get(str(c), []))
     shapes = set().union(*normalized) | required
     result = {}
@@ -621,6 +711,9 @@ def decision_cells(model, selected, c, change):
                                      or (width > items and width in (6, 8, 16, 32, 64))))
         nominal = weights.get(f'c{c}/{shape}', weights.get(key, default)) if items == c else 0
         values = [row.get(shape, []) for row in normalized]
+        adjusted = [row.get(shape, []) for row in adjusted_rows]
+        if any(v is None or any(x <= 0 for x in v) for v in adjusted):
+            adjusted = None
         counts = [len(v) for v in values]
         shares = [sum(v) / (row['request_seconds'] * 1000) for v, row in zip(values, selected)]
         supported = [n >= minimum or (share is not None and fraction >= share)
@@ -628,8 +721,12 @@ def decision_cells(model, selected, c, change):
         paired_shape = len(selected) == 4 and all(supported)
         eligible = items == c and paired_shape
         cell = {'steps': counts, 'time_share': shares, 'cycle_ms_median': [median(v) for v in values],
-                'nominal_weight': nominal,
+                'adjusted_ms_median': None if adjusted is None else [median(v) for v in adjusted],
+                'metric': primary, 'nominal_weight': nominal,
                 'supported': supported, 'weight': nominal if eligible else 0, 'decision': eligible and nominal > 0}
+        if primary == 'adjusted' and adjusted is None and eligible:
+            raise ValueError(f'c{c}/{shape}: adjusted step time needs a positive Engram-adjusted time '
+                             'for every step of every visit')
         if shape in required and not eligible:
             raise ValueError(f'required shape {shape} is missing, unpaired or insufficiently sampled')
         if items != c or not any(supported):
@@ -639,7 +736,10 @@ def decision_cells(model, selected, c, change):
         elif not paired_shape:
             cell.update(verdict='unmatched', reason='coverage gap')
         else:
-            cell.update(paired([1 / median(v) for v in values], change))
+            decided, other = (values, adjusted) if primary == 'raw' else (adjusted, values)
+            cell.update(paired([1 / median(v) for v in decided], change))
+            cell['adjusted' if primary == 'raw' else 'raw'] = (
+                None if other is None else other_verdict([median(v) for v in other], change))
         result[shape] = cell
     return result
 
@@ -667,14 +767,16 @@ def control_offsets(config, rows):
                 if len(selected) != 4 or not all(cell.get('supported', [False])):
                     checks[key] = {'status': 'unavailable', 'reason': 'needs support in all four visits'}
                     continue
-                values = cell['cycle_ms_median']
+                values = cell['adjusted_ms_median' if cell['metric'] == 'adjusted' else 'cycle_ms_median']
                 a1, later = values[0], values[1:]
                 offset = a1 / median(later) - 1
                 noise = max(later) / min(later) - 1
                 threshold = max(noise, .005)
                 detected = ((a1 < min(later) or a1 > max(later)) and abs(offset) > threshold
                             and not math.isclose(abs(offset), threshold, abs_tol=1e-12))
-                checks[key] = {'status': 'offset' if detected else 'clear', 'cycle_ms_median': values,
+                checks[key] = {'status': 'offset' if detected else 'clear', 'metric': cell['metric'],
+                               'cycle_ms_median': cell['cycle_ms_median'],
+                               'adjusted_ms_median': cell['adjusted_ms_median'],
                                'offset': offset, 'later_spread': noise, 'threshold': threshold}
     statuses = [cell['status'] for cell in checks.values()]
     return {'status': 'offset' if 'offset' in statuses else 'clear' if 'clear' in statuses else 'unavailable',
@@ -701,6 +803,8 @@ def cold_report(selected):
         rows = [row for row in selected if row['arm'] == arm]
         result[arm] = {field: distribution([median(row[field]) for row in rows]) for field in
                       ('ttft_seconds', 'prefill_execution_us', 'mapped_gather_us')}
+        result[arm]['mapped_gather_exposed_us'] = distribution(
+            [median(row.get('mapped_gather_exposed_us', [])) for row in rows])
         result[arm]['residency'] = [row['cold_engram'] for row in rows]
         result[arm]['prompt_lengths'] = [row.get('prompt_lengths', []) for row in rows]
     return result
@@ -781,21 +885,72 @@ def matched_cold_report(config, rows, spec, out, lines):
                   'All declared lengths and both latency metrics are required; rates are inverse latency.', '']
 
 
+def visit_conditions(rows, summary):
+    """Each visit's measured-window faults and the range of the server's
+    mapped-view residency samples at its windows' starts and ends."""
+    out = {}
+    for label, process in summary.get('processes', {}).items():
+        faults = process.get('faults') or {}
+        samples = [sample['resident_fraction'] for row in rows if row['label'] == label
+                   for sample in (row.get('mapped_residency') or {}).values() if sample]
+        out[label] = {'major_faults': faults.get('major_faults'), 'minor_faults': faults.get('minor_faults'),
+                      'residency': {'min': min(samples), 'max': max(samples)} if samples else None}
+    return out
+
+
+def visit_lines(visits):
+    form = lambda v: '-' if v is None else str(v)
+    lines = ['', 'Per visit: measured-window faults and mapped-view residency (latest server samples at '
+             'window starts and ends).', '', '| visit | major faults | minor faults | residency |',
+             '|---|---:|---:|---|']
+    for label, value in visits.items():
+        residency = value['residency']
+        lines.append(f"| {label} | {form(value['major_faults'])} | {form(value['minor_faults'])} | "
+                     + ('-' if residency is None else f"{residency['min']:.1%}-{residency['max']:.1%}") + ' |')
+    return lines
+
+
+def step_time_lines(pairs):
+    """Raw and adjusted visit medians, in A1, B1, B2, A2 order, of every cell
+    with a paired step-time verdict."""
+    form = lambda values: '-' if values is None else ' / '.join(f'{v:.3f}' for v in values)
+    lines = ['', 'Step-time medians in ms per visit (raw, and less the Engram wait), with both verdicts:', '',
+             '| Pair / cell | metric | raw | adjusted | raw verdict | adjusted verdict |', '|---|---|---|---|---|---|']
+    for key, pair in pairs.items():
+        for c, result in pair.items():
+            cells = {**{f'c{c}/{shape}': cell for shape, cell in result.get('cells', {}).items()},
+                     **result.get('prefill_cells', {})}
+            for name, cell in cells.items():
+                if 'd1' not in cell:
+                    continue
+                raw = cell.get('cycle_ms_median', cell.get('execution_ms_median'))
+                verdicts = {cell['metric']: cell['verdict']}
+                for metric in ('raw', 'adjusted'):
+                    if metric != cell['metric']:
+                        verdicts[metric] = (cell.get(metric) or {}).get('verdict', 'unavailable')
+                lines.append(f"| {key} {name} | {cell['metric']} | {form(raw)} | {form(cell.get('adjusted_ms_median'))} | "
+                             f"{verdicts['raw']} | {verdicts['adjusted']} |")
+    return lines
+
+
 def ab(run):
     """Contract A decisions preserve matched pairs and never pool void jobs."""
     run = Path(run)
     config, rows = load(run, allow_void=True)
     summary = json.loads((run / 'summary.json').read_text())
+    bind_config(config, summary)
+    primary = step_time(config)
     import tune
     matched = tune.matched_cold(config)
     validity = ({'status': 'void', 'reason': summary.get('void_reason', 'power limits changed within job')}
                 if summary.get('status') == 'void' else ab_validity(config, rows, summary))
     # Provenance covers every window, a leading visit's included.
     installs = arm_installs(run, rows)
+    visits = visit_conditions(rows, summary)
     rows = measured_rows(config, rows)
     cold = bool(config.get('cold_engram'))
     out = {**validity, 'pairs': {}, 'weighted': {}, 'mechanics_only': summary.get('dry_run', False),
-           'arm_installs': installs,
+           'arm_installs': installs, 'step_time': primary, 'visits': visits,
            'contract_a_admissible': validity['status'] == 'valid' and not summary.get('dry_run', False) and (not cold or bool(matched))}
     if config['model'].get('kv_pages') == 'default':
         out['kv_pages_per_rank'] = {label: process.get('kv_pages_per_rank')
@@ -806,6 +961,8 @@ def ab(run):
              *install_lines(out['arm_installs']),
              'A1 control check: ' + validity.get('a1_control_check', {}).get('status', 'unavailable') + '.',
              validity.get('reason') or '', '',
+             f'Step time: {primary} decides the step cells'
+             + ('; request-rate cells stay raw and informational.' if primary == 'adjusted' else '.'), '',
              'Timing uses supported paired cells with positive weight. Arm-specific shapes and coverage gaps '
              'are informational; declared targets and required shapes remain mandatory.', '',
              '| Pair / cell | d1 | d2 | mean | spread | verdict | weight |',
@@ -850,7 +1007,8 @@ def ab(run):
                                   cold_engram=cold_report(selected))
                     lines += [f'| {key} C{c} | - | - | - | - | cold, unmatched prompts | 0 |']
                     for arm, values in result['cold_engram'].items():
-                        for field in ('ttft_seconds', 'prefill_execution_us', 'mapped_gather_us'):
+                        for field in ('ttft_seconds', 'prefill_execution_us', 'mapped_gather_us',
+                                      'mapped_gather_exposed_us'):
                             value = values[field]
                             lines += [f"{arm} C{c} {field}: median {value['median']}, spread {value['spread']:.2%}."]
                     continue
@@ -860,7 +1018,11 @@ def ab(run):
                     result.update(verdict='short control', weight=0)
                     continue
                 result.update(paired([row['request_tokens_per_second'] for row in selected], change))
-                result['weight'] = model.get('cell_weights', {}).get(f'decode:c{c}', int(c in (1, 2, 4, 8, 16, 32)))
+                # A window's boundary steps hold waits from outside it, so
+                # request rates cannot be adjusted; they stay raw.
+                result['metric'] = 'raw'
+                result['weight'] = (0 if primary == 'adjusted' else
+                                    model.get('cell_weights', {}).get(f'decode:c{c}', int(c in (1, 2, 4, 8, 16, 32))))
                 result['cells'] = decision_cells(model, selected, c, change)
                 current = {f'decode:c{c}': result}
                 current.update({f'c{c}/{shape}': cell for shape, cell in result['cells'].items()})
@@ -910,6 +1072,7 @@ def ab(run):
             lines += ['', f"{key}: {weighted['verdict']}; timing acceptance: {weighted['timing_accepted']}; "
                       f"energy veto: {weighted['energy_check']['veto']} (provisional).",
                       'Coverage gaps: ' + (', '.join(weighted['coverage_gaps']) or 'none') + '.', '']
+    lines += step_time_lines(out['pairs']) + visit_lines(visits)
     (run / 'ab.json').write_text(json.dumps(out, indent=2) + '\n')
     (run / 'ab.md').write_text('\n'.join(lines) + '\n')
     return out

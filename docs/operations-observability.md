@@ -1015,9 +1015,9 @@ finish priming and retain replacement counts, prefill share and observed
 duration. Supported undrafted or declared untouched control shapes check
 for a first-visit A1 offset; a detected offset invalidates timing acceptance.
 The cold window also retains
-`host.mapped_gather_us` from step.v1, TTFT and prefill execution times;
-`mapped_gather_us` covers synchronous gathers and is not a complete measure
-of prepared asynchronous gathers. These fields can overlap other host phases.
+`host.mapped_gather_us` and `host.mapped_gather_exposed_us` from step.v1,
+TTFT and prefill execution times. These fields can overlap other host phases.
+A/B jobs can decide on [Engram-adjusted step time](depth-tuning.md#engram-adjusted-step-time).
 
 ## Inspect sampled steps
 

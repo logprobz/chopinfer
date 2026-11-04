@@ -2981,5 +2981,270 @@ class PrefillReport(unittest.TestCase):
 
 
 
+
+def bind_ab_fixture(root, config):
+    """Seal a fixture's config.json the way a job's capture binds it."""
+    summary = json.loads((root / 'summary.json').read_text())
+    summary['capture_identity'] = {'schema': 'chopinfer-depth-capture.v1',
+                                   'config_sha256': depth_identity.digest(config)}
+    tune.r.write(root / 'config.json', config)
+    tune.r.write(root / 'summary.json', summary)
+
+
+def with_waits(root, waits):
+    """Give every window cell's steps the Engram wait waits(row) in ms."""
+    for path in root.glob('*/windows/*.json'):
+        row = json.loads(path.read_text())
+        for cell in row['cells'].values():
+            cell['engram_wait_ms'] = [waits(row)] * len(cell['cycle_ms'])
+        tune.r.write(path, row)
+
+
+ADJUSTED = {'primary': 'adjusted', 'changes_engram': False}
+
+
+class EngramAdjusted(unittest.TestCase):
+    def test_step_time_declarations_keep_engram_changes_and_rates_raw(self):
+        base = {'model': {'mode': 'ab', 'arms': [{'label': 'a', 'depth': 1}, {'label': 'b', 'depth': 1}]}}
+        def declare(step_time, config=None, **model):
+            config = config or base
+            return report.step_time({**config, 'model': {**config['model'], **model, 'step_time': step_time}})
+        self.assertEqual(report.step_time(base), 'raw')
+        self.assertEqual(declare({'primary': 'raw', 'changes_engram': True}), 'raw')
+        self.assertEqual(declare(ADJUSTED), 'adjusted')
+        self.assertEqual(declare(ADJUSTED, cell_weights={'decode:c8': 0}), 'adjusted')
+        for step_time, extra, message in [
+                ({'primary': 'adjusted'}, {}, 'boolean changes_engram'),
+                ({'primary': 'adjusted', 'changes_engram': 0}, {}, 'boolean changes_engram'),
+                ({'primary': 'fastest', 'changes_engram': False}, {}, 'primary'),
+                ({'primary': 'adjusted', 'changes_engram': True}, {}, 'Engram path'),
+                (ADJUSTED, {'mode': 'costs'}, 'mode ab'),
+                (ADJUSTED, {'cold_engram': {'images': []}}, 'cold Engram'),
+                (ADJUSTED, {'arms': [{'label': 'a', 'env': {'CHOPINFER_MAPPED_READ_AHEAD': '0'}}]}, 'Engram control'),
+                (ADJUSTED, {'arms': [{'label': 'a', 'env': {'CHOPINFER_DSPARK_ENGRAM_EARLY': '0'}}]}, 'Engram control'),
+                (ADJUSTED, {'arms': [{'label': 't', 'speculation': 'table', 'costs': '1:1:0:0:0'}]}, 'table arms'),
+                (ADJUSTED, {'target_cells': ['decode:c8']}, 'request-rate'),
+                (ADJUSTED, {'cell_weights': {'decode:c8': 1}}, 'request-rate')]:
+            with self.subTest(step_time=step_time, extra=extra):
+                with self.assertRaisesRegex(ValueError, message):
+                    declare(step_time, **extra)
+        # A job-level cold workload is refused as well.
+        with self.assertRaisesRegex(ValueError, 'cold Engram'):
+            declare(ADJUSTED, {**base, 'cold_engram': {'images': []}})
+
+    def test_staging_refuses_adjusted_time_for_an_engram_change(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            model = frozen_fixture(root)
+            model['step_time'] = {'primary': 'adjusted', 'changes_engram': True}
+            result = stage_fixture(root, model)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn('Engram path', result.stderr)
+            self.assertFalse((root / 'stage/staged.json').exists())
+
+    def test_adjusted_cells_decide_with_raw_verdicts_beside_them(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config, _ = ab_fixture(root)
+            # Arm a's raw cycles (1 ms against b's 0.909 ms) include a 0.15 ms
+            # Engram wait per step: adjusted, b is slower.
+            with_waits(root, lambda row: .15 if row['arm'] == 'a' else 0)
+            config['model']['step_time'] = ADJUSTED
+            bind_ab_fixture(root, config)
+            out = report.ab(root)
+            self.assertEqual(out['step_time'], 'adjusted')
+            result = out['pairs']['a/b']['8']
+            cell = result['cells']['i8-r32']
+            self.assertEqual((cell['metric'], cell['verdict'], cell['raw']['verdict']),
+                             ('adjusted', 'resolved regression', 'resolved gain'))
+            self.assertEqual([round(v, 3) for v in cell['adjusted_ms_median']], [.85, .909, .909, .85])
+            self.assertEqual([round(v, 3) for v in cell['cycle_ms_median']], [1, .909, .909, 1])
+            # The request rate stays raw and decides nothing.
+            self.assertEqual((result['metric'], result['weight'], result['verdict']), ('raw', 0, 'resolved gain'))
+            self.assertEqual(out['weighted']['a/b']['verdict'], 'resolved regression')
+            self.assertEqual(out['weighted']['a/b']['weight'], 1)
+            text = (root / 'ab.md').read_text()
+            self.assertIn('Step time: adjusted decides the step cells', text)
+            self.assertIn('| a/b c8/i8-r32 | adjusted | 1.000 / 0.909 / 0.909 / 1.000 | '
+                          '0.850 / 0.909 / 0.909 / 0.850 | resolved gain | resolved regression |', text)
+            self.assertEqual(out['visits']['a-r0'], {'major_faults': 0, 'minor_faults': None, 'residency': None})
+            self.assertIn('| a-r0 | 0 | - | - |', text)
+            # A raw declaration over the same evidence decides on cycles.
+            config['model']['step_time'] = {'primary': 'raw', 'changes_engram': True}
+            bind_ab_fixture(root, config)
+            out = report.ab(root)
+            cell = out['pairs']['a/b']['8']['cells']['i8-r32']
+            self.assertEqual((cell['metric'], cell['verdict'], cell['adjusted']['verdict']),
+                             ('raw', 'resolved gain', 'resolved regression'))
+            self.assertEqual(out['pairs']['a/b']['8']['weight'], 1)
+            self.assertTrue(out['weighted']['a/b']['timing_accepted'])
+            self.assertIsNotNone(report.costs(root)['cells']['i8-r32']['adjusted_ms_median'])
+
+    def test_historical_receipts_read_raw_and_cannot_be_adjusted(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config, _ = ab_fixture(root)
+            out = report.ab(root)
+            cell = out['pairs']['a/b']['8']['cells']['i8-r32']
+            self.assertEqual((out['step_time'], cell['metric'], cell['verdict']), ('raw', 'raw', 'resolved gain'))
+            self.assertIsNone(cell['adjusted_ms_median'])
+            self.assertIsNone(cell['adjusted'])
+            self.assertIn('| a/b c8/i8-r32 | raw | 1.000 / 0.909 / 0.909 / 1.000 | - | resolved gain | unavailable |',
+                          (root / 'ab.md').read_text())
+            self.assertIsNone(report.costs(root)['cells']['i8-r32']['adjusted_ms_median'])
+            config['model']['step_time'] = ADJUSTED
+            tune.r.write(root / 'config.json', config)
+            with self.assertRaisesRegex(ValueError, 'sealed capture binding'):
+                report.ab(root)
+            bind_ab_fixture(root, config)
+            with self.assertRaisesRegex(ValueError, 'Engram-adjusted time'):
+                report.ab(root)
+
+    def test_a_bound_metric_choice_cannot_change_after_the_result(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config, _ = ab_fixture(root)
+            with_waits(root, lambda row: .15 if row['arm'] == 'a' else 0)
+            config['model']['step_time'] = {'primary': 'raw', 'changes_engram': False}
+            bind_ab_fixture(root, config)
+            self.assertEqual(report.ab(root)['step_time'], 'raw')
+            for step_time in (ADJUSTED, None):
+                with self.subTest(step_time=step_time):
+                    changed = json.loads(json.dumps(config))
+                    if step_time is None:
+                        changed['model'].pop('step_time')
+                    else:
+                        changed['model']['step_time'] = step_time
+                    tune.r.write(root / 'config.json', changed)
+                    with self.assertRaisesRegex(ValueError, 'differs from the sealed capture'):
+                        report.ab(root)
+
+    def test_adjusted_time_keeps_the_visit_fault_limit(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config, summary = ab_fixture(root)
+            with_waits(root, lambda row: .15 if row['arm'] == 'a' else 0)
+            config['model']['step_time'] = ADJUSTED
+            bind_ab_fixture(root, config)
+            self.assertEqual(report.ab(root)['status'], 'valid')
+            summary = json.loads((root / 'summary.json').read_text())
+            summary['processes']['b-r0']['faults']['major_faults'] = 1001
+            tune.r.write(root / 'summary.json', summary)
+            with self.assertRaisesRegex(ValueError, 'fault evidence'):
+                report.ab(root)
+
+    def test_cells_keep_engram_waits_only_with_complete_evidence(self):
+        def step(batch, host):
+            return {'batch': batch, 'prefill_items': 0, 'decode_rows': 1, 'verify_items': 0, 'verify_rows': 0,
+                    'completed_unix_ns': batch * 2_000_000, 'execution_us': 1500, 'host': host}
+        steps = [step(i, {'mapped_gather_us': 100, 'mapped_gather_exposed_us': 400}) for i in range(4)]
+        complete = tune.cells(steps)
+        self.assertEqual(complete['i1-r1']['engram_wait_ms'], [.5] * 3)
+        self.assertEqual(tune.step_medians(complete), {'raw': 2.0, 'adjusted': 1.5})
+        older = [step(i, {'mapped_gather_us': 100}) if i == 2 else s for i, s in enumerate(steps)]
+        partial = tune.cells(older)
+        self.assertNotIn('engram_wait_ms', partial['i1-r1'])
+        self.assertEqual(tune.step_medians(partial), {'raw': 2.0, 'adjusted': None})
+        merged = tune.merge_cells([complete, partial])
+        self.assertEqual(len(merged['i1-r1']['cycle_ms']), 6)
+        self.assertNotIn('engram_wait_ms', merged['i1-r1'])
+        self.assertEqual(tune.merge_cells([complete, complete])['i1-r1']['engram_wait_ms'], [.5] * 6)
+        self.assertEqual(report.engram_wait_us({'host': {'mapped_gather_us': 0, 'mapped_gather_exposed_us': 0}}), 0)
+        self.assertIsNone(report.engram_wait_us({'host': {'mapped_gather_us': 1, 'mapped_gather_exposed_us': None}}))
+        self.assertIsNone(report.engram_wait_us({'execution_us': 1}))
+
+    def test_mapped_residency_reads_visible_server_samples_only(self):
+        gauges = ('# TYPE chop_mapped_view_bytes gauge\nchop_mapped_view_bytes 4000\n'
+                  'chop_mapped_view_residency_visible 1\nchop_mapped_view_resident_bytes 3400\n')
+        self.assertEqual(tune.mapped_residency(gauges),
+                         {'bytes': 4000, 'resident_bytes': 3400, 'resident_fraction': .85})
+        hidden = 'chop_mapped_view_bytes 4000\nchop_mapped_view_residency_visible 0\n'
+        for text in (hidden, '', 'chop_mapped_view_bytes 0\nchop_mapped_view_residency_visible 1\n'
+                                 'chop_mapped_view_resident_bytes 0\n'):
+            with self.subTest(text=text):
+                self.assertIsNone(tune.mapped_residency(text))
+        self.assertEqual(tune.window_conditions({'step_ms_median': {'raw': 2.0, 'adjusted': 1.5},
+                                                 'faults': {'major_faults': 3},
+                                                 'mapped_residency': {'start': {'resident_fraction': .85},
+                                                                      'end': {'resident_fraction': .9}}}),
+                         ', step 2.00 ms (adjusted 1.50 ms), 3 major faults, residency 85.0%-90.0%')
+
+    def test_prefill_waits_survive_receipt_loading(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            prefill_fixture(root, gain=0)
+            for path in root.glob('*/windows/*.json'):
+                row = json.loads(path.read_text())
+                for step in row['steps']:
+                    # Arm b's r192 prefill steps wait 10 ms longer on Engram rows.
+                    wait = 10_000 if row['arm'] == 'b' and step['prefill_tokens'] == 192 else 0
+                    step['execution_us'] += wait
+                    step['host'] = {'mapped_gather_us': 0, 'mapped_gather_exposed_us': wait}
+                for cell in row['cells'].values():
+                    cell['engram_wait_ms'] = [0] * len(cell['cycle_ms'])
+                path.write_text(json.dumps(row))
+            config = json.loads((root / 'config.json').read_text())
+            config['model']['step_time'] = ADJUSTED
+            bind_ab_fixture(root, config)
+            waits = {step['engram_wait_us'] for row in report.load(root)[1] for step in row['prefill_steps']}
+            self.assertEqual(waits, {0, 10_000})
+            cell = report.ab(root)['pairs']['a/b']['1']['prefill_cells']['prefill:c1:r192']
+            self.assertEqual(cell['execution_ms_median'], [100, 110, 110, 100])
+            self.assertEqual(cell['adjusted_ms_median'], [100] * 4)
+            self.assertEqual((cell['metric'], cell['verdict'], cell['raw']['verdict']),
+                             ('adjusted', 'neutral', 'resolved regression'))
+            # A step without the host fields is missing evidence, not a zero wait.
+            path = next(root.glob('b-r0/windows/*.json'))
+            row = json.loads(path.read_text())
+            del row['steps'][0]['host']
+            path.write_text(json.dumps(row))
+            self.assertIn(None, {step['engram_wait_us'] for row in report.load(root)[1]
+                                 for step in row['prefill_steps']})
+            with self.assertRaisesRegex(ValueError, 'Engram-adjusted time'):
+                report.ab(root)
+
+    def test_stub_ab_removes_a_visit_engram_wait_under_adjusted_time(self):
+        import os
+        import subprocess
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            model = frozen_fixture(root)
+            model['arms'] = [{'label': 'a', 'depth': 1}, {'label': 'b', 'depth': 1}]
+            # Width 2 has no default weight; drafted steps decide here.
+            model.update(step_time=ADJUSTED, min_cell_time_share=.01, cell_weights={'verify:r2': 1})
+            path = root / 'logs/weight-content-head.json'
+            result = stage_fixture(root, model, names=('head',), proofs=[('head', path)])
+            self.assertEqual(result.returncode, 0, result.stderr)
+            staged = root / 'stage'
+            env = {k: v for k, v in os.environ.items() if not k.startswith('TUNE_')}
+            env.update(CHOPINFER_WEIGHT_KEEPER_DIR=str(root / 'synthetic-keeper'),
+                       CHOPINFER_TEST_CHECKPOINT=str(root / 'checkpoint'),
+                       TUNE_STUB_ENGRAM_WAIT_US='500', TUNE_STUB_ENGRAM_WAIT_LABELS='b-r0,b-r1',
+                       TUNE_STUB_MAPPED_RESIDENCY='.9')
+            out = root / 'run'
+            result = subprocess.run([sys.executable, '-B', str(staged / 'harness/tune.py'), '--dry-run',
+                                     '--output', str(out), '--payload-sha', stage.digest(staged / 'runtime-seal.json')],
+                                    env=env, text=True, capture_output=True, timeout=90)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            ab = json.loads((out / 'ab.json').read_text())
+            self.assertEqual((ab['status'], ab['step_time']), ('valid', 'adjusted'))
+            pair = ab['pairs']['a/b']['1']
+            self.assertEqual((pair['metric'], pair['weight']), ('raw', 0))
+            decided = [cell for cell in pair['cells'].values() if 'd1' in cell]
+            self.assertTrue(decided)
+            for cell in decided:
+                # Each b step waits 0.5 ms more; its adjusted time equals a's.
+                self.assertEqual((cell['metric'], cell['verdict'], cell['raw']['verdict']),
+                                 ('adjusted', 'neutral', 'resolved regression'))
+                self.assertEqual(len(set(cell['adjusted_ms_median'])), 1)
+            for label, visit in ab['visits'].items():
+                self.assertEqual(visit['residency'], {'min': .9, 'max': .9}, label)
+                self.assertEqual(type(visit['major_faults']), int)
+            self.assertIn('| b-r0 |', (out / 'ab.md').read_text())
+            summary = (out / 'summary.md').read_text()
+            self.assertIn('(adjusted 0.99 ms)', summary)
+            self.assertIn('residency 90.0%-90.0%', summary)
+
+
 if __name__ == '__main__':
     unittest.main()

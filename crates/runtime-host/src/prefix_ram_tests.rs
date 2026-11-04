@@ -37,16 +37,17 @@ fn the_startup_line_gives_the_bounds_or_why_the_tier_is_off() {
         "prefix RAM tier: on; 68718526464 pinned bytes across 4 ranks in the KV offload arena \
          it shares with swaps, 37786 pages and 2418304 tokens per rank, no staging buffer; \
          copies in flight at most 1073741824 bytes per rank, demotions at most 4 chunks \
-         (32735232 bytes) per rank; promotions at most 890 pages per step"
+         (32735232 bytes) per rank; a promotion budget of 890 pages per step, beyond which one \
+         larger promotion may start alone"
     );
     assert_eq!(
         line(PrefixRamStatusV1::Active { forced: true }),
-        "prefix RAM tier: on in its debug exactness mode (--debug-prefix-ram), where every \
-         public capture is demoted and every hit is a RAM hit; 68718526464 pinned bytes across \
-         4 ranks in the KV offload arena it shares with swaps, 37786 pages and 2418304 tokens \
-         per rank, no staging buffer; copies in flight at most 1073741824 bytes per rank, \
-         demotions at most 4 chunks (32735232 bytes) per rank; promotions at most 890 pages per \
-         step"
+        "prefix RAM tier: on in its debug exactness mode (--debug-prefix-ram), which demotes \
+         every public capture the host tier has room for; 68718526464 pinned bytes across 4 \
+         ranks in the KV offload arena it shares with swaps, 37786 pages and 2418304 tokens per \
+         rank, no staging buffer; copies in flight at most 1073741824 bytes per rank, demotions \
+         at most 4 chunks (32735232 bytes) per rank; a promotion budget of 890 pages per step, \
+         beyond which one larger promotion may start alone"
     );
     for (reason, expected) in [
         (
@@ -476,7 +477,10 @@ fn a_fake_host_serve_runs_the_tier_and_its_forced_mode_hits_ram() {
         assert!(line.starts_with("prefix RAM tier: on"), "{line}");
         assert_eq!(line.contains("--debug-prefix-ram"), forced, "{line}");
         assert!(
-            line.ends_with("promotions at most 2 pages per step"),
+            line.ends_with(
+                "a promotion budget of 2 pages per step, beyond which one larger promotion may \
+                 start alone"
+            ),
             "{line}"
         );
         let outputs = run(&mut engine, &requests);

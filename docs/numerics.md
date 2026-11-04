@@ -1155,9 +1155,10 @@ state, recomputation: a promotion that fails or is invalidated, for example
 by a recapture of its prefix, falls back to the GPU match or recomputes. The
 tier is process memory, so a restart, worker restart or deploy clears it
 with the GPU cache. `--debug-prefix-ram` is an exactness mode in which every
-public capture is demoted and leaves the GPU, so every hit is a RAM hit; the
-`prefix_exact.py` RAM-hit arm and the `kv_offload` prefix-pressure arm run
-the tier ([checks](../tools/qual/README.md#prefix-caching)).
+public capture the host tier has room for is demoted and leaves the GPU, so
+hits on those anchors are RAM hits; a capture without room stays on the GPU.
+The `prefix_exact.py` RAM-hit arm and the `kv_offload` prefix-pressure arm
+run the tier ([checks](../tools/qual/README.md#prefix-caching)).
 
 The tier can run for MiMo, Qwen and GLM, whose bundles declare
 `chop.kv-offload.v1`. As of 2026-11-04 its GPU exactness runs for them, and

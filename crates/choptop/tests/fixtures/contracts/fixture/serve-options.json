@@ -541,7 +541,7 @@
       "value": "none",
       "choices": null,
       "group": "debug",
-      "help": "exactness runs only: demote every cached prefix to the RAM tier, so every hit is a RAM hit",
+      "help": "exactness runs only: demote every cached prefix the RAM tier has room for, so hits on them are RAM hits",
       "model_launch": true,
       "repeatable": false
     },

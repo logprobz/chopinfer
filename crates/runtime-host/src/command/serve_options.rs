@@ -511,7 +511,7 @@ pub(crate) const SERVE_OPTIONS_V1: &[ServeOptionV1] = {
             "--debug-prefix-ram",
             Flag,
             Debug,
-            "exactness runs only: demote every cached prefix to the RAM tier, so every hit is a RAM hit",
+            "exactness runs only: demote every cached prefix the RAM tier has room for, so hits on them are RAM hits",
         ).input(Some(61), input_access!(flag debug_prefix_ram)),
         ServeOptionV1::new(
             "--max-sequences",

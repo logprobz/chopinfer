@@ -463,8 +463,9 @@ pub struct ServingOptionsV1 {
     /// Keeps prefix anchors the GPU evicts in a RAM tier inside the offload
     /// arena (`--kv-offload-prefix on`); off by default.
     pub kv_offload_prefix: bool,
-    /// The RAM tier's forced mode, in which every hit is a RAM hit
-    /// (`--debug-prefix-ram`), for exactness runs only.
+    /// The RAM tier's forced mode, which demotes every public capture the
+    /// host tier has room for (`--debug-prefix-ram`), for exactness runs
+    /// only.
     pub debug_prefix_ram: bool,
     /// With speculation, startup warmup also reaches every verify graph
     /// shape; on by default.
@@ -4073,8 +4074,8 @@ fn prefix_ram_startup_line_v1(
         PrefixRamStatusV1::Off => return "prefix RAM tier: off".to_owned(),
     };
     let mode = if forced {
-        " in its debug exactness mode (--debug-prefix-ram), where every public capture is \
-         demoted and every hit is a RAM hit"
+        " in its debug exactness mode (--debug-prefix-ram), which demotes every public capture \
+         the host tier has room for"
     } else {
         ""
     };
@@ -4084,8 +4085,8 @@ fn prefix_ram_startup_line_v1(
     format!(
         "prefix RAM tier: on{mode}; {} pinned bytes across {} ranks in the KV offload arena it \
          shares with swaps, {} pages and {} tokens per rank, no staging buffer; copies in flight \
-         at most {} bytes per rank, demotions at most {} chunks ({} bytes) per rank; promotions \
-         at most {} pages per step",
+         at most {} bytes per rank, demotions at most {} chunks ({} bytes) per rank; a promotion \
+         budget of {} pages per step, beyond which one larger promotion may start alone",
         plan.allocated_bytes,
         plan.rank_count,
         plan.pages_per_rank,

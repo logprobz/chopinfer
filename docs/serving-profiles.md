@@ -392,7 +392,7 @@ restart or deploy clears it.
 With the tier asked for, startup logs one line: its bounds,
 
 ```
-prefix RAM tier: on; B pinned bytes across R ranks in the KV offload arena it shares with swaps, P pages and T tokens per rank, no staging buffer; copies in flight at most 1073741824 bytes per rank, demotions at most 4 chunks (D bytes) per rank; promotions at most N pages per step
+prefix RAM tier: on; B pinned bytes across R ranks in the KV offload arena it shares with swaps, P pages and T tokens per rank, no staging buffer; copies in flight at most 1073741824 bytes per rank, demotions at most 4 chunks (D bytes) per rank; a promotion budget of N pages per step, beyond which one larger promotion may start alone
 ```
 
 or why it is off: `prefix RAM tier: off, because` prefix caching is off, the
@@ -400,8 +400,10 @@ bundle does not declare `chop.kv-offload.v1`, or the executor cannot cancel
 a demotion. A server whose tier is off serves as without the option.
 
 `--debug-prefix-ram` is for exactness runs only, and needs the tier: every
-public capture is demoted and leaves the GPU, so every hit is a RAM hit.
-The startup line names it.
+public capture the host tier has room for is demoted and leaves the GPU, so
+hits on those anchors are RAM hits. A capture the tier has no room for stays
+on the GPU, so the RAM-hit exactness arm requires every hit to count as a RAM
+hit. The startup line names the mode.
 
 No profile sets `kv_offload_gib` or `kv_offload_prefix`. The tier has no GPU
 exactness or stateful replay acceptance evidence yet

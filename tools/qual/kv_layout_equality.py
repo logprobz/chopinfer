@@ -35,7 +35,13 @@ records, naming the first differing request, field and position; and the
 forced records to hold the same positions, those the gate's pinned
 references define, with bit-identical logprobs and top-5 at every forced
 position and bit-identical prefill rows, naming the first differing text
-and position.
+and position. Every row must be complete and typed before any comparison:
+a forced row holds a finite float logprob, its row kind and a top-5 map of
+1 to 6 string labels of finite float logprobs, and a prefill row exactly a
+finite float logprob and its top-1 token ID. The map holds 5 entries, or 6
+when the forced token ranks below them, and fewer only when tokens share a
+label: the completions API labels top logprobs by decoded text, and every
+incomplete UTF-8 byte token decodes to "", so their entries merge.
 
 Both pairs must name one checkpoint, metadata, source commit, bundle,
 version, served model, effective profile and complete `model_options` map,
@@ -277,16 +283,62 @@ def forced_expectation():
             expected)
 
 
+def finite(value):
+    """Whether `value` is a finite float, never a bool or an int."""
+    return type(value) is float and math.isfinite(value)
+
+
+def forced_row_fault(row, width):
+    """Why a K=0 forced record's row is not complete and typed, or None: it
+    holds exactly the fields verify_exact.py writes, a finite logprob, its
+    row kind and the completions API's top logprobs, a map of string labels
+    to finite logprobs. That map holds `width` entries, or `width` + 1 when
+    the forced token ranks below them (vLLM's order), and fewer when tokens
+    share a label: every incomplete UTF-8 byte token decodes to "", so
+    their entries merge, a limit of the completions API's labels."""
+    if not isinstance(row, dict) or set(row) != {"logprob", "top", "row"}:
+        return f"holds fields {sorted(row) if isinstance(row, dict) else type(row).__name__}, not logprob, top and row"
+    if not finite(row["logprob"]):
+        return f"has logprob {row['logprob']!r}, not a finite float"
+    top = row["top"]
+    if not (isinstance(top, dict) and 1 <= len(top) <= width + 1
+            and all(isinstance(label, str) and finite(value) for label, value in top.items())):
+        size = f"{len(top)} entries" if isinstance(top, dict) else type(top).__name__
+        return f"has a top map of {size}, not 1 to {width + 1} labels of finite floats"
+    if row["row"] not in ("prefill", "decode"):
+        return f"is labelled {row['row']!r}, not prefill or decode"
+    return None
+
+
+def prefill_row_fault(row):
+    """Why a forced record's prefill row (verify_exact.py prefill_capture) is
+    not complete and typed, or None: exactly a finite logprob and the row's
+    top-1 token ID."""
+    if not isinstance(row, dict) or set(row) != {"logprob", "top1"}:
+        return f"holds fields {sorted(row) if isinstance(row, dict) else type(row).__name__}, not logprob and top1"
+    if not finite(row["logprob"]):
+        return f"has logprob {row['logprob']!r}, not a finite float"
+    if not (type(row["top1"]) is int and row["top1"] >= 0):
+        return f"has top-1 {row['top1']!r}, not a token ID"
+    return None
+
+
 def forced_rows(record, side):
     """({text: {position: forced row}}, {text: {position: prefill row}},
     errors) of one forced record: a passing, live-bound K=0 record of one
-    phase per text."""
+    phase per text with top_logprobs verify_exact.TOP_LOGPROBS, whose every
+    forced and prefill row is complete and typed (forced_row_fault,
+    prefill_row_fault)."""
     errors = []
     if not (record.get("passed") is True and type(record.get("k")) is int and record["k"] == 0
             and not record.get("pooled_decode")):
         errors.append(f"the {side} forced record is not a passing K=0 record")
     if not bound_live(record.get("server") or {}):
         errors.append(f"the {side} forced record is not bound live to the gate's checkpoint pin")
+    width = record.get("top_logprobs")
+    if not (type(width) is int and width == verify_exact.TOP_LOGPROBS):
+        errors.append(f"the {side} forced record declares top_logprobs {width!r}, not {verify_exact.TOP_LOGPROBS}")
+        width = verify_exact.TOP_LOGPROBS
     forced, prefill = {}, {}
     for text in record.get("texts") or []:
         passes = text.get("passes") or []
@@ -296,6 +348,14 @@ def forced_rows(record, side):
         forced[text["name"]] = {int(position): row for position, row in passes[0]["positions"].items()}
     for name, rows in (record.get("prefill") or {}).items():
         prefill[name] = {int(position): row for position, row in rows.items()}
+    for kind, held, fault in (("forced", forced, lambda row: forced_row_fault(row, width)),
+                              ("prefill", prefill, prefill_row_fault)):
+        faults = [(name, position, why) for name, rows in held.items() for position, row in sorted(rows.items())
+                  if (why := fault(row)) is not None]
+        if faults:
+            name, position, why = faults[0]
+            errors.append(f"the {side} forced record's {kind} row of {name} position {position} {why}; "
+                          f"{len(faults)} {kind} rows are not complete")
     return forced, prefill, errors
 
 

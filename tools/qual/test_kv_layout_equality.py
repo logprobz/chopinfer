@@ -184,6 +184,56 @@ class CompareTests(unittest.TestCase):
         comparison["prefill"][long][str(positions[1])]["top1"] += 1
         self.assertEqual(compared(forced_records=(native, comparison))["forced"]["first_difference"]["field"], "top1")
 
+    def test_forced_and_prefill_rows_must_be_complete_and_typed(self):
+        # Records that keep every position and binding but no numbers (the
+        # same in both, so they compared equal), and rows of other types or
+        # widths: each is refused before any comparison.
+        def rows(record, kind):
+            if kind == "forced":
+                return [row for text in record["texts"] for row in text["passes"][0]["positions"].values()]
+            return [row for rows in record["prefill"].values() for row in rows.values()]
+        both = ("forced", "prefill")
+        for name, kinds, mutate, error in (
+                ("every row empty", both, lambda row: row.clear(), "holds fields [], not"),
+                ("null logprobs", both, lambda row: row.update(logprob=None), "has logprob None, not a finite float"),
+                ("boolean logprobs", both, lambda row: row.update(logprob=False),
+                 "has logprob False, not a finite float"),
+                ("integer logprobs", both, lambda row: row.update(logprob=-1), "has logprob -1, not a finite float"),
+                ("NaN logprobs", ("forced",), lambda row: row.update(logprob=math.nan),
+                 "has logprob nan, not a finite float"),
+                ("empty top-5", ("forced",), lambda row: row.update(top={}),
+                 "has a top map of 0 entries, not 1 to 6 labels of finite floats"),
+                ("too wide a top-5", ("forced",), lambda row: row.update(top={str(i): -1.0 for i in range(7)}),
+                 "has a top map of 7 entries"),
+                ("boolean top-5 logprob", ("forced",), lambda row: row["top"].update(x=True),
+                 "has a top map of 2 entries, not 1 to 6 labels of finite floats"),
+                ("integer top-5 label", ("forced",), lambda row: row["top"].update({7: -1.0}),
+                 "has a top map of 3 entries, not 1 to 6 labels of finite floats"),
+                ("unlabelled row", ("forced",), lambda row: row.pop("row"), "holds fields ['logprob', 'top'], not"),
+                ("another row kind", ("forced",), lambda row: row.update(row="verify"),
+                 "is labelled 'verify', not prefill or decode"),
+                ("boolean top-1", ("prefill",), lambda row: row.update(top1=True), "has top-1 True, not a token ID"),
+                ("negative top-1", ("prefill",), lambda row: row.update(top1=-1), "has top-1 -1, not a token ID"),
+                ("extra prefill field", ("prefill",), lambda row: row.update(top={}),
+                 "holds fields ['logprob', 'top', 'top1'], not")):
+            with self.subTest(name):
+                native, comparison = forced()
+                for record in (native, comparison):
+                    for kind in kinds:
+                        for row in rows(record, kind):
+                            mutate(row)
+                result = compared(forced_records=(native, comparison))
+                self.assertFalse(result["passed"])
+                self.assertTrue(any(error in message for message in result["errors"]), result["errors"])
+                self.assertTrue(any(message.startswith("the comparison forced record's") for message in result["errors"]))
+                self.assertNotIn("equal", result["forced"])
+        for width in (4, True, None):
+            with self.subTest(top_logprobs=width):
+                native, comparison = forced()
+                comparison["top_logprobs"] = width
+                result = compared(forced_records=(native, comparison))
+                self.assertIn(f"the comparison forced record declares top_logprobs {width!r}, not 5", result["errors"])
+
     def test_records_must_name_one_build_profile_and_options_in_one_run_with_two_layouts(self):
         native, comparison = records()
         serving = lambda value: value["server"]["health"]["serving"]  # noqa: E731

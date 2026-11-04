@@ -177,6 +177,26 @@ impl KvPool {
         candidates
     }
 
+    /// The start rule for a demotion of `key` under a per-step allocation
+    /// bound of `f_pages`: free pages plus the pages evicting every other
+    /// evictable anchor frees cover `f_pages` plus the pages evicting this
+    /// one frees. Pages a lease holds, an in-flight demotion's included,
+    /// count for neither.
+    #[must_use]
+    pub fn demotion_headroom(&self, key: PrefixCacheKeyV1, f_pages: usize) -> bool {
+        let Some(anchor) = self.anchors.get(&key) else {
+            return false;
+        };
+        let (mut own, mut held) = (0usize, 0usize);
+        for page in anchor.blocks.iter().chain(&anchor.state) {
+            let refs = self.blocks[page.index()];
+            // Evicting the others frees no page this anchor still holds.
+            held += usize::from(refs == self.anchor_refs[page.index()]);
+            own += usize::from(refs == 1);
+        }
+        self.free_blocks.len() + self.anchor_only_pages - held >= f_pages.saturating_add(own)
+    }
+
     /// Finds the longest ready, usable host entry of this prompt that ends at
     /// most at `limit` tokens and outside every media span, as
     /// [`Self::lookup_anchor`] does for GPU anchors.

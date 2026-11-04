@@ -1486,6 +1486,12 @@ pub trait ModelExecutor {
     fn drain_kv_transfers_v1(&mut self) -> Result<(), ExecutorError> {
         Ok(())
     }
+    /// Bytes one host page holds across every rank, for the byte metrics of
+    /// copies and of the RAM prefix tier. Zero, the default, leaves them at
+    /// zero.
+    fn kv_offload_page_bytes_v1(&self) -> u64 {
+        0
+    }
     /// Whether [`Self::cancel_kv_transfer_v1`] can cancel a demotion.
     fn kv_transfer_cancel_v1_supported(&self) -> bool {
         false
@@ -2087,7 +2093,10 @@ impl<E: ModelExecutor> Engine<E> {
                 });
                 scheduler
                     .new_host_tier(info.host_page_capacity)
-                    .map(|tier| offload::OffloadState::new(tier, info, config.force_host_swap))
+                    .map(|tier| {
+                        offload::OffloadState::new(tier, info, config.force_host_swap)
+                            .with_page_bytes(executor.kv_offload_page_bytes_v1())
+                    })
             })
             .transpose()
             .map_err(EngineError::Scheduler)?
@@ -3341,6 +3350,7 @@ impl<E: ModelExecutor> Engine<E> {
                     .map_err(EngineError::Scheduler)?,
             }
         }
+        self.record_prefix_ram_hits();
         Ok(!admitted.admitted().is_empty() || retry_admission || retry_ram)
     }
 
@@ -3611,6 +3621,11 @@ impl<E: ModelExecutor> Engine<E> {
                 state.tier.capacity(),
                 self.scheduler.swapped_requests(),
             );
+            if state.ram.is_some() {
+                let (entries, pages) = state.tier.public_entries();
+                self.metrics
+                    .prefix_ram_occupancy(entries, state.bytes(pages));
+            }
         }
         self.scheduler
             .kv_metrics()

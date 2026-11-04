@@ -36,9 +36,15 @@
 //! the end of its step, in capture order and without the bounds above; the
 //! scheduler removes each GPU anchor as its demotion begins, so every hit
 //! is a RAM hit. A capture the host tier has no room for stays on the GPU.
+//!
+//! Each public GPU eviction without a ready host copy counts a miss, with
+//! the reason the driver last planned for its anchor (metrics::MissReason).
 use super::*;
+use metrics::{DemotionResult, MissReason};
 use offload::TransferOwner;
-use runtime_kv::{KvError, KvTransferPoll, PrefixCacheKeyV1};
+use runtime_kv::{
+    KvError, KvTransferPoll, PREFIX_EVICTION_LOG_V1, PrefixCacheKeyV1, PrefixEvictionV1,
+};
 use runtime_scheduler::{AdmissionReport, PrefixCaptureV1, PrefixRamConfig};
 
 /// Steps the measured bounds look back over.
@@ -149,6 +155,12 @@ pub(super) struct PrefixRamDriver {
     cancelled: bool,
     /// Forced mode: the public anchors captured since the last demotions.
     captured: Vec<PrefixCacheKeyV1>,
+    /// What the driver last planned for each anchor it did not demote, the
+    /// reason its eviction would miss. Replanned every step outside forced
+    /// mode.
+    plans: BTreeMap<PrefixCacheKeyV1, MissReason>,
+    /// When each request that waits for a promotion began waiting.
+    waits: BTreeMap<RequestId, u64>,
 }
 
 impl PrefixRamDriver {
@@ -166,6 +178,8 @@ impl PrefixRamDriver {
             evicted_mark: scheduler.kv_evicted_pages(),
             cancelled: false,
             captured: Vec::new(),
+            plans: BTreeMap::new(),
+            waits: BTreeMap::new(),
         })
     }
 
@@ -178,8 +192,35 @@ impl PrefixRamDriver {
             evicted_mark: scheduler.kv_evicted_pages(),
             cancelled: false,
             captured: Vec::new(),
+            plans: BTreeMap::new(),
+            waits: BTreeMap::new(),
             ..self.clone()
         }
+    }
+
+    /// Records a plan for an anchor not demoted, bounded like the pool's
+    /// eviction log.
+    fn plan(&mut self, key: PrefixCacheKeyV1, reason: MissReason) {
+        if self.plans.len() >= PREFIX_EVICTION_LOG_V1 && !self.plans.contains_key(&key) {
+            self.plans.clear();
+        }
+        self.plans.insert(key, reason);
+    }
+
+    /// The reason a public eviction missed, or `None` when a ready host
+    /// copy covered it.
+    fn miss(&mut self, eviction: &PrefixEvictionV1, minimum_tokens: usize) -> Option<MissReason> {
+        let planned = self.plans.remove(&eviction.key);
+        if eviction.covered {
+            return None;
+        }
+        Some(if !eviction.frontier {
+            MissReason::NotFrontier
+        } else if eviction.tokens < minimum_tokens {
+            MissReason::BelowMinimum
+        } else {
+            planned.unwrap_or(MissReason::Unplanned)
+        })
     }
 
     /// Whether a deferred promotion larger than the step's budget waits for
@@ -236,13 +277,27 @@ impl<E: ModelExecutor> Engine<E> {
     /// host entries their publishes made unusable, and submits promotions
     /// admission planned and left unsubmitted.
     pub(super) fn begin_prefix_ram_step(&mut self) -> Result<(), EngineError> {
-        let Some(ram) = self.prefix_ram_driver() else {
+        let Some(state) = self.offload.as_mut() else {
+            return Ok(());
+        };
+        let Some(ram) = state.ram.as_mut() else {
             return Ok(());
         };
         ram.cancelled = false;
-        self.scheduler
+        // A request cancelled while it waited times no restore.
+        let scheduler = &self.scheduler;
+        ram.waits.retain(|id, _| {
+            scheduler
+                .request_state(*id)
+                .is_ok_and(|state| !state.is_terminal())
+        });
+        for settled in self
+            .scheduler
             .begin_prefix_ram_step()
-            .map_err(EngineError::Scheduler)?;
+            .map_err(EngineError::Scheduler)?
+        {
+            self.metrics.prefix_ram_promotion(settled.outcome);
+        }
         self.drop_invalidated_host_entries()?;
         self.start_promotions()
     }
@@ -256,10 +311,20 @@ impl<E: ModelExecutor> Engine<E> {
         &mut self,
         report: &AdmissionReport,
     ) -> Result<bool, EngineError> {
-        let Some(ram) = self.offload.as_ref().and_then(|state| state.ram.as_ref()) else {
+        let now = self.clock.now_micros();
+        let Some(ram) = self.offload.as_mut().and_then(|state| state.ram.as_mut()) else {
             return Ok(false);
         };
+        for (id, _) in report.ram_waits() {
+            ram.waits.entry(*id).or_insert(now);
+        }
+        for (id, _) in report.ram_fallbacks() {
+            ram.waits.remove(id);
+        }
         let starved = ram.promotion_starved(&self.scheduler);
+        for (_, reason) in report.ram_fallbacks() {
+            self.metrics.prefix_ram_fallback(*reason);
+        }
         self.start_promotions()?;
         self.drop_invalidated_host_entries()?;
         if report.pool_exhausted().is_empty() && !starved {
@@ -302,12 +367,14 @@ impl<E: ModelExecutor> Engine<E> {
             // A refused cancel leaves the copy to finish.
             Err(_) => return Ok(false),
         }
-        if let TransferOwner::Demotion { cancelled, .. } = &mut transfer.owner {
+        if let TransferOwner::Demotion { key, cancelled } = &mut transfer.owner {
             *cancelled = true;
+            if let Some(ram) = state.ram.as_mut() {
+                ram.cancelled = true;
+                ram.plan(*key, MissReason::Headroom);
+            }
         }
-        if let Some(ram) = state.ram.as_mut() {
-            ram.cancelled = true;
-        }
+        self.metrics.prefix_ram_headroom_wait();
         let deadline = std::time::Instant::now() + self.executor.kv_transfer_drain_timeout_v1();
         loop {
             match self.executor.poll_kv_transfer_v1(id) {
@@ -358,6 +425,42 @@ impl<E: ModelExecutor> Engine<E> {
         Ok(())
     }
 
+    /// Times each RAM hit the last restores counted, from the admission
+    /// decision to wait for its promotion. A forced late follower, which
+    /// restored a promoted anchor without waiting, counts zero.
+    pub(super) fn record_prefix_ram_hits(&mut self) {
+        let now = self.clock.now_micros();
+        let hits = self.scheduler.take_prefix_ram_hits();
+        let Some(ram) = self.prefix_ram_driver() else {
+            return;
+        };
+        let elapsed: Vec<_> = hits
+            .iter()
+            .map(|hit| {
+                ram.waits
+                    .remove(&hit.request_id)
+                    .map_or(0, |start| now.saturating_sub(start))
+            })
+            .collect();
+        for micros in elapsed {
+            self.metrics.prefix_ram_restore(micros);
+        }
+    }
+
+    /// Ends a demotion that copied nothing: the anchor's eviction would miss
+    /// for that reason.
+    pub(super) fn demotion_failed(&mut self, key: PrefixCacheKeyV1, result: DemotionResult) {
+        self.metrics.prefix_ram_demotion(result);
+        let reason = if result == DemotionResult::TierFull {
+            MissReason::TierFull
+        } else {
+            MissReason::Failed
+        };
+        if let Some(ram) = self.prefix_ram_driver() {
+            ram.plan(key, reason);
+        }
+    }
+
     /// Notes a capture the bundle wrote, which forced mode demotes after the
     /// step's captures.
     pub(super) fn note_prefix_capture(&mut self, capture: &PrefixCaptureV1) {
@@ -376,10 +479,20 @@ impl<E: ModelExecutor> Engine<E> {
         let Some(state) = self.offload.as_mut() else {
             return Ok(());
         };
+        let minimum_tokens = state.minimum_tokens();
         let Some(ram) = state.ram.as_mut() else {
             return Ok(());
         };
         ram.measure(&self.scheduler);
+        let (evictions, discarded) = self.scheduler.drain_prefix_evictions();
+        for eviction in &evictions {
+            if let Some(reason) = ram.miss(eviction, minimum_tokens) {
+                self.metrics.prefix_ram_missed_eviction(reason);
+            }
+        }
+        if discarded > 0 {
+            self.metrics.prefix_ram_evictions_discarded(discarded);
+        }
         let forced = ram.config.forced.then(|| std::mem::take(&mut ram.captured));
         self.scheduler
             .drop_invalidated_host_entries(&mut state.tier)
@@ -410,29 +523,50 @@ impl<E: ModelExecutor> Engine<E> {
                 plan,
             ),
             // The host tier had no room older than the anchor.
-            Err(ScheduleError::Kv(KvError::PoolExhausted { .. })) => Ok(()),
+            Err(ScheduleError::Kv(KvError::PoolExhausted { .. })) => {
+                self.demotion_failed(key, DemotionResult::TierFull);
+                Ok(())
+            }
             Err(error) => Err(EngineError::Scheduler(error)),
         }
     }
 
     /// The first candidate within the lead that meets the start rule, when
     /// no demotion is outstanding, none was cancelled this step and no
-    /// promotion larger than the budget waits.
-    fn plan_demotion(&self) -> Option<PrefixCacheKeyV1> {
-        let ram = self.offload.as_ref()?.ram.as_ref()?;
-        if self.scheduler.outstanding_demotions() > 0
-            || ram.cancelled
-            || ram.promotion_starved(&self.scheduler)
-        {
+    /// promotion larger than the budget waits. Every other candidate's plan
+    /// records why it was not demoted; a step that cancelled a demotion
+    /// keeps the plans it had.
+    fn plan_demotion(&mut self) -> Option<PrefixCacheKeyV1> {
+        let ram = self.offload.as_mut()?.ram.as_mut()?;
+        if ram.cancelled {
             return None;
         }
-        let deferred = self.scheduler.deferred_promotion_pages();
-        let bound = ram.allocation_bound(deferred, self.scheduler.swap_in_pages());
-        self.scheduler
-            .prefix_demotion_candidates(ram.lead_pages(deferred))
-            .into_iter()
-            .map(|candidate| candidate.key)
-            .find(|key| self.scheduler.prefix_demotion_headroom(*key, bound))
+        let scheduler = &self.scheduler;
+        let blocked = if scheduler.outstanding_demotions() > 0 {
+            Some(MissReason::InFlight)
+        } else if ram.promotion_starved(scheduler) {
+            Some(MissReason::Headroom)
+        } else {
+            None
+        };
+        let deferred = scheduler.deferred_promotion_pages();
+        let bound = ram.allocation_bound(deferred, scheduler.swap_in_pages());
+        let mut chosen = None;
+        ram.plans.clear();
+        for candidate in scheduler.prefix_demotion_candidates(ram.lead_pages(deferred)) {
+            let reason = match (blocked, chosen) {
+                (Some(reason), _) => reason,
+                // The one-outstanding bound.
+                (None, Some(_)) => MissReason::InFlight,
+                (None, None) if scheduler.prefix_demotion_headroom(candidate.key, bound) => {
+                    chosen = Some(candidate.key);
+                    continue;
+                }
+                (None, None) => MissReason::Headroom,
+            };
+            ram.plan(candidate.key, reason);
+        }
+        chosen
     }
 }
 
@@ -468,6 +602,8 @@ mod tests {
             evicted_mark: 0,
             cancelled: false,
             captured: Vec::new(),
+            plans: BTreeMap::new(),
+            waits: BTreeMap::new(),
         };
         // With nothing measured, the lead is one chunk and one snapshot past
         // the deferred promotion, and F is the promotion and the swap-ins.

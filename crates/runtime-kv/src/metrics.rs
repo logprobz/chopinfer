@@ -26,6 +26,9 @@ struct KvMetricsInner {
     prefix_cache_queries: AtomicU64,
     prefix_cache_hits: AtomicU64,
     prefix_cache_reused_tokens: AtomicU64,
+    prefix_cache_ram_hits: AtomicU64,
+    prefix_cache_ram_reused_tokens: AtomicU64,
+    prefix_ram_evictions: AtomicU64,
     prefix_cache_queried_tokens: AtomicU64,
     prefix_cache_recomputed_seen_tokens: AtomicU64,
     prefix_cache_captures: AtomicU64,
@@ -75,6 +78,12 @@ pub struct KvMetricsSnapshot {
     pub prefix_cache_hits: u64,
     /// Prompt tokens those hits skipped, as vLLM counts hits.
     pub prefix_cache_reused_tokens: u64,
+    /// The hits among them that restored a promoted anchor, one copied in
+    /// from the RAM prefix tier, and their reused tokens.
+    pub prefix_cache_ram_hits: u64,
+    pub prefix_cache_ram_reused_tokens: u64,
+    /// Public host entries the RAM prefix tier evicted to make room.
+    pub prefix_ram_evictions: u64,
     /// Prompt tokens of every lookup, hit or miss, as vLLM counts queries.
     pub prefix_cache_queried_tokens: u64,
     /// Prompt tokens prefilled again although an earlier request's committed
@@ -119,6 +128,9 @@ impl KvMetrics {
                 prefix_cache_queries: AtomicU64::new(0),
                 prefix_cache_hits: AtomicU64::new(0),
                 prefix_cache_reused_tokens: AtomicU64::new(0),
+                prefix_cache_ram_hits: AtomicU64::new(0),
+                prefix_cache_ram_reused_tokens: AtomicU64::new(0),
+                prefix_ram_evictions: AtomicU64::new(0),
                 prefix_cache_queried_tokens: AtomicU64::new(0),
                 prefix_cache_recomputed_seen_tokens: AtomicU64::new(0),
                 prefix_cache_captures: AtomicU64::new(0),
@@ -200,6 +212,23 @@ impl KvMetrics {
         self.inner
             .prefix_cache_recomputed_seen_tokens
             .fetch_add(saturating_u64(tokens), Ordering::Relaxed);
+    }
+
+    /// Counts a hit, already counted as one, whose restore used an anchor
+    /// promoted from the RAM prefix tier.
+    pub fn prefix_cache_ram_restored(&self, tokens: usize) {
+        self.inner
+            .prefix_cache_ram_hits
+            .fetch_add(1, Ordering::Relaxed);
+        self.inner
+            .prefix_cache_ram_reused_tokens
+            .fetch_add(saturating_u64(tokens), Ordering::Relaxed);
+    }
+
+    pub(crate) fn prefix_ram_evicted(&self, entries: usize) {
+        self.inner
+            .prefix_ram_evictions
+            .fetch_add(saturating_u64(entries), Ordering::Relaxed);
     }
 
     /// Counts a restore the bundle refused; the request prefilled from zero.
@@ -351,6 +380,12 @@ impl KvMetrics {
                 .inner
                 .prefix_cache_reused_tokens
                 .load(Ordering::Relaxed),
+            prefix_cache_ram_hits: self.inner.prefix_cache_ram_hits.load(Ordering::Relaxed),
+            prefix_cache_ram_reused_tokens: self
+                .inner
+                .prefix_cache_ram_reused_tokens
+                .load(Ordering::Relaxed),
+            prefix_ram_evictions: self.inner.prefix_ram_evictions.load(Ordering::Relaxed),
             prefix_cache_queried_tokens: self
                 .inner
                 .prefix_cache_queried_tokens
@@ -472,6 +507,18 @@ impl KvMetrics {
             .prefix_cache_queried_tokens
             .store(snapshot.prefix_cache_queried_tokens, Ordering::Relaxed);
         for (counter, value) in [
+            (
+                &metrics.inner.prefix_cache_ram_hits,
+                snapshot.prefix_cache_ram_hits,
+            ),
+            (
+                &metrics.inner.prefix_cache_ram_reused_tokens,
+                snapshot.prefix_cache_ram_reused_tokens,
+            ),
+            (
+                &metrics.inner.prefix_ram_evictions,
+                snapshot.prefix_ram_evictions,
+            ),
             (
                 &metrics.inner.prefix_cache_recomputed_seen_tokens,
                 snapshot.prefix_cache_recomputed_seen_tokens,
@@ -596,6 +643,24 @@ impl KvMetricsSnapshot {
             "chop_prefix_cache_reused_tokens_total",
             "counter",
             self.prefix_cache_reused_tokens,
+        );
+        metric(
+            &mut output,
+            "chop_prefix_cache_ram_hits_total",
+            "counter",
+            self.prefix_cache_ram_hits,
+        );
+        metric(
+            &mut output,
+            "chop_prefix_cache_ram_reused_tokens_total",
+            "counter",
+            self.prefix_cache_ram_reused_tokens,
+        );
+        metric(
+            &mut output,
+            "chop_prefix_ram_evictions_total",
+            "counter",
+            self.prefix_ram_evictions,
         );
         metric(
             &mut output,

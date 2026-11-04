@@ -4,6 +4,8 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use crate::speculation::MAX_DRAFT_TOKENS;
+use runtime_kv::PrefixPublishV1;
+use runtime_scheduler::PrefixRamFallbackV1;
 
 pub trait MonotonicClock: std::fmt::Debug + Send + Sync + 'static {
     fn now_micros(&self) -> u64;
@@ -70,6 +72,7 @@ pub struct ExecutionObservations {
 #[derive(Debug, Default)]
 struct EngineMetricsInner {
     offload: Mutex<OffloadMetrics>,
+    prefix_ram: Mutex<PrefixRamMetrics>,
     profiles: Arc<crate::profile::StepProfiles>,
     poisoned: AtomicU64,
     speculation_k: [AtomicU64; MAX_DRAFT_TOKENS + 1],
@@ -140,6 +143,7 @@ pub struct EngineMetrics {
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct EngineMetricsSnapshot {
     pub offload: OffloadMetrics,
+    pub prefix_ram: PrefixRamMetrics,
     pub requests_submitted: u64,
     pub requests_completed: u64,
     pub requests_terminal: u64,
@@ -535,6 +539,11 @@ impl EngineMetrics {
         }
         EngineMetricsSnapshot {
             offload: *self.inner.offload.lock().unwrap_or_else(|e| e.into_inner()),
+            prefix_ram: *self
+                .inner
+                .prefix_ram
+                .lock()
+                .unwrap_or_else(|e| e.into_inner()),
             requests_submitted: lifecycle.requests_submitted,
             requests_completed: lifecycle.requests_completed,
             requests_terminal: lifecycle.requests_terminal,
@@ -599,6 +608,7 @@ impl EngineMetricsSnapshot {
     pub fn prometheus(&self) -> String {
         let mut output = String::new();
         self.offload.render(&mut output);
+        self.prefix_ram.render(&mut output);
         metric(
             &mut output,
             "chop_requests_submitted_total",
@@ -895,6 +905,7 @@ const OFFLOAD_REASONS: [&str; 10] = [
 const COPY_BUCKETS: [u64; 6] = [100, 1000, 10000, 100000, 1000000, u64::MAX];
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct OffloadMetrics {
+    /// Completed swap copies out and in.
     pub copies: [u64; 2],
     pub fallbacks: [u64; 10],
     pub used_pages: u64,
@@ -903,6 +914,9 @@ pub struct OffloadMetrics {
     pub oldest_pending_micros: u64,
     pub stalled_transfers: u64,
     pub stalls: u64,
+    /// Completed copies of every kind out and in, timed in `micros` and
+    /// `buckets`: swaps and the RAM prefix tier's demotions and promotions.
+    observed: [u64; 2],
     micros: [u64; 2],
     buckets: [[u64; 6]; 2],
 }
@@ -922,10 +936,14 @@ impl EngineMetrics {
         metrics.stalled_transfers = stalled;
         metrics.stalls += new_stalls;
     }
-    pub(crate) fn offload_copy(&self, incoming: bool, micros: u64) {
+    /// Times a completed copy; `swap` counts it as a swap too.
+    pub(crate) fn offload_copy(&self, incoming: bool, swap: bool, micros: u64) {
         let mut metrics = self.inner.offload.lock().unwrap_or_else(|e| e.into_inner());
         let index = usize::from(incoming);
-        metrics.copies[index] += 1;
+        if swap {
+            metrics.copies[index] += 1;
+        }
+        metrics.observed[index] += 1;
         metrics.micros[index] += micros;
         for (bucket, bound) in COPY_BUCKETS.iter().enumerate() {
             if micros <= *bound {
@@ -989,7 +1007,7 @@ impl OffloadMetrics {
             let _ = writeln!(
                 out,
                 "chop_kv_offload_copy_seconds_count{{direction=\"{direction}\"}} {}",
-                self.copies[index]
+                self.observed[index]
             );
         }
         out.push_str("# TYPE chop_kv_offload_fallback_total counter\n");
@@ -1016,6 +1034,248 @@ impl OffloadMetrics {
             "gauge",
             self.swapped_requests,
         );
+    }
+}
+
+/// The outcome of a demotion the engine attempted.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum DemotionResult {
+    Ok,
+    /// Its copy failed.
+    Failed,
+    /// An allocation that needed its leased pages cancelled it.
+    Cancelled,
+    /// The executor refused its copy.
+    Refused,
+    /// The host tier had no room older than the anchor.
+    TierFull,
+}
+const DEMOTION_RESULTS: [&str; 5] = ["ok", "failed", "cancelled", "refused", "tier_full"];
+const PROMOTION_RESULTS: [&str; 4] = ["ok", "failed", "invalidated", "gpu_resident"];
+
+/// Why a public GPU eviction found no ready host copy of its anchor.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum MissReason {
+    /// The start rule refused its demotion, its demotion was cancelled for
+    /// an allocation, or demotions waited for a promotion larger than the
+    /// budget.
+    Headroom,
+    /// Another demotion was outstanding while it was within the lead.
+    InFlight,
+    /// The host tier had no room older than it.
+    TierFull,
+    /// Its copy was refused or failed.
+    Failed,
+    /// It was shorter than the offload minimum.
+    BelowMinimum,
+    /// It had a resident descendant, or was never indexed: only frontiers
+    /// are demoted.
+    NotFrontier,
+    /// No demotion was planned for it: it was outside the lead when the
+    /// driver last planned.
+    Unplanned,
+}
+const MISS_REASONS: [&str; 7] = [
+    "headroom",
+    "in_flight",
+    "tier_full",
+    "failed",
+    "below_minimum",
+    "not_frontier",
+    "unplanned",
+];
+const RAM_FALLBACKS: [&str; 5] = [
+    "pool_exhausted",
+    "capacity",
+    "failed",
+    "invalidated",
+    "gpu_resident",
+];
+const RESTORE_BUCKETS: [u64; 6] = [1000, 10000, 100000, 1000000, 10000000, u64::MAX];
+
+/// The RAM prefix tier's counters and gauges. Every family is exported from
+/// startup, zero while the tier is off.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct PrefixRamMetrics {
+    /// Demotions by result: ok, failed, cancelled, refused, tier_full.
+    pub demotions: [u64; 5],
+    /// Settled promotions: published, not copied, invalidated, or found a
+    /// GPU anchor of the key.
+    pub promotions: [u64; 4],
+    /// Public GPU evictions without a ready host copy, by reason: headroom,
+    /// in_flight, tier_full, failed, below_minimum, not_frontier, unplanned.
+    pub missed_evictions: [u64; 7],
+    /// Evictions the pool's bounded log discarded before the engine read
+    /// them, so neither covered nor missed.
+    pub eviction_log_discarded: u64,
+    /// Waits for a demotion's cancel that an allocation needed.
+    pub headroom_waits: u64,
+    /// Requests that preferred a ready host entry and resumed from their GPU
+    /// match or cold, by reason: pool_exhausted, capacity, failed,
+    /// invalidated, gpu_resident.
+    pub fallbacks: [u64; 5],
+    /// Public host entries and the bytes they hold.
+    pub anchors: u64,
+    pub bytes: u64,
+    /// Bytes completed copies moved, out and in, of swaps and of the tier.
+    pub copied_bytes: [[u64; 2]; 2],
+    restores: u64,
+    restore_micros: u64,
+    restore_buckets: [u64; 6],
+}
+
+impl EngineMetrics {
+    fn prefix_ram<R>(&self, update: impl FnOnce(&mut PrefixRamMetrics) -> R) -> R {
+        update(
+            &mut self
+                .inner
+                .prefix_ram
+                .lock()
+                .unwrap_or_else(|e| e.into_inner()),
+        )
+    }
+
+    pub(crate) fn prefix_ram_demotion(&self, result: DemotionResult) {
+        self.prefix_ram(|metrics| metrics.demotions[result as usize] += 1);
+    }
+
+    pub(crate) fn prefix_ram_promotion(&self, outcome: PrefixPublishV1) {
+        let index = match outcome {
+            PrefixPublishV1::Published => 0,
+            PrefixPublishV1::NotCopied => 1,
+            PrefixPublishV1::Invalidated(_) => 2,
+            PrefixPublishV1::GpuResident => 3,
+        };
+        self.prefix_ram(|metrics| metrics.promotions[index] += 1);
+    }
+
+    pub(crate) fn prefix_ram_missed_eviction(&self, reason: MissReason) {
+        self.prefix_ram(|metrics| metrics.missed_evictions[reason as usize] += 1);
+    }
+
+    pub(crate) fn prefix_ram_evictions_discarded(&self, count: u64) {
+        self.prefix_ram(|metrics| metrics.eviction_log_discarded += count);
+    }
+
+    pub(crate) fn prefix_ram_headroom_wait(&self) {
+        self.prefix_ram(|metrics| metrics.headroom_waits += 1);
+    }
+
+    pub(crate) fn prefix_ram_fallback(&self, reason: PrefixRamFallbackV1) {
+        if let Some(index) = RAM_FALLBACKS.iter().position(|r| *r == reason.as_str()) {
+            self.prefix_ram(|metrics| metrics.fallbacks[index] += 1);
+        }
+    }
+
+    pub(crate) fn prefix_ram_occupancy(&self, entries: usize, bytes: u64) {
+        self.prefix_ram(|metrics| {
+            metrics.anchors = saturating_u64(entries);
+            metrics.bytes = bytes;
+        });
+    }
+
+    /// Times a RAM hit from its admission decision to its restore.
+    pub(crate) fn prefix_ram_restore(&self, micros: u64) {
+        self.prefix_ram(|metrics| {
+            metrics.restores += 1;
+            metrics.restore_micros += micros;
+            for (bucket, bound) in RESTORE_BUCKETS.iter().enumerate() {
+                if micros <= *bound {
+                    metrics.restore_buckets[bucket] += 1;
+                }
+            }
+        });
+    }
+
+    /// Counts the bytes of a completed copy, a swap's or the tier's.
+    pub(crate) fn offload_bytes(&self, incoming: bool, prefix: bool, bytes: u64) {
+        self.prefix_ram(|metrics| {
+            metrics.copied_bytes[usize::from(incoming)][usize::from(prefix)] += bytes;
+        });
+    }
+}
+
+impl PrefixRamMetrics {
+    fn render(&self, out: &mut String) {
+        let labelled =
+            |out: &mut String, name: &str, label: &str, values: &[&str], counts: &[u64]| {
+                let _ = writeln!(out, "# TYPE {name} counter");
+                for (value, count) in values.iter().zip(counts) {
+                    let _ = writeln!(out, "{name}{{{label}=\"{value}\"}} {count}");
+                }
+            };
+        labelled(
+            out,
+            "chop_prefix_ram_demotions_total",
+            "result",
+            &DEMOTION_RESULTS,
+            &self.demotions,
+        );
+        labelled(
+            out,
+            "chop_prefix_ram_promotions_total",
+            "result",
+            &PROMOTION_RESULTS,
+            &self.promotions,
+        );
+        labelled(
+            out,
+            "chop_prefix_ram_missed_evictions_total",
+            "reason",
+            &MISS_REASONS,
+            &self.missed_evictions,
+        );
+        metric(
+            out,
+            "chop_prefix_ram_eviction_log_discarded_total",
+            "counter",
+            self.eviction_log_discarded,
+        );
+        metric(
+            out,
+            "chop_prefix_ram_headroom_waits_total",
+            "counter",
+            self.headroom_waits,
+        );
+        labelled(
+            out,
+            "chop_prefix_ram_fallbacks_total",
+            "reason",
+            &RAM_FALLBACKS,
+            &self.fallbacks,
+        );
+        metric(out, "chop_prefix_ram_anchors", "gauge", self.anchors);
+        metric(out, "chop_prefix_ram_bytes", "gauge", self.bytes);
+        let name = "chop_prefix_ram_restore_seconds";
+        let _ = writeln!(out, "# TYPE {name} histogram");
+        for (bucket, bound) in RESTORE_BUCKETS.iter().enumerate() {
+            let le = if *bound == u64::MAX {
+                "+Inf".to_owned()
+            } else {
+                format!("{}", *bound as f64 / 1e6)
+            };
+            let _ = writeln!(
+                out,
+                "{name}_bucket{{le=\"{le}\"}} {}",
+                self.restore_buckets[bucket]
+            );
+        }
+        let _ = writeln!(
+            out,
+            "{name}_sum {}\n{name}_count {}",
+            self.restore_micros as f64 / 1e6,
+            self.restores
+        );
+        let name = "chop_kv_offload_bytes_total";
+        let _ = writeln!(out, "# TYPE {name} counter");
+        for (index, direction) in ["out", "in"].iter().enumerate() {
+            for (kind, bytes) in ["swap", "prefix"].iter().zip(self.copied_bytes[index]) {
+                let _ = writeln!(
+                    out,
+                    "{name}{{direction=\"{direction}\",kind=\"{kind}\"}} {bytes}"
+                );
+            }
+        }
     }
 }
 

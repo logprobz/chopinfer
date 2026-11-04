@@ -672,6 +672,7 @@ impl Scheduler {
             key: life.key,
             tokens,
         });
+        self.kv.metrics().prefix_cache_ram_restored(tokens);
         if self.owns_forced_anchor(life) {
             self.ram.forced.remove(&life.key);
             self.kv.remove_anchor(life.key).map_err(ScheduleError::Kv)?;

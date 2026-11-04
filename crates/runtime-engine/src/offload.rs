@@ -1,5 +1,6 @@
 //! Copy completion is the only authority that releases transfer leases.
 use super::*;
+use metrics::DemotionResult;
 use runtime_kv::{
     HostTier, KvTransferDirection, KvTransferId, KvTransferPlan, PendingAnchorId, PrefixCacheKeyV1,
 };
@@ -10,6 +11,8 @@ pub(super) struct OffloadState {
     pub tier: HostTier,
     info: KvOffloadInfo,
     force_host: bool,
+    /// Bytes one host page holds across every rank.
+    page_bytes: u64,
     pub(super) transfers: BTreeMap<KvTransferId, Transfer>,
     /// The RAM prefix tier's driver, while the engine runs the tier.
     pub(super) ram: Option<prefix_ram::PrefixRamDriver>,
@@ -18,6 +21,8 @@ pub(super) struct OffloadState {
 pub(super) struct Transfer {
     pub(super) owner: TransferOwner,
     direction: KvTransferDirection,
+    /// Bytes the copy moves once complete.
+    bytes: u64,
     started: u64,
     stall_after_micros: u64,
     warned: bool,
@@ -52,7 +57,8 @@ impl OffloadState {
         let tier = scheduler
             .new_host_tier(self.tier.capacity())
             .map_err(EngineError::Scheduler)?;
-        let mut state = Self::new(tier, self.info, self.force_host);
+        let mut state =
+            Self::new(tier, self.info, self.force_host).with_page_bytes(self.page_bytes);
         state.ram = self.ram.as_ref().map(|ram| ram.isolated(scheduler));
         Ok(state)
     }
@@ -68,9 +74,26 @@ impl OffloadState {
             tier,
             info,
             force_host,
+            page_bytes: 0,
             transfers: BTreeMap::new(),
             ram: None,
         }
+    }
+
+    pub(super) const fn with_page_bytes(mut self, bytes: u64) -> Self {
+        self.page_bytes = bytes;
+        self
+    }
+
+    /// The bytes `pages` host pages hold across every rank.
+    pub(super) fn bytes(&self, pages: usize) -> u64 {
+        u64::try_from(pages)
+            .unwrap_or(u64::MAX)
+            .saturating_mul(self.page_bytes)
+    }
+
+    pub(super) const fn minimum_tokens(&self) -> usize {
+        self.info.minimum_tokens
     }
 }
 impl<E: ModelExecutor> Engine<E> {
@@ -166,12 +189,15 @@ impl<E: ModelExecutor> Engine<E> {
         owner: TransferOwner,
         plan: KvTransferPlan,
     ) -> Result<(), EngineError> {
-        if let Some(error) = self.submit_plan(owner, plan)?
-            && error.is_fatal()
-        {
-            self.model_state_failed = true;
-            self.metrics.poison();
-            return Err(EngineError::Executor(error));
+        if let Some(error) = self.submit_plan(owner, plan)? {
+            if let TransferOwner::Demotion { key, .. } = owner {
+                self.demotion_failed(key, DemotionResult::Refused);
+            }
+            if error.is_fatal() {
+                self.model_state_failed = true;
+                self.metrics.poison();
+                return Err(EngineError::Executor(error));
+            }
         }
         Ok(())
     }
@@ -186,6 +212,8 @@ impl<E: ModelExecutor> Engine<E> {
     ) -> Result<Option<ExecutorError>, EngineError> {
         let id = plan.id();
         let direction = plan.direction();
+        let state = self.offload.as_ref().expect("offload configured");
+        let bytes = state.bytes(plan.pages().len());
         let submitted = match direction {
             KvTransferDirection::Out => self.executor.offload_pages_v1(plan),
             KvTransferDirection::In => self.executor.reload_pages_v1(plan),
@@ -201,6 +229,7 @@ impl<E: ModelExecutor> Engine<E> {
                         Transfer {
                             owner,
                             direction,
+                            bytes,
                             started: self.clock.now_micros(),
                             stall_after_micros: self
                                 .executor
@@ -304,18 +333,33 @@ impl<E: ModelExecutor> Engine<E> {
             .transfers
             .remove(&id)
             .ok_or(EngineError::InvariantViolation)?;
-        let request = match transfer.owner {
-            TransferOwner::Request(request) => request,
-            // A failed demotion's entry is dropped; the next step settles a
-            // promotion from its pending anchor.
-            TransferOwner::Demotion { .. } | TransferOwner::Promotion(_) => return Ok(()),
-        };
+        let incoming = transfer.direction == KvTransferDirection::In;
+        let swap = matches!(transfer.owner, TransferOwner::Request(_));
         if status == KvTransferStatus::Complete {
             self.metrics.offload_copy(
-                transfer.direction == KvTransferDirection::In,
+                incoming,
+                swap,
                 self.clock.now_micros().saturating_sub(transfer.started),
             );
-        } else {
+            self.metrics.offload_bytes(incoming, !swap, transfer.bytes);
+        }
+        let request = match transfer.owner {
+            TransferOwner::Request(request) => request,
+            TransferOwner::Demotion { key, cancelled } => {
+                match status {
+                    KvTransferStatus::Complete => {
+                        self.metrics.prefix_ram_demotion(DemotionResult::Ok);
+                    }
+                    // The cancel took effect: not a fallback.
+                    _ if cancelled => self.metrics.prefix_ram_demotion(DemotionResult::Cancelled),
+                    _ => self.demotion_failed(key, DemotionResult::Failed),
+                }
+                return Ok(());
+            }
+            // The next step settles the promotion from its pending anchor.
+            TransferOwner::Promotion(_) => return Ok(()),
+        };
+        if status != KvTransferStatus::Complete {
             self.metrics
                 .offload_fallback(if transfer.direction == KvTransferDirection::In {
                     "in_failed"

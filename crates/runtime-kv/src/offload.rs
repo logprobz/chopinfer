@@ -420,6 +420,20 @@ impl HostTier {
     pub fn anchor(&self, id: HostAnchorId) -> Option<&HostAnchor> {
         self.anchors.get(&id)
     }
+    /// Public host entries, ready or still copying in, and the host pages
+    /// they hold.
+    #[must_use]
+    pub fn public_entries(&self) -> (usize, usize) {
+        self.anchors
+            .values()
+            .filter(|anchor| anchor.owner.is_none())
+            .fold((0, 0), |(entries, pages), anchor| {
+                (
+                    entries + 1,
+                    pages + anchor.blocks.len() + anchor.state.len(),
+                )
+            })
+    }
     /// Whether [`Self::begin_offload`] may demote `key` into this tier: an
     /// indexed public anchor without a host entry or a demotion in flight,
     /// and a frontier unless the pool's tier is in forced mode.
@@ -557,6 +571,9 @@ impl HostTier {
         }
         if free + freed < needed {
             return Err(KvError::PoolExhausted { needed, free });
+        }
+        if !victims.is_empty() {
+            pool.metrics.prefix_ram_evicted(victims.len());
         }
         for host in victims {
             self.release_anchor(pool, host)?;

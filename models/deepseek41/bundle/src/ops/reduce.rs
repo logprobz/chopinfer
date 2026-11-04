@@ -287,8 +287,9 @@ impl ReduceOps {
         })
     }
 
-    /// A separate operation and state range keep decode and verify on their
-    /// original transport. Create must admit every rank before use.
+    /// The prefill's BF16-partial all-reduces: a separate operation and
+    /// state range keep decode and verify on their original transport.
+    /// Create must admit every rank before use.
     pub(crate) fn prepare_prefill(
         &mut self,
         backend: &dyn Backend,
@@ -296,11 +297,7 @@ impl ReduceOps {
         asks: &Asks,
     ) -> Result<(), Refused> {
         let need = exact::need(PREFILL_TOKENS, exact::every_phase(shape.verify_rows));
-        let query = if self.bf16_partials == Partials::Prefill {
-            partial_query(shape)
-        } else {
-            rounded_query(shape)
-        };
+        let query = partial_query(shape);
         let reduces = (0..shape.ranks())
             .map(|rank| {
                 asks.ask(format!("reduce.prefill_bf16 rank {rank}"), need, |need| {
@@ -385,10 +382,6 @@ impl ReduceOps {
         self.bf16_partials != Partials::Off
     }
 
-    pub(crate) fn prefill_only_partials(&self) -> bool {
-        self.bf16_partials == Partials::Prefill
-    }
-
     pub(crate) fn admit_prefill(&mut self, admitted: bool) {
         if let Some(prefill) = &mut self.prefill {
             prefill.admitted = admitted;
@@ -416,13 +409,7 @@ impl ReduceOps {
     ) -> Result<Vec<Lowered>, Refusal> {
         let rows = phase.rows();
         let (ops, state) = match (&self.prefill, &self.phased_decode) {
-            (Some(p), _)
-                if p.admitted
-                    && phase.prefill()
-                    && (rows >= 512 || self.prefill_only_partials()) =>
-            {
-                (&p.reduces, p.state.clone())
-            }
+            (Some(p), _) if p.admitted && phase.prefill() => (&p.reduces, p.state.clone()),
             (_, Some(p)) if p.admitted && !phase.prefill() => (&p.reduces, p.state.clone()),
             _ => (&self.reduces, 0..self.main_state),
         };

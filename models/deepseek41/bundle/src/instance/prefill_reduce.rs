@@ -40,24 +40,6 @@ impl super::Instance {
         Ok(())
     }
 
-    pub(super) fn admit_prefill_reduce(&mut self) {
-        if !self
-            .ops
-            .reduce
-            .as_ref()
-            .is_some_and(|ops| ops.prefill_prepared() && !ops.bf16_partials())
-        {
-            return;
-        }
-        let result = self.phased_f32_fits();
-        self.log(&format!("prefill BF16 gather admission: {result:?}"));
-        self.ops
-            .reduce
-            .as_mut()
-            .expect("prepared reduction")
-            .admit_prefill(result.is_ok());
-    }
-
     /// Whether every rank's residency holds the phased F32 entries' largest
     /// grids.
     fn phased_f32_fits(&self) -> Result<(), String> {
@@ -78,8 +60,8 @@ impl super::Instance {
         Ok(())
     }
 
-    /// The `phased_decode_reduce` candidate's admission, as the prefill
-    /// gather's: without it decode and verify keep the composed form.
+    /// The `phased_decode_reduce` candidate's admission: without it decode
+    /// and verify keep the composed form.
     pub(super) fn admit_phased_decode_reduce(&mut self) {
         if !self
             .ops

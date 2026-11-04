@@ -648,10 +648,11 @@ impl Instance {
                 })
                 .filter(|cubin| {
                     cubin.name != "comm_rounded_phased_deepseek41_sm120"
-                        || self.ops.reduce.as_ref().is_some_and(|ops| {
-                            ops.prefill_prepared() && !ops.bf16_partials()
-                                || ops.phased_decode_prepared()
-                        })
+                        || self
+                            .ops
+                            .reduce
+                            .as_ref()
+                            .is_some_and(|ops| ops.phased_decode_prepared())
                 })
                 .filter(|cubin| {
                     cubin.name != "comm_dma_sum_deepseek41_sm120" || !self.dma.is_empty()
@@ -1132,7 +1133,6 @@ fn create(services: HostServicesV1, bytes: &[u8]) -> Result<Instance, Failed<Ins
         let result = status(error);
         return Err(Failed::releasing(instance, result));
     }
-    instance.admit_prefill_reduce();
     instance.admit_phased_decode_reduce();
     if let Err(error) = instance.admit_bf16_partials() {
         instance.log(&error);

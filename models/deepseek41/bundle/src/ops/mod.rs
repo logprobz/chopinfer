@@ -143,21 +143,6 @@ impl Ops {
             }
             ops.asked.extend(asks.asked());
         }
-        if !reduce::bf16_partials_requested(shape, storage)
-            && reduce::requested(shape)
-            && shape.ranks() == 4
-            && shape.dims().hidden.is_multiple_of(1024)
-            && shape.geometry.layers() < 256
-        {
-            let asks = Asks::default();
-            if let Some(reduce) = &mut ops.reduce {
-                let backend = Kernels::prefill_reduction_backend(shape);
-                if let Err(error) = reduce.prepare_prefill(backend.as_ref(), shape, &asks) {
-                    ops.missing.push(format!("prefill BF16 gather: {error}"));
-                }
-            }
-            ops.asked.extend(asks.asked());
-        }
         if reduce::phased_decode_requested(shape) {
             let asks = Asks::default();
             if let Some(reduce) = &mut ops.reduce {

@@ -410,7 +410,9 @@ The runner records the RAM-hit arm for a configuration whose serve words
 force the tier: GLM's and Qwen's opt-in `ram-forced` configuration serves
 every arm that way and also runs determinism, soak, spec_verify and
 verify_exact (`release_preview.sh run --model MODEL --config ram-forced
---suite full`).
+--suite full`). Its prefix_exact input predicates require RAM-hit records
+(`hit_tier` "ram", `checks.ram_hits` true), so a GPU-hit record given with
+`--input` is refused.
 
 `kv_offload.py`'s `kv-offload-prefix-pressure` arm runs the pressure
 workload with the tier on (`--kv-offload-prefix on`) and no forced swaps,

@@ -428,6 +428,85 @@ class PlanTests(unittest.TestCase):
                                     if arm.get('server', True)))
                 self.assertEqual({arm['arm'] for arm in arms}, {'verify-ar', 'verify-spec', 'prefix', 'ar', 'spec'})
 
+    def test_supplied_gpu_prefix_records_are_refused_under_ram_forced(self):
+        # A prefix record given with --input is not recorded, so the runner
+        # adds no --ram-hit. The configuration's input predicates refuse a
+        # GPU-hit record before its judge runs (checks.py check, as the runner
+        # judges), and on rescore; the default configuration takes it.
+        import checks as check_runs
+        import release_gate as gate
+
+        def prefix_record(name, tier, ram_hits=True):
+            flags = {key: True for key in ('cache', 'hit_equals_cold', 'chunked_equals_cold', 'hit_vs_cold')}
+            value = {'passed': True, 'skipped': [], 'errors': [], 'checks': flags,
+                     'server': {'model': name, 'health': {'serving': {'profile': {
+                         'tensor_parallel_size': 4, 'kv_cache_dtype': 'fp8', 'context_parallel_size': 1}}}}}
+            if tier == 'ram':
+                flags['ram_hits'] = ram_hits
+                value.update(hit_tier='ram', passed=ram_hits)
+            return value
+
+        for name, config in sorted(OPT_IN):
+            forced = f'{name}.{config}'
+            with self.subTest(model=name, config=config), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                served = runner.model_facts(name)['name']
+                declared = {variant: next(check for check in declaration.load(declaration.named(variant))['checks']
+                                          if check['id'] == 'prefix_exact') for variant in (name, forced)}
+                files = declared[name]['files']
+                arms = runner.plan(runner.model_facts(name), 'full', config, runner.configurations(name)[config],
+                                   inputs={key: '/given' for key in files})
+                self.assertNotIn('prefix', [arm['arm'] for arm in arms])
+                for key in files:
+                    self.assertEqual(declared[forced]['input_rules'][key], [
+                        *declared[name].get('input_rules', {}).get(key, []),
+                        {'path': ['hit_tier'], 'op': 'eq', 'value': 'ram', 'source': 'tools/qual/README.md#prefix-caching'},
+                        {'path': ['checks', 'ram_hits'], 'op': 'eq', 'value': True,
+                         'source': 'tools/qual/README.md#prefix-caching'}])
+
+                def judged(variant, tier, ram_hits=True):
+                    case = root / f'{variant}-{tier}-{ram_hits}'
+                    inputs = {}
+                    for key in files:
+                        inputs[key] = str(case / f'{key}.json')
+                        Path(inputs[key]).parent.mkdir(parents=True, exist_ok=True)
+                        Path(inputs[key]).write_text(json.dumps(prefix_record(served, tier, ram_hits)))
+                    (case / 'inputs.json').write_text(json.dumps(inputs))
+                    reached = []
+
+                    def judge(check, rows, *args):
+                        reached.append(check['id'])
+                        rows.append({'id': check['id'], 'passed': True, 'status': 'pass'})
+                        return rows[-1]
+
+                    args = SimpleNamespace(model=variant, id='prefix_exact', inputs=case / 'inputs.json',
+                                           with_receipt=[], receipts=case / 'checks', cohort='full',
+                                           url='http://127.0.0.1:1', served_model=served)
+                    with patch.object(check_runs, 'Client', lambda *a, **k: SimpleNamespace(
+                            identity=lambda *a, **k: {'model': served})), \
+                            patch.object(gate, 'run_check', side_effect=judge), \
+                            contextlib.redirect_stdout(io.StringIO()):
+                        code = check_runs.check_command(args)
+                    run = json.loads(next((case / 'checks').glob('*/check.json')).read_text())
+                    summary = {'server': {'model': served}, 'inputs': inputs,
+                               'input_sha256': {key: gate.digest(Path(path)) for key, path in inputs.items()}}
+                    rescored = check_runs.input_verdict({}, declared[variant], {}, None, summary)
+                    return code, run['status'], run.get('error'), reached, rescored
+
+                code, status, error, reached, rescored = judged(forced, 'gpu')
+                self.assertEqual((code, status, reached), (1, 'fail', []))
+                self.assertIn('hit_tier', error)
+                self.assertEqual(rescored['status'], 'insufficient')
+                self.assertIn('hit_tier', rescored['error'])
+                code, status, error, reached, rescored = judged(forced, 'ram', ram_hits=False)
+                self.assertEqual((code, status, reached), (1, 'fail', []))
+                self.assertIn(f"input predicate failed: ['checks', 'ram_hits']", error)
+                self.assertEqual(rescored['status'], 'fail')
+                self.assertEqual(judged(forced, 'ram')[:4], (0, 'pass', None, ['prefix_exact']))
+                self.assertIsNone(judged(forced, 'ram')[4])
+                # The default configuration's GPU-hit arm judges the same GPU records.
+                self.assertEqual(judged(name, 'gpu')[:4], (0, 'pass', None, ['prefix_exact']))
+
     def test_two_gpu_configurations_run_together_on_separate_pairs(self):
         configs = {'default': {'tensor_parallel_size': 4}, 'tp2-a': {'tensor_parallel_size': 2},
                    'tp2-b': {'tensor_parallel_size': 2}}

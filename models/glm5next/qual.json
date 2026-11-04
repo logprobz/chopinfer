@@ -3373,6 +3373,48 @@
       "quick": [
         "determinism"
       ],
+      "append": {
+        "prefix_exact": {
+          "prefix_record_1": [
+            {
+              "path": [
+                "hit_tier"
+              ],
+              "op": "eq",
+              "value": "ram",
+              "source": "tools/qual/README.md#prefix-caching"
+            },
+            {
+              "path": [
+                "checks",
+                "ram_hits"
+              ],
+              "op": "eq",
+              "value": true,
+              "source": "tools/qual/README.md#prefix-caching"
+            }
+          ],
+          "prefix_record_2": [
+            {
+              "path": [
+                "hit_tier"
+              ],
+              "op": "eq",
+              "value": "ram",
+              "source": "tools/qual/README.md#prefix-caching"
+            },
+            {
+              "path": [
+                "checks",
+                "ram_hits"
+              ],
+              "op": "eq",
+              "value": true,
+              "source": "tools/qual/README.md#prefix-caching"
+            }
+          ]
+        }
+      },
       "capabilities": {
         "text": false,
         "frontend": false,

@@ -4,6 +4,9 @@ use kernel_core::{
     rmsnorm_quantize::RmsNormQuantizeQuery,
 };
 use kernels_sm120::row::{rmsnorm_quantize, rmsnorm_quantize_tiles::Entry};
+
+mod scratch;
+use scratch::Scratch;
 fn entry() -> Entry {
     Entry {
         reference: rmsnorm_quantize::Entry::new(
@@ -74,8 +77,7 @@ fn tiles_keep_original_rms_lanes_and_unique_output_owners() {
 fn norm_tiles_compile_without_spills() {
     let tc = kernel_build::Toolchain::detect().unwrap();
     assert!(!tc.skipped);
-    let root = std::env::temp_dir().join(format!("norm-tiles-{}", std::process::id()));
-    std::fs::create_dir_all(&root).unwrap();
+    let root = Scratch::new("norm-tiles");
     let built = kernel_build::build(
         &tc,
         &[entry().cubin_spec("norm_tiles").unwrap()],

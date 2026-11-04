@@ -18,6 +18,9 @@ use kernels_sm120::{
     },
 };
 
+mod scratch;
+use scratch::Scratch;
+
 const H: usize = 5120;
 const N: usize = 4;
 const FLAT: usize = N * H;
@@ -278,8 +281,7 @@ fn rms_lanes_keep_the_served_producers_order() {
 fn column_pair_compiles_without_spills() {
     let tc = kernel_build::Toolchain::detect().unwrap();
     assert!(!tc.skipped);
-    let root = std::env::temp_dir().join(format!("column-producers-{}", std::process::id()));
-    std::fs::create_dir_all(&root).unwrap();
+    let root = Scratch::new("column-producers");
     let mut producers: Vec<_> = round_cols::TILES
         .iter()
         .map(|&(tile, tx)| (producer(round_cols::Mutation::None), tile, tx))

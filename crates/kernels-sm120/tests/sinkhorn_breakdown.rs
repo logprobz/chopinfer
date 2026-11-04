@@ -3,6 +3,9 @@ use kernels_sm120::sinkhorn_hc::{
     breakdown::{self, Entry, Mode},
     lagged, lagged_split,
 };
+
+mod scratch;
+use scratch::Scratch;
 fn entries() -> Vec<Entry> {
     [
         (Mode::Full, false),
@@ -81,8 +84,7 @@ fn diagnostics_keep_dependency_operations_in_wrappers() {
 }
 #[test]
 fn ablations_compile_and_retain_the_intended_work_without_spills() {
-    let root = std::env::temp_dir().join(format!("hc-breakdown-{}", std::process::id()));
-    std::fs::create_dir_all(&root).unwrap();
+    let root = Scratch::new("hc-breakdown");
     let tc = kernel_build::Toolchain::detect().unwrap();
     assert!(!tc.skipped);
     let built = kernel_build::build(

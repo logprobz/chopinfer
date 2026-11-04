@@ -11,6 +11,9 @@ use kernels_sm120::{
     },
 };
 
+mod scratch;
+use scratch::Scratch;
+
 fn entry() -> Entry {
     Entry {
         query: Query {
@@ -133,8 +136,7 @@ fn rms_lane_ownership_retains_each_original_fma_chain_once() {
 fn expand_mix_compiles_with_no_spills_stack_or_atomic_protocol() {
     let toolchain = kernel_build::Toolchain::detect().unwrap();
     assert!(!toolchain.skipped);
-    let root = std::env::temp_dir().join(format!("expand-mix-build-{}", std::process::id()));
-    std::fs::create_dir_all(&root).unwrap();
+    let root = Scratch::new("expand-mix-build");
     let spec = expand_mix::cubin_spec("expand_mix", &[entry()]).unwrap();
     let built = kernel_build::build(
         &toolchain,

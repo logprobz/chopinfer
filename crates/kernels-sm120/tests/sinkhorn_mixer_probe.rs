@@ -1,4 +1,7 @@
 use kernels_sm120::sinkhorn_hc::{Geometry, lagged, lagged_split, mixer_probe::Entry};
+
+mod scratch;
+use scratch::Scratch;
 fn entry() -> Entry {
     Entry {
         reference: lagged_split::entry(
@@ -37,8 +40,7 @@ fn task_scheduling_and_shared_extent_are_explicit() {
 }
 #[test]
 fn finalizers_compile_without_spills_and_preserve_ordering_instructions() {
-    let root = std::env::temp_dir().join(format!("hc-mixer-probes-{}", std::process::id()));
-    std::fs::create_dir_all(&root).unwrap();
+    let root = Scratch::new("hc-mixer-probes");
     let tc = kernel_build::Toolchain::detect().unwrap();
     assert!(!tc.skipped);
     let built = kernel_build::build(

@@ -8,6 +8,9 @@ use kernels_sm120::{
     row::{rmsnorm_quantize, rmsnorm_quantize_cached},
     sinkhorn_hc::{expand_mix, lagged, round_chain_partials},
 };
+
+mod scratch;
+use scratch::Scratch;
 fn norm() -> rmsnorm_quantize_cached::Entry {
     rmsnorm_quantize_cached::Entry {
         reference: rmsnorm_quantize::Entry::new(
@@ -98,8 +101,7 @@ fn producers_preserve_reduction_owners_and_private_workspace() {
 fn parallel_producers_compile_without_spills() {
     let tc = kernel_build::Toolchain::detect().unwrap();
     assert!(!tc.skipped);
-    let root = std::env::temp_dir().join(format!("parallel-producers-{}", std::process::id()));
-    std::fs::create_dir_all(&root).unwrap();
+    let root = Scratch::new("parallel-producers");
     let built = kernel_build::build(
         &tc,
         &[

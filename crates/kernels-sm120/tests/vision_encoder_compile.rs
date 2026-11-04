@@ -7,15 +7,17 @@
 //! to 1216 columns, since the pair GEMM takes K in multiples of 64.
 
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::Command;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use encoder_spec::{Declaration, Environment, parse};
 use kernel_build::{BuildOptions, Toolchain, build};
 use kernel_core::contract::MultimodalQuery;
 use kernels_sm120::encoder::{self, Entry, Shared};
 use serde_json::json;
+
+mod scratch;
+use scratch::Scratch;
 
 fn tower() -> Declaration {
     let text = json!({
@@ -195,14 +197,7 @@ fn the_tower_lowers_to_its_row_entries() {
 fn the_tower_cubins_compile_and_audit() {
     let toolchain = Toolchain::detect().expect("CUDA 13.2 is available");
     assert!(!toolchain.skipped, "SM120 compilation is required on Linux");
-    let stamp = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    let root = PathBuf::from(std::env::var("TMPDIR").unwrap_or_else(|_| "/tmp".into())).join(
-        format!("vision-encoder-cubin-{}-{stamp}", std::process::id()),
-    );
-    fs::create_dir_all(&root).unwrap();
+    let root = Scratch::new("vision-encoder-cubin");
     let entries = encoder::catalog(&tower(), &Shared).unwrap();
     let specs = encoder::cubin_specs(&entries).unwrap();
     let cubins = build(
@@ -292,7 +287,6 @@ fn the_tower_cubins_compile_and_audit() {
             assert!(!sass.contains("FMNMX"), "{} has FMNMX", entry.symbol);
         }
     }
-    eprintln!("SASS in {}", root.display());
 }
 
 /// The BF16 cast's entry alone (`cast.bf16.v1` over 5120-wide rows): PDL,
@@ -302,13 +296,7 @@ fn the_tower_cubins_compile_and_audit() {
 fn the_bf16_cast_compiles_to_conversions_alone() {
     let toolchain = Toolchain::detect().expect("CUDA 13.2 is available");
     assert!(!toolchain.skipped, "SM120 compilation is required on Linux");
-    let stamp = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    let root = PathBuf::from(std::env::var("TMPDIR").unwrap_or_else(|_| "/tmp".into()))
-        .join(format!("encoder-cast-cubin-{}-{stamp}", std::process::id()));
-    fs::create_dir_all(&root).unwrap();
+    let root = Scratch::new("encoder-cast-cubin");
     let entry = encoder::Kernel::new(
         "cast.bf16.v1",
         None,

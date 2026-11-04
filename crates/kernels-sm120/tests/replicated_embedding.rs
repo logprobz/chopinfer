@@ -7,6 +7,9 @@ use kernels_sm120::{
     backend::Sm120,
     row::replicated_embedding::{self, Entry},
 };
+
+mod scratch;
+use scratch::Scratch;
 fn entry(ranks: u32) -> Entry {
     Entry {
         query: Query {
@@ -102,7 +105,7 @@ fn task_has_no_grid_ownership_and_all_rank_entries_compile_without_spills() {
     }
     let t = kernel_build::Toolchain::detect().unwrap();
     assert!(!t.skipped);
-    let root = std::env::temp_dir().join(format!("replicated-embedding-{}", std::process::id()));
+    let root = Scratch::new("replicated-embedding");
     let spec =
         replicated_embedding::cubin_spec("embedding_replicated", &[entry(1), entry(2), entry(4)])
             .unwrap();

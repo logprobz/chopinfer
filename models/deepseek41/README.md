@@ -236,9 +236,12 @@ on 2026-10-23 freed 3296 MiB per rank and cost 2-4% decode throughput at
 C1/C8/C32, with unchanged output bits. The host's
 `CHOPINFER_WEIGHT_CENSUS=0` selects raw banks.
 
-Native TP4 prefill rounds completed local partials to BF16, sums ranks in
-ascending F32 order and rounds the result once. Decode, target verify and
-draft blocks keep F32 partials. With the `phased_decode_reduce` candidate
+TP4 prefill at both KV storages rounds completed local partials to BF16,
+sums ranks in ascending F32 order and rounds the result once. BF16 KV
+storage takes the native partials so that comparing the two layouts
+compares their stored KV alone, and its create needs the same resident
+BF16-partial grids as native. Decode, target verify and draft blocks keep
+F32 partials. With the `phased_decode_reduce` candidate
 option, their reductions that no HC boundary takes the round of (four per
 rank at every width, and all 81 at the verify widths that defer no round)
 run the phased F32 rounding entries, which sum in the same rank order and

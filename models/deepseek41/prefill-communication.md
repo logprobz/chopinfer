@@ -1,9 +1,9 @@
 # Served prefill communication
 
-Native Flash TP4 prefill uses BF16 partials; decode, verify and draft
-blocks keep F32 partials. The model selects the arithmetic and eligible
-row intervals. `bundle_runtime::dma` owns byte transport, events, the
-push-capability probe and draining. See
+Flash TP4 prefill uses BF16 partials at both KV storages; decode, verify
+and draft blocks keep F32 partials. The model selects the arithmetic and
+eligible row intervals. `bundle_runtime::dma` owns byte transport, events,
+the push-capability probe and draining. See
 [partial arithmetic](communication-partials.md).
 
 ## Collective admission
@@ -20,12 +20,14 @@ input/output intervals. It cannot choose a different partial precision.
 The current native default reaches the BF16 payload path. The shared
 transport also supports F32 payloads for callers with that contract.
 
-Flash TP4 BF16-KV prefill can use phased F32 partials with BF16 gather at
-512 or more rows and whole 1024-element row granules. Residency admission
-is required on every rank; unmet gates use the composed F32 scatter/gather
-and final BF16 round. Logits gather is separate and stays F32. Protocol
-state resets only after a quiescent join, without resetting unrelated
-collectives. Partial submission or failed draining poisons the instance.
+Flash TP4 BF16-KV prefill takes the same BF16-partial collectives as
+native, on the SM transport: upper-skip DMA stays native-only. Residency
+admission is required on every rank at both storages, and a failure
+refuses the instance. The phased F32 gather with BF16 output that BF16-KV
+prefill used before is retired. Logits gather is separate and stays F32.
+Protocol state resets only after a quiescent join, without resetting
+unrelated collectives. Partial submission or failed draining poisons the
+instance.
 
 ## Ordered transport
 

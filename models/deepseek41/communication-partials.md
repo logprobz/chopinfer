@@ -1,10 +1,22 @@
 # BF16 prefill partial communication
 
-Native Flash TP4 defaults to BF16 partials for prefill only. Decode,
-target verification and draft blocks retain their F32 transport and deferred
-HC round. The default applies to all prefill row counts, including short
-upper-cone intervals and odd final chunks. Other geometries, rank counts
-and BF16 KV storage retain F32 partials by default.
+Flash TP4 defaults to BF16 partials for prefill only, at both KV
+storages. Decode, target verification and draft blocks retain their F32
+transport and deferred HC round. The default applies to all prefill row
+counts, including short upper-cone intervals and odd final chunks. Other
+geometries and rank counts retain F32 partials by default.
+
+BF16 KV storage takes the native prefill partials so that comparing the
+two layouts compares their stored KV alone. With F32 partials at BF16 KV,
+a native-versus-BF16 comparison mixed the storage with unlike prefill
+arithmetic and could not tell a storage defect from the intended rounding.
+On 2026-11-04 a GPU diagnostic of 89ea9418ef with this change found BF16
+KV bitwise equal to native over the 12-request determinism set (a
+2710-token prompt, prefix hits and an image among them), with every text
+tap equal on short and 16k prompts; without it, the first differing tap
+was `L00.attn.out`, after the all-reduce. BF16 KV create therefore needs
+the same resident BF16-partial grids as native. The rounded F32 prefill
+gather BF16 KV used before is retired.
 
 Prefill DMA carries the same BF16 partials with
 the same rounding and rank-ordered sum; see
@@ -59,10 +71,10 @@ masked row cases up to 8192 rows. The GPU fixture and served accuracy gates pass
 
 The prefill route reuses the BF16 operations and arithmetic qualified by
 the BF16-partial qualification. It adds no kernel or stream fork.
-Its small-row prefill selection does not use the 512-row threshold of the
-F32-partial rounded-output gather: all prefill rows use the selected partial
-format. Fake-host tests cover one-row, short and odd prefills, F32 decode
-fusion, draft/verify reductions and protocol reset ranges. The selected default has passed quiet fixed-KV ABBA qualification.
+All prefill rows use the selected partial format; the retired F32-partial
+rounded-output gather began at 512 rows. Fake-host tests cover one-row,
+short and odd prefills, F32 decode fusion, draft/verify reductions and
+protocol reset ranges. The selected default has passed quiet fixed-KV ABBA qualification.
 
 At TP4, native KV and 250 W per GPU, the fixed-KV quiet comparison measured
 32K TTFT at 6.9131 seconds with F32 partials and 6.1952 seconds with BF16

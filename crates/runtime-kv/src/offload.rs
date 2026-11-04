@@ -460,7 +460,23 @@ impl HostTier {
         }
         Ok(())
     }
-    /// Drops a key's public host entry, returning whether it had one.
+    /// Tiers sharing a pool number their anchors alike, so only the tier
+    /// the pool's entries are bound to may resolve their host ids.
+    fn check_binding(&self, pool: &KvPool) -> Result<(), KvError> {
+        match pool.ram.as_ref().and_then(|ram| ram.tier) {
+            Some(tier) if tier != self.tier => Err(KvError::StaleHandle),
+            _ => Ok(()),
+        }
+    }
+    /// Checks that `host` is this tier's public anchor of `key`.
+    fn check_public(&self, host: HostAnchorId, key: PrefixCacheKeyV1) -> Result<(), KvError> {
+        match self.anchors.get(&host) {
+            Some(anchor) if anchor.key == key && anchor.owner.is_none() => Ok(()),
+            _ => Err(KvError::InvariantViolation),
+        }
+    }
+    /// Drops a key's public host entry, returning whether it had one. Only
+    /// the tier the pool's entries are bound to may drop them.
     pub fn drop_public_entry(
         &mut self,
         pool: &mut KvPool,
@@ -468,21 +484,28 @@ impl HostTier {
     ) -> Result<bool, KvError> {
         self.check_pool(pool)?;
         pool.ensure_no_prepared()?;
+        self.check_binding(pool)?;
         let Some(entry) = pool.host_entry(key) else {
             return Ok(false);
         };
+        self.check_public(entry.host, key)?;
         self.release_anchor(pool, entry.host)?;
         Ok(true)
     }
     /// Drops every public entry a resume, a recapture or a new resident
-    /// descendant made unusable, returning each key with its cause.
+    /// descendant made unusable, returning each key with its cause. Nothing
+    /// is dropped unless every entry checks out.
     pub fn drop_invalidated_entries(
         &mut self,
         pool: &mut KvPool,
     ) -> Result<Vec<(PrefixCacheKeyV1, PrefixHostInvalidationV1)>, KvError> {
         self.check_pool(pool)?;
         pool.ensure_no_prepared()?;
+        self.check_binding(pool)?;
         let invalidated = pool.invalidated_host_entries();
+        for (key, host, _) in &invalidated {
+            self.check_public(*host, *key)?;
+        }
         for (_, host, _) in &invalidated {
             self.release_anchor(pool, *host)?;
         }

@@ -335,6 +335,65 @@ fn demotions_refuse_anything_but_an_indexed_public_frontier() {
 }
 
 #[test]
+fn public_drops_refuse_a_tier_the_entries_are_not_bound_to() {
+    use PrefixHostInvalidationV1::Resumed;
+    let prompt = chain(&(0..8).collect::<Vec<_>>());
+    let key = prompt.key_at(8).unwrap();
+    for case in ["drop", "drop invalidated"] {
+        let mut pool = ram_pool(32);
+        let mut tier = HostTier::new(&pool, 16).unwrap();
+        let mut other = HostTier::new(&pool, 16).unwrap();
+        capture(&mut pool, &prompt, &[8]);
+        let public = demote(&mut pool, &mut tier, key);
+        // The other tier's first anchor, an owned swap, takes the same id.
+        let source = pool.create_sequence(8).unwrap();
+        pool.append(source, 8).unwrap();
+        let private = PrefixCacheKeyV1::new([9; 32]);
+        pool.insert_private_anchor(private, source, 1)
+            .unwrap()
+            .unwrap();
+        pool.release(source).unwrap();
+        let (swap, plan) = other.begin_offload(&mut pool, private, Some(1)).unwrap();
+        other.complete_transfer(&mut pool, completed(plan)).unwrap();
+        assert_eq!(swap, public);
+        // A resume leaves the public entry invalidated.
+        let hit = pool.resume_anchor(key, 8).unwrap();
+        pool.finish_restore(hit.handle()).unwrap();
+        pool.release(hit.handle()).unwrap();
+        let before = pool.clone();
+        if case == "drop" {
+            assert_eq!(
+                other.drop_public_entry(&mut pool, key),
+                Err(KvError::StaleHandle)
+            );
+        } else {
+            assert_eq!(
+                other.drop_invalidated_entries(&mut pool),
+                Err(KvError::StaleHandle)
+            );
+        }
+        assert_eq!(pool, before, "{case}");
+        assert!(
+            other
+                .anchor(swap)
+                .is_some_and(|anchor| anchor.owner == Some(1) && anchor.ready),
+            "{case}"
+        );
+        other.audit(&pool).unwrap();
+        tier.audit(&pool).unwrap();
+        // The bound tier still drops its own entry, and the swap stays.
+        assert_eq!(
+            tier.drop_invalidated_entries(&mut pool).unwrap(),
+            [(key, Resumed)]
+        );
+        assert!(other.anchor(swap).is_some());
+        other.drop_anchor(swap).unwrap();
+        assert_idle(&pool, &tier);
+        assert_idle(&pool, &other);
+    }
+}
+
+#[test]
 fn demotion_candidates_are_frontiers_in_eviction_order() {
     let interior = chain(&(0..8).collect::<Vec<_>>());
     let (short, plain, shadowed, copying) = (

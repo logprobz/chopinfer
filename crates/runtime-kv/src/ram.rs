@@ -537,4 +537,55 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn public_drops_release_only_the_public_anchor_of_the_entrys_key() {
+        for case in ["owned", "other key"] {
+            for drop in ["drop", "drop invalidated"] {
+                let (mut pool, mut tier, chain) = demoted();
+                let key = chain.key_at(8).unwrap();
+                // A second anchor in the same tier: an owned swap, or the
+                // public entry of another key.
+                let source = pool.create_sequence(4).unwrap();
+                pool.append(source, 4).unwrap();
+                let other = if case == "owned" {
+                    let private = PrefixCacheKeyV1::new([9; 32]);
+                    pool.insert_private_anchor(private, source, 1)
+                        .unwrap()
+                        .unwrap();
+                    tier.begin_offload(&mut pool, private, Some(1))
+                } else {
+                    let prompt = PrefixChainV1::new(4, vec![7u32; 4].into(), vec![]).unwrap();
+                    pool.insert_content_anchor(&prompt, source, 4, 1)
+                        .unwrap()
+                        .unwrap();
+                    tier.begin_offload(&mut pool, prompt.key_at(4).unwrap(), None)
+                };
+                pool.release(source).unwrap();
+                let (other, plan) = other.unwrap();
+                tier.complete_transfer(
+                    &mut pool,
+                    plan.into_submission()
+                        .completion(KvTransferStatus::Complete),
+                )
+                .unwrap();
+                pool.ram
+                    .as_mut()
+                    .unwrap()
+                    .entries
+                    .get_mut(&key)
+                    .unwrap()
+                    .host = other;
+                let before = pool.clone();
+                let result = if drop == "drop" {
+                    tier.drop_public_entry(&mut pool, key).map(|_| ())
+                } else {
+                    tier.drop_invalidated_entries(&mut pool).map(|_| ())
+                };
+                assert_eq!(result, Err(KvError::InvariantViolation), "{case} {drop}");
+                assert_eq!(pool, before, "{case} {drop}");
+                assert!(tier.anchor(other).is_some(), "{case} {drop}");
+            }
+        }
+    }
 }

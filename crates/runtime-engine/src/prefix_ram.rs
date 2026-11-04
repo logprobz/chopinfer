@@ -311,10 +311,11 @@ impl<E: ModelExecutor> Engine<E> {
         &mut self,
         report: &AdmissionReport,
     ) -> Result<bool, EngineError> {
-        let now = self.clock.now_micros();
         let Some(ram) = self.offload.as_mut().and_then(|state| state.ram.as_mut()) else {
             return Ok(false);
         };
+        // Read only with the tier: an engine without it keeps its timings.
+        let now = self.clock.now_micros();
         for (id, _) in report.ram_waits() {
             ram.waits.entry(*id).or_insert(now);
         }
@@ -429,21 +430,15 @@ impl<E: ModelExecutor> Engine<E> {
     /// decision to wait for its promotion. A forced late follower, which
     /// restored a promoted anchor without waiting, counts zero.
     pub(super) fn record_prefix_ram_hits(&mut self) {
-        let now = self.clock.now_micros();
-        let hits = self.scheduler.take_prefix_ram_hits();
-        let Some(ram) = self.prefix_ram_driver() else {
+        let Some(ram) = self.offload.as_mut().and_then(|state| state.ram.as_mut()) else {
             return;
         };
-        let elapsed: Vec<_> = hits
-            .iter()
-            .map(|hit| {
-                ram.waits
-                    .remove(&hit.request_id)
-                    .map_or(0, |start| now.saturating_sub(start))
-            })
-            .collect();
-        for micros in elapsed {
-            self.metrics.prefix_ram_restore(micros);
+        let now = self.clock.now_micros();
+        let hits = self.scheduler.take_prefix_ram_hits();
+        for hit in hits {
+            let waited = ram.waits.remove(&hit.request_id);
+            self.metrics
+                .prefix_ram_restore(waited.map_or(0, |start| now.saturating_sub(start)));
         }
     }
 

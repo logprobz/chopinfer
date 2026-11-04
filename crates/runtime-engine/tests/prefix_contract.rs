@@ -407,6 +407,39 @@ fn capture_and_restore_time_is_counted_per_call() {
     assert!(text.contains("chop_prefix_cache_restore_microseconds_total 5"));
 }
 
+/// Every clock read moves a ticking clock, so a read the engine adds
+/// anywhere on a request's path moves its timings. These are the timings
+/// and the read count of the engine before the RAM prefix tier, which an
+/// engine without the tier keeps.
+#[test]
+fn an_engine_without_the_ram_tier_reads_the_clock_as_before() {
+    let clock = Arc::new(TickingClock::default());
+    let metrics = EngineMetrics::default();
+    let mut engine = Engine::new_with_observability(
+        config(true),
+        FoldingExecutor::default(),
+        clock.clone(),
+        metrics.clone(),
+    )
+    .unwrap();
+    let first = words(20, 0);
+    run(&mut engine, 1, &first, 3);
+    let mut second = first.clone();
+    second.extend(words(6, 5));
+    let (_, cached) = run(&mut engine, 2, &second, 4);
+    assert_eq!(cached, Some(20));
+    let snapshot = metrics.snapshot();
+    assert_eq!(
+        (
+            snapshot.queue_micros,
+            snapshot.ttft_micros,
+            snapshot.itl_micros,
+            clock.0.load(Ordering::Relaxed),
+        ),
+        (30, 120, 145, 285)
+    );
+}
+
 /// Prompts of one chunk capture only their end, so a shared system prompt
 /// hits once a second prompt has shown where the shared blocks end.
 #[test]

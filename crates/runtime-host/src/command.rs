@@ -9600,6 +9600,9 @@ mod tests {
             fn drain_timeout(&self) -> std::time::Duration {
                 std::time::Duration::from_secs(77)
             }
+            fn page_bytes(&self) -> u64 {
+                4096
+            }
             fn cancel_supported(&self) -> bool {
                 true
             }
@@ -9628,6 +9631,7 @@ mod tests {
             1,
         );
         assert!(!bare.kv_transfer_cancel_v1_supported());
+        assert_eq!(bare.kv_offload_page_bytes_v1(), 0);
         let copies = Rc::new(Copies::default());
         let info = KvOffloadInfo {
             host_page_capacity: 16,
@@ -9657,6 +9661,7 @@ mod tests {
             std::time::Duration::from_secs(77)
         );
         assert_eq!(executor.kv_offload_info_v1(), Some(info));
+        assert_eq!(executor.kv_offload_page_bytes_v1(), 4096);
         let mut pool = KvPool::new(KvGeometry::new(4, 32).unwrap(), 4).unwrap();
         let mut host = HostTier::new(&pool, 16).unwrap();
         let seq = pool.create_sequence(12).unwrap();

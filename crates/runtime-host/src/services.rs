@@ -6600,6 +6600,7 @@ mod tests {
             None
         );
         assert!(!backend.cancel_supported());
+        assert_eq!(backend.page_bytes(), 0);
         assert_eq!(
             backend.with_device(FakeHostDeviceV1::live_object_count),
             before
@@ -6633,6 +6634,10 @@ mod tests {
             before + 2
         );
         assert!(backend.cancel_supported());
+        assert_eq!(
+            backend.page_bytes(),
+            (plan.page_bytes * plan.rank_count) as u64
+        );
         assert!(backend.initialize_kv_offload(options, u64::MAX).is_err());
         backend.drain().unwrap();
     }
@@ -7493,6 +7498,13 @@ impl<D: HostDeviceBackendV1> crate::offload::KvOffloadExecutorV1 for HostService
             queue.drain(device)?;
         }
         Ok(())
+    }
+    fn page_bytes(&self) -> u64 {
+        self.state
+            .borrow()
+            .offload
+            .as_ref()
+            .map_or(0, crate::offload::OffloadQueue::page_bytes)
     }
     fn cancel_supported(&self) -> bool {
         self.state.borrow().offload.is_some()

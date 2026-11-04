@@ -1744,6 +1744,9 @@ impl<E: BundleExecutionV1> ModelExecutor for BundleModelExecutorV1<E> {
         }
         Ok(())
     }
+    fn kv_offload_page_bytes_v1(&self) -> u64 {
+        self.offload.as_ref().map_or(0, |o| o.page_bytes())
+    }
     fn kv_transfer_cancel_v1_supported(&self) -> bool {
         self.offload.as_ref().is_some_and(|o| o.cancel_supported())
     }

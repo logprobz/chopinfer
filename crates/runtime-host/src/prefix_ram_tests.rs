@@ -236,22 +236,21 @@ impl BundleExecutionV1 for SnapshotBundle {
     }
 }
 
+struct Served {
+    engine: Engine<ServedExecutorV1<SnapshotBundle>>,
+    /// The startup line of a requested tier.
+    line: Option<String>,
+    /// The prefix each restore read.
+    restores: Rc<RefCell<Vec<Vec<u32>>>>,
+    /// Bytes one host page holds across every rank, without the arena zero.
+    page_bytes: u64,
+}
+
 /// An engine served as `ServedEngineV1::open` builds one: on host-memory
 /// device services with a serving KV pool of `pool_pages` and, with
 /// `offload`, the pinned arena, with the tier `prefix_ram` asks for
 /// configured over the pool.
-/// Returns the engine, the startup line of a requested tier, and the
-/// prefixes each restore read.
-#[allow(clippy::type_complexity)]
-fn served(
-    pool_pages: u64,
-    offload: bool,
-    prefix_ram: Option<bool>,
-) -> (
-    Engine<ServedExecutorV1<SnapshotBundle>>,
-    Option<String>,
-    Rc<RefCell<Vec<Vec<u32>>>>,
-) {
+fn served(pool_pages: u64, offload: bool, prefix_ram: Option<bool>) -> Served {
     let layout = DeclaredPageLayoutV1::new(
         64,
         2,
@@ -357,7 +356,12 @@ fn served(
     let line = tier.map(|tier| {
         prefix_ram_startup_line_v1(engine.prefix_ram_status(), plan, PAGE_TOKENS, tier, offload)
     });
-    (engine, line, restores)
+    Served {
+        engine,
+        line,
+        restores,
+        page_bytes: plan.map_or(0, |plan| (plan.page_bytes * plan.rank_count) as u64),
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -447,14 +451,23 @@ fn a_fake_host_serve_runs_the_tier_and_its_forced_mode_hits_ram() {
     c.extend(prompt(3, 2 * PAGE_TOKENS));
     let requests: [(u64, &[u32]); 3] = [(1, &a), (2, &b), (3, &c)];
     // Without the tier, B and C resume A's anchor on the GPU.
-    let (mut gpu, line, _) = served(32, true, None);
+    let Served {
+        engine: mut gpu,
+        line,
+        ..
+    } = served(32, true, None);
     assert_eq!(line, None);
     assert_eq!(gpu.prefix_ram_status(), PrefixRamStatusV1::Off);
     let expected = run(&mut gpu, &requests);
     let hits = gpu.kv_metrics().snapshot().prefix_cache_hits;
     assert!(hits >= 2, "{expected:?}");
     for forced in [false, true] {
-        let (mut engine, line, restores) = served(32, true, Some(forced));
+        let Served {
+            mut engine,
+            line,
+            restores,
+            page_bytes,
+        } = served(32, true, Some(forced));
         assert_eq!(
             engine.prefix_ram_status(),
             PrefixRamStatusV1::Active { forced }
@@ -471,9 +484,20 @@ fn a_fake_host_serve_runs_the_tier_and_its_forced_mode_hits_ram() {
         let kv = engine.kv_metrics().snapshot();
         assert_eq!(kv.prefix_cache_hits, hits, "forced {forced}");
         let text = prometheus(&engine);
+        // Bytes count whole host pages across every rank.
+        let out = metric(
+            &text,
+            "chop_kv_offload_bytes_total{direction=\"out\",kind=\"prefix\"}",
+        );
+        let held = metric(&text, "chop_prefix_ram_bytes");
+        for bytes in [out, held] {
+            assert_eq!(bytes % page_bytes, 0, "forced {forced}");
+        }
         if forced {
             // Every hit restored from a promoted copy of A's demoted
-            // anchor, whose bytes the copy queue moved on every rank.
+            // anchor, whose bytes the copy queue moved on every rank, and
+            // forced mode keeps every host entry.
+            assert!(out > 0 && held > 0, "{out} {held}");
             assert_eq!(kv.prefix_cache_ram_hits, hits);
             assert_eq!(
                 metric(&text, "chop_prefix_ram_promotions_total{result=\"ok\"}"),
@@ -491,7 +515,13 @@ fn a_fake_host_serve_runs_the_tier_and_its_forced_mode_hits_ram() {
 
 #[test]
 fn a_fake_host_serve_without_the_offload_arena_runs_without_the_tier() {
-    let (mut engine, line, _) = served(32, false, Some(false));
+    let Served {
+        mut engine,
+        line,
+        page_bytes,
+        ..
+    } = served(32, false, Some(false));
+    assert_eq!(page_bytes, 0);
     assert_eq!(
         engine.prefix_ram_status(),
         PrefixRamStatusV1::Unavailable(PrefixRamUnavailableV1::NoOffload)
@@ -521,10 +551,15 @@ fn a_fake_host_serve_restores_an_anchor_the_gpu_evicted_from_ram() {
             .map(|(id, output)| (*id, output.tokens.clone()))
             .collect::<Vec<_>>()
     };
-    let (mut off, _, _) = served(24, true, None);
+    let mut off = served(24, true, None).engine;
     let cold = run(&mut off, &requests);
     assert_eq!(cold[&3].cached, None, "the filler evicted A on the GPU");
-    let (mut engine, _, restores) = served(24, true, Some(false));
+    let Served {
+        mut engine,
+        restores,
+        page_bytes,
+        ..
+    } = served(24, true, Some(false));
     let outputs = run(&mut engine, &requests);
     assert_eq!(tokens(&outputs), tokens(&cold));
     assert_eq!(outputs[&3].cached, Some(a.len()));
@@ -537,4 +572,18 @@ fn a_fake_host_serve_restores_an_anchor_the_gpu_evicted_from_ram() {
         metric(&text, "chop_prefix_ram_promotions_total{result=\"ok\"}"),
         1
     );
+    // The promotion copied A's four KV pages and its snapshot page in on
+    // both ranks.
+    assert_eq!(
+        metric(
+            &text,
+            "chop_kv_offload_bytes_total{direction=\"in\",kind=\"prefix\"}"
+        ),
+        5 * page_bytes
+    );
+    let out = metric(
+        &text,
+        "chop_kv_offload_bytes_total{direction=\"out\",kind=\"prefix\"}",
+    );
+    assert!(out >= 5 * page_bytes && out % page_bytes == 0, "{out}");
 }

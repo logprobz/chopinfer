@@ -123,6 +123,10 @@ pub trait KvOffloadExecutorV1 {
         Duration::from_secs(5)
     }
     fn drain(&self) -> HostDeviceResultV1<()>;
+    /// Bytes one host page holds across every rank; zero without an arena.
+    fn page_bytes(&self) -> u64 {
+        0
+    }
     /// Whether [`Self::cancel`] stops demotions.
     fn cancel_supported(&self) -> bool {
         false
@@ -203,6 +207,10 @@ impl OffloadQueue {
             next_demotion: Instant::now(),
             poisoned: false,
         })
+    }
+    /// Bytes one host page holds across every rank.
+    pub fn page_bytes(&self) -> u64 {
+        (self.plan.page_bytes as u64).saturating_mul(self.plan.rank_count as u64)
     }
     pub fn drain_timeout(&self) -> Duration {
         let Some(rate) = self.rate else {

@@ -54,7 +54,8 @@ bash ci/cpu.sh            # full CPU gate on a clean committed HEAD
 
 Each quick run checks formatting and runs the unsafe audit
 (`cargo run -p xtask -- check-unsafe`). The audit accepts unsafe Rust only in
-a file listed in `REVIEWED_UNSAFE_FILES` (`crates/xtask/src/lib.rs`), with a
+a file listed in `REVIEWED_UNSAFE_FILES` (`crates/xtask/src/lib.rs`) or, for a
+model's own files, in its `models/<model>/reviewed-unsafe.txt`, with a
 `// SAFETY-REVIEWED:` comment starting at most three lines above each unsafe
 line.
 

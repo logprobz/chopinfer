@@ -1,0 +1,6 @@
+# Rust files of this model with unsafe code reviewed under the unsafe audit
+# (`cargo run -p xtask -- check-unsafe`), one path relative to this directory
+# per line. Each unsafe line still needs a `// SAFETY-REVIEWED:` comment
+# starting within the three lines above it.
+bundle/src/fake_host_tests/prefill_engram/legacy.rs
+bundle/src/fake_host_tests/prefill_plan_templates.rs

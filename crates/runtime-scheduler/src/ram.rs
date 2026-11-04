@@ -134,6 +134,10 @@ pub(super) struct PrefixRamState {
     budget_used: usize,
     /// The largest promotion this step deferred for the budget.
     deferred_pages: usize,
+    /// Forced mode: published promoted anchors the tier still owns, with
+    /// their anchor lifetime. Each goes after the first restore from it
+    /// completes, or once no request can restore it.
+    forced: BTreeMap<PrefixCacheKeyV1, u64>,
 }
 
 impl PrefixRamState {
@@ -229,6 +233,7 @@ impl Scheduler {
         self.ensure_no_pending()?;
         self.ram.budget_used = 0;
         self.ram.deferred_pages = 0;
+        let forced = self.config.prefix_ram.is_some_and(|config| config.forced);
         let mut settled = Vec::new();
         let ids: Vec<_> = self.ram.promotions.keys().copied().collect();
         for id in ids {
@@ -258,6 +263,12 @@ impl Scheduler {
             };
             let promotion = self.ram.promotions.remove(&id).expect("promotion listed");
             self.reserved_blocks -= promotion.pages;
+            if forced
+                && outcome == PrefixPublishV1::Published
+                && let Some(serial) = self.kv.anchor_serial(id.key())
+            {
+                self.ram.forced.insert(id.key(), serial);
+            }
             let fallback = PrefixRamFallbackV1::of(outcome);
             for record in &mut self.requests {
                 if record.ram.promotion != Some(id) {
@@ -279,6 +290,7 @@ impl Scheduler {
                 outcome,
             });
         }
+        self.release_forced_anchors()?;
         Ok(settled)
     }
 
@@ -562,9 +574,32 @@ impl Scheduler {
         Ok(RamChoice::Wait(Some(id)))
     }
 
-    /// Ends a restore: one that resumed the promoted anchor its request
-    /// waited for counts a RAM hit, and in forced mode the anchor goes, so
-    /// the key's next hit is a RAM hit again.
+    /// Marks a prompt-lookup restore from `hit`, its key and tokens, as a
+    /// RAM hit: its request waited for the promotion that published the
+    /// anchor, or in forced mode the anchor is a promoted one the tier
+    /// still owns, which a late follower restores too.
+    pub(super) fn mark_prefix_ram_restore(
+        &mut self,
+        index: usize,
+        hit: Option<(PrefixCacheKeyV1, usize)>,
+    ) {
+        let promoted = self.requests[index].ram.promoted.take();
+        let marked = hit.filter(|(key, _)| promoted == Some(*key) || self.owns_forced_anchor(*key));
+        self.requests[index].ram.restore = marked;
+    }
+
+    /// Whether `key`'s anchor is a forced promoted anchor the tier owns.
+    fn owns_forced_anchor(&self, key: PrefixCacheKeyV1) -> bool {
+        self.ram
+            .forced
+            .get(&key)
+            .is_some_and(|serial| self.kv.anchor_serial(key) == Some(*serial))
+    }
+
+    /// Ends a restore: one marked by [`Self::mark_prefix_ram_restore`]
+    /// counts a RAM hit, and the first from a forced promoted anchor
+    /// removes it, so the key's next hit is a RAM hit again. Restores that
+    /// resumed it before then keep their pages.
     pub(super) fn finish_prefix_ram_restore(&mut self, index: usize) -> Result<(), ScheduleError> {
         let Some((key, tokens)) = self.requests[index].ram.restore.take() else {
             return Ok(());
@@ -574,8 +609,44 @@ impl Scheduler {
             key,
             tokens,
         });
-        if self.config.prefix_ram.is_some_and(|config| config.forced) {
+        if self.owns_forced_anchor(key) {
+            self.ram.forced.remove(&key);
             self.kv.remove_anchor(key).map_err(ScheduleError::Kv)?;
+        }
+        Ok(())
+    }
+
+    /// Removes each forced promoted anchor no request can restore any more:
+    /// no queued waiter of its promotion and no pending restore from it. A
+    /// waiter's cancel, an abandoned restore or an admission past the anchor
+    /// can leave it so; one the pool evicted or replaced is forgotten.
+    pub(super) fn release_forced_anchors(&mut self) -> Result<(), ScheduleError> {
+        if self.ram.forced.is_empty() {
+            return Ok(());
+        }
+        let held: std::collections::BTreeSet<_> = self
+            .requests
+            .iter()
+            .flat_map(|record| {
+                record
+                    .ram
+                    .promoted
+                    .into_iter()
+                    .chain(record.ram.restore.map(|(key, _)| key))
+            })
+            .collect();
+        let released: Vec<_> = self
+            .ram
+            .forced
+            .keys()
+            .copied()
+            .filter(|key| !held.contains(key) || !self.owns_forced_anchor(*key))
+            .collect();
+        for key in released {
+            if self.owns_forced_anchor(key) {
+                self.kv.remove_anchor(key).map_err(ScheduleError::Kv)?;
+            }
+            self.ram.forced.remove(&key);
         }
         Ok(())
     }
@@ -604,10 +675,17 @@ impl Scheduler {
                 return Err(ScheduleError::InvariantViolation);
             }
         }
+        if !self.ram.forced.is_empty() && !self.config.prefix_ram.is_some_and(|ram| ram.forced) {
+            return Err(ScheduleError::InvariantViolation);
+        }
         for record in &self.requests {
-            if record.ram.promotion.is_some_and(|id| {
-                record.state != RequestState::Queued || !self.ram.promotions.contains_key(&id)
-            }) || (record.ram.restore.is_some() && record.restore.is_none())
+            let queued = record.state == RequestState::Queued;
+            if record
+                .ram
+                .promotion
+                .is_some_and(|id| !queued || !self.ram.promotions.contains_key(&id))
+                || (record.ram.promoted.is_some() && !queued)
+                || (record.ram.restore.is_some() && record.restore.is_none())
             {
                 return Err(ScheduleError::InvariantViolation);
             }

@@ -2237,16 +2237,14 @@ impl Scheduler {
                     }
                 });
             // A prompt-lookup hit on the anchor the request's promotion
-            // published is its RAM hit, counted when the restore completes.
-            let promoted = self.requests[index].ram.promoted.take();
-            self.requests[index].ram.restore = promoted
-                .filter(|key| {
-                    restore.is_some()
-                        && own_gpu.is_none()
-                        && host.is_none()
-                        && lookup.as_ref().and_then(|chain| chain.key_at(prefilled)) == Some(*key)
-                })
+            // published, or in forced mode on a promoted anchor the tier
+            // owns, is a RAM hit, counted when the restore completes.
+            let lookup_hit = lookup
+                .as_ref()
+                .filter(|_| restore.is_some() && own_gpu.is_none() && host.is_none())
+                .and_then(|chain| chain.key_at(prefilled))
                 .map(|key| (key, prefilled));
+            self.mark_prefix_ram_restore(index, lookup_hit);
             if let Some(reason) = self.requests[index].ram.fallback.take() {
                 ram_fallbacks.push((spec.id, reason));
             }
@@ -2286,6 +2284,9 @@ impl Scheduler {
             self.reserved_blocks += blocks;
             admitted.push(self.requests[index].spec.id);
         }
+        // A waiter admitted past its forced promoted anchor leaves it to
+        // no one.
+        self.release_forced_anchors()?;
         Ok(AdmissionReport {
             admitted,
             blocked,
@@ -3475,7 +3476,8 @@ impl Scheduler {
         };
         record.end_anchor =
             (allowance > 0 && end < prompt && record.captures.contains(&end)).then_some(end);
-        self.drop_own_anchor(index)
+        self.drop_own_anchor(index)?;
+        self.release_forced_anchors()
     }
 
     /// Grows every decoding request's reservation to cover its next step,
@@ -5000,7 +5002,8 @@ impl Scheduler {
         // A cancelled waiter leaves its promotion to publish a normal anchor.
         let ram = &mut self.requests[index].ram;
         (ram.promotion, ram.promoted, ram.restore) = (None, None, None);
-        self.drop_own_anchor(index)
+        self.drop_own_anchor(index)?;
+        self.release_forced_anchors()
     }
 
     /// Removes the private anchor of the request's last preemption: it was

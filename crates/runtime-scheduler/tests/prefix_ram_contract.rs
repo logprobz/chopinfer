@@ -647,6 +647,119 @@ fn an_exhausted_pool_falls_back_to_a_recomputed_gpu_match() {
     h.complete(demotion, KvTransferStatus::Complete);
     h.finish(true);
 }
+
+/// Moves a 17-token anchor of prompt `salt` to RAM in forced mode, where its
+/// demotion removes the GPU anchor.
+fn forced_host_only(h: &mut Harness, salt: u32) -> PrefixCacheKeyV1 {
+    let tokens = prompt(salt, 17);
+    h.run(u64::from(salt), &tokens);
+    let key = key(&tokens, 17);
+    h.demote(key);
+    assert_eq!(h.anchors(), 0);
+    key
+}
+
+/// Promotes and publishes the pending promotion.
+fn publish(h: &mut Harness) {
+    assert_eq!(h.promote(KvTransferStatus::Complete), 1);
+    assert_eq!(h.step(), [(PrefixPublishV1::Published, ANCHOR_PAGES)]);
+}
+
+/// Checks that a repeat after a forced promoted anchor went is a RAM hit.
+fn assert_forced_repeat_hits_ram(h: &mut Harness, id: u64) {
+    h.submit(id, &extended(1, 17, 7, id as u32));
+    assert_eq!(h.admit().ram_waits().len(), 1);
+    publish(h);
+    assert_eq!(h.admit().admitted(), [RequestId::new(id)]);
+    h.restore_all();
+    let hits = h.s.take_prefix_ram_hits();
+    assert_eq!(hits.len(), 1);
+    assert_eq!(hits[0].request_id, RequestId::new(id));
+    assert_eq!(h.anchors(), 0);
+}
+
+#[test]
+fn a_forced_promoted_anchor_goes_when_its_waiter_is_cancelled() {
+    for after_publish in [false, true] {
+        let case = format!("cancelled after the publish {after_publish}");
+        let mut h = Harness::new(24, tier(true, 64));
+        forced_host_only(&mut h, 1);
+        h.submit(2, &extended(1, 17, 7, 0));
+        assert_eq!(h.admit().ram_waits().len(), 1, "{case}");
+        if !after_publish {
+            h.s.cancel(RequestId::new(2)).unwrap();
+            h.check();
+        }
+        publish(&mut h);
+        if after_publish {
+            assert_eq!(h.anchors(), 1, "{case}");
+            h.s.cancel(RequestId::new(2)).unwrap();
+            h.check();
+        }
+        assert_eq!(h.anchors(), 0, "no request can restore it: {case}");
+        assert!(h.s.take_prefix_ram_hits().is_empty(), "{case}");
+        assert_forced_repeat_hits_ram(&mut h, 3);
+    }
+}
+
+#[test]
+fn a_late_follower_of_a_forced_promoted_anchor_counts_a_ram_hit() {
+    let mut h = Harness::new(48, tier(true, 64));
+    let key = forced_host_only(&mut h, 1);
+    h.submit(2, &extended(1, 17, 7, 0));
+    assert_eq!(h.admit().ram_waits().len(), 1);
+    publish(&mut h);
+    // A request arriving after the publish restores from the anchor too.
+    h.submit(3, &extended(1, 17, 7, 1));
+    let report = h.admit();
+    assert_eq!(report.admitted(), [RequestId::new(2), RequestId::new(3)]);
+    assert!(report.ram_waits().is_empty());
+    let restores = h.s.pending_prefix_restores();
+    assert_eq!(restores.len(), 2);
+    // The first restore removes the anchor; the other already holds it.
+    h.s.complete_prefix_restore(RequestId::new(3)).unwrap();
+    h.check();
+    assert_eq!(h.anchors(), 0);
+    h.s.complete_prefix_restore(RequestId::new(2)).unwrap();
+    h.check();
+    let mut hits = h.s.take_prefix_ram_hits();
+    hits.sort_by_key(|hit| hit.request_id);
+    assert_eq!(
+        hits.iter()
+            .map(|hit| (hit.request_id.get(), hit.key, hit.tokens))
+            .collect::<Vec<_>>(),
+        [(2, key, 17), (3, key, 17)]
+    );
+    h.finish(false);
+    assert_forced_repeat_hits_ram(&mut h, 4);
+}
+
+#[test]
+fn an_abandoned_restore_releases_a_forced_promoted_anchor_no_one_else_holds() {
+    for follower in [false, true] {
+        let case = format!("follower {follower}");
+        let mut h = Harness::new(48, tier(true, 64));
+        forced_host_only(&mut h, 1);
+        h.submit(2, &extended(1, 17, 7, 0));
+        assert_eq!(h.admit().ram_waits().len(), 1, "{case}");
+        publish(&mut h);
+        if follower {
+            h.submit(3, &extended(1, 17, 7, 1));
+        }
+        h.admit();
+        h.s.abandon_prefix_restore(RequestId::new(2)).unwrap();
+        h.check();
+        // A follower's pending restore still holds the anchor.
+        assert_eq!(h.anchors(), usize::from(follower), "{case}");
+        h.restore_all();
+        assert_eq!(h.anchors(), 0, "{case}");
+        let hits = h.s.take_prefix_ram_hits();
+        assert_eq!(hits.len(), usize::from(follower), "{case}");
+        h.finish(false);
+        assert_forced_repeat_hits_ram(&mut h, 4);
+    }
+}
+
 #[test]
 fn forced_mode_turns_each_repeat_into_a_ram_hit() {
     let mut h = Harness::new(24, tier(true, 64));

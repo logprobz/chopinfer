@@ -145,8 +145,8 @@ def forced_texts(exact, named):
     reference's; two texts may not share a name."""
     texts = [*exact["texts"], *(text for _, value in named.values() for text in value["texts"])]
     names = [text["name"] for text in texts]
-    if len(set(names)) != len(names):
-        raise SystemExit(f"refused: the forced references name a text twice: {sorted(names)}")
+    if repeated := sorted({name for name in names if names.count(name) > 1}):
+        raise SystemExit(f"refused: the forced references name texts twice: {repeated}")
     return texts
 
 

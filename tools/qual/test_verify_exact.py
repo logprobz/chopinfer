@@ -956,6 +956,11 @@ class NamedReferenceTests(unittest.TestCase):
         # The reference lock refuses the changed bytes before the pin's digest.
         self.assertRegex(str(code), "refused: lock entry reference:long_context: sha256 differs")
         self.assertIsNone(out)
+        # An exact text of the long text's name: the refusal names it alone.
+        self.exact["texts"].append(dict(self.exact["texts"][0], name=self.long["name"]))
+        self.exact_path.write_text(json.dumps(self.exact))
+        self.assertEqual(str(self.references("--reference", "long_context")[0]),
+                         f"refused: the forced references name texts twice: ['{self.long['name']}']")
 
     def record(self, context=None):
         from common import checkpoint_pin

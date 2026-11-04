@@ -1,8 +1,8 @@
 //! The pool's view of the RAM prefix tier: public anchors resident in a
-//! [`HostTier`](crate::HostTier). The host tier owns host page lifetime and updates these maps
-//! and the ancestry residency in the same call as every drop. The pool marks
-//! entries a logical event made unusable and the host tier drops them later,
-//! since the pool cannot release host pages itself.
+//! [`HostTier`](crate::HostTier). The host tier owns host page lifetime and
+//! updates these maps and the ancestry residency in the same call as every
+//! drop. The pool marks entries a logical event made unusable and the host
+//! tier drops them later, since the pool cannot release host pages itself.
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use crate::ancestry::{PrefixResidency, PrefixTier};
@@ -83,8 +83,8 @@ pub(crate) struct PrefixRam {
 
 impl KvPool {
     /// The RAM prefix tier: public anchors may keep host-resident entries
-    /// that one [`HostTier`](crate::HostTier) owns. Implies the ancestry index. Configure
-    /// before creating anchors.
+    /// that one [`HostTier`](crate::HostTier) owns. Implies the ancestry
+    /// index. Configure before creating anchors.
     #[must_use]
     pub fn with_prefix_ram(mut self, enabled: bool) -> Self {
         assert!(
@@ -121,7 +121,8 @@ impl KvPool {
     /// eviction frees the first `lead_pages` pages, and returns the ones a
     /// demotion may copy, in that order: indexed public frontiers of both
     /// tiers with at least `minimum_tokens` tokens, no host entry and no copy
-    /// in flight. An anchor eviction skips adds nothing.
+    /// in flight. The anchor whose demotion is in flight, which eviction
+    /// skips, adds nothing.
     #[must_use]
     pub fn demotion_candidates(
         &self,

@@ -523,7 +523,7 @@ mod tests {
                 if failure == "discard_pending" {
                     e.executor_mut().hold = true;
                     assert!(e.poll_idle_kv_transfers().unwrap());
-                    e.admit_and_restore().unwrap();
+                    e.admit_and_restore(&mut |_| {}).unwrap();
                     assert_eq!(e.request_state(id).unwrap(), RequestState::Queued);
                     assert!(!e.executor().restored);
                     e.executor_mut().hold = false;

@@ -364,7 +364,12 @@ fn export(bundle: &str, profile: &str, tags: &[audit::Tag]) {
     serde_json::to_writer_pretty(&mut file, &document).unwrap();
 }
 
-pub fn sweep<S: Startup>(profile: &str, allowlist: &str, bundle: &str) {
+/// Sweep `profile`'s served envelope and return whether this process ran the
+/// sweep. Quick and CPU sweeps rerun their test alone in a child process,
+/// which also runs any checks the caller makes after the sweep, and the quick
+/// tier may let another profile represent this one. A caller checks state the
+/// sweep leaves behind only when this returns true.
+pub fn sweep<S: Startup>(profile: &str, allowlist: &str, bundle: &str) -> bool {
     let tier = Tier::configured();
     let servings = super::super::startup::servings::<S>();
     let serving = servings
@@ -381,12 +386,31 @@ pub fn sweep<S: Startup>(profile: &str, allowlist: &str, bundle: &str) {
             .unwrap();
         if first.profile != profile {
             println!("{profile}: quick tier represented by {}", first.profile);
-            return;
+            return false;
         }
     }
     // Serialize CPU profiles that own internal workers. Full-tier pieces
     // execute one shape at a time in a required memory-limited scope.
     let _serial = (tier != Tier::Quick).then(|| SWEEP.lock().unwrap_or_else(|e| e.into_inner()));
+    if matches!(tier, Tier::Full | Tier::Exhaustive) {
+        profile_sweep::<S>(profile, allowlist, bundle, tier, &servings, serving);
+        true
+    } else {
+        // Quick and CPU sweeps may share a libtest process with other tests.
+        budget::own_process(|| {
+            profile_sweep::<S>(profile, allowlist, bundle, tier, &servings, serving)
+        })
+    }
+}
+
+fn profile_sweep<S: Startup>(
+    profile: &str,
+    allowlist: &str,
+    bundle: &str,
+    tier: Tier,
+    servings: &[Serving],
+    serving: &Serving,
+) {
     let started = Instant::now();
     let full = matches!(tier, Tier::Full | Tier::Exhaustive);
     let mut budget = budget::Budget::begin(profile, full);
@@ -430,7 +454,7 @@ pub fn sweep<S: Startup>(profile: &str, allowlist: &str, bundle: &str) {
     let seed = seed();
     let mut group = 0;
     let mut groups = 0;
-    for s in &servings {
+    for s in servings {
         if s.profile == profile {
             group = groups;
         }
@@ -607,29 +631,32 @@ fn check_allocated_coverage(expected: &[AllocatedShape], samples: &[audit::Sampl
     );
 }
 
-/// Exercise repeated varying shapes with the same fake instance. Model hooks
+/// Exercise repeated varying shapes with the same fake instance, in the
+/// test's own process so the RSS budget counts only this sweep. Model hooks
 /// assert that diagnostics do not retain buffers after request retirement.
 pub fn memory_regression<S: Startup>() {
-    let servings = super::super::startup::servings::<S>();
-    let serving = servings
-        .iter()
-        .find(|s| s.draft_tokens > 0)
-        .unwrap_or(&servings[0]);
-    let envelope = S::envelope(serving);
-    let cases: Vec<_> = (0..8)
-        .flat_map(|_| [1, 2, 3, 7, 16, 31, 32, 63, 64])
-        .map(|rows| Case {
-            mode: "single".into(),
-            phase: Phase::Prefill,
-            rows,
-            offset: 0,
-            lengths: vec![rows],
-            remaining: Vec::new(),
-            allocated: false,
-        })
-        .collect();
-    let (samples, _, _) = shard::<S>(serving, &envelope, &cases, false);
-    assert_eq!(samples.len(), 72);
+    budget::own_process(|| {
+        let servings = super::super::startup::servings::<S>();
+        let serving = servings
+            .iter()
+            .find(|s| s.draft_tokens > 0)
+            .unwrap_or(&servings[0]);
+        let envelope = S::envelope(serving);
+        let cases: Vec<_> = (0..8)
+            .flat_map(|_| [1, 2, 3, 7, 16, 31, 32, 63, 64])
+            .map(|rows| Case {
+                mode: "single".into(),
+                phase: Phase::Prefill,
+                rows,
+                offset: 0,
+                lengths: vec![rows],
+                remaining: Vec::new(),
+                allocated: false,
+            })
+            .collect();
+        let (samples, _, _) = shard::<S>(serving, &envelope, &cases, false);
+        assert_eq!(samples.len(), 72);
+    });
 }
 
 #[cfg(test)]

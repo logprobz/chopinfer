@@ -197,38 +197,73 @@ impl Config {
         Ok(())
     }
 
-    fn serve_arguments(&self) -> Vec<String> {
-        let mut arguments = vec![
-            "serve".into(),
-            "--bundle".into(),
-            self.bundle.to_string_lossy().into_owned(),
-            "--checkpoint".into(),
-            self.checkpoint.to_string_lossy().into_owned(),
-        ];
-        for (flag, path) in [
-            ("--weight-keeper", self.weight_keeper.as_ref()),
-            (
-                "--weight-keeper-identity",
-                self.weight_keeper_identity.as_ref(),
-            ),
-        ] {
-            if let Some(path) = path {
-                arguments.extend([flag.into(), path.to_string_lossy().into_owned()]);
+    fn serve_command(&self) -> Result<crate::HostCommandV1> {
+        use crate::command::serve_config::EnvironmentV1;
+        use crate::command::serve_options::{
+            ServingInputsV1, model_option_pair_v1, validate_model_option_v1,
+        };
+        let environment = EnvironmentV1::process()?;
+        let path = |value: &std::path::Path| PathBuf::from(value.to_string_lossy().into_owned());
+        let mut inputs = ServingInputsV1 {
+            bundle: Some(self.bundle.to_string_lossy().into_owned()),
+            direct_checkpoint: Some(path(&self.checkpoint)),
+            weight_keeper: self.weight_keeper.as_deref().map(path),
+            weight_keeper_identity: self.weight_keeper_identity.as_deref().map(path),
+            weight_keeper_policy: self
+                .weight_keeper_policy
+                .as_deref()
+                .map(crate::weight_keeper::KeeperPolicyV1::parse)
+                .transpose()
+                .map_err(crate::command::usage_error)?,
+            ..Default::default()
+        };
+        for (name, value) in &self.model_options {
+            let (name, value) = model_option_pair_v1(name.clone(), value.clone());
+            validate_model_option_v1(&name, &value)?;
+            if inputs.model_options.insert(name.clone(), value).is_some() {
+                return Err(crate::command::usage_error(format!(
+                    "model option '{name}' given more than once"
+                ))
+                .into());
             }
         }
-        if let Some(policy) = &self.weight_keeper_policy {
-            arguments.extend(["--weight-keeper-policy".into(), policy.clone()]);
-        }
-        for (name, value) in &self.model_options {
-            arguments.extend(["--model-option".into(), format!("{name}={value}")]);
-        }
-        arguments
+        let resolved = crate::profiles::Resolution::plain(inputs);
+        Ok(crate::command::serve_config::resolve_inputs(
+            &resolved,
+            &environment,
+            Vec::new(),
+        )?)
     }
 }
 
 #[cfg(test)]
 mod configuration_tests {
     use super::*;
+
+    #[test]
+    fn replay_model_options_keep_assignment_boundaries() {
+        for model_options in [
+            json!({"budget=small":"7"}),
+            json!({"budget":"7", "budget=small":"8"}),
+        ] {
+            let config: Config = serde_json::from_value(json!({
+                "bundle":"bundle", "checkpoint":"checkpoint", "topology":"topology",
+                "trace":"trace.json", "output":"capture", "concurrency":1,
+                "verify":false, "owned":false, "source":{}, "model_options":model_options
+            }))
+            .unwrap();
+            let mut words = ["serve", "--bundle", "bundle", "--checkpoint", "checkpoint"]
+                .map(String::from)
+                .to_vec();
+            for (name, value) in &config.model_options {
+                words.extend(["--model-option".into(), format!("{name}={value}")]);
+            }
+            assert_eq!(
+                config.serve_command().map_err(|error| error.to_string()),
+                crate::parse_host_command_v1(&words).map_err(|error| error.to_string())
+            );
+        }
+    }
 
     #[test]
     fn transition_wire_carries_drafter_seed_position_and_temperature() {
@@ -399,7 +434,7 @@ mod configuration_tests {
             weight_keeper_identity,
             direct_checkpoint,
             ..
-        } = crate::parse_host_command_v1(&config.serve_arguments()).unwrap()
+        } = config.serve_command().unwrap()
         else {
             panic!("expected the serving parser");
         };
@@ -414,7 +449,7 @@ mod configuration_tests {
         assert_eq!(direct_checkpoint, Some("checkpoint".into()));
         value["weight_keeper_policy"] = "unknown".into();
         let bad: Config = serde_json::from_value(value).unwrap();
-        assert!(crate::parse_host_command_v1(&bad.serve_arguments()).is_err());
+        assert!(bad.serve_command().is_err());
     }
 }
 
@@ -692,14 +727,13 @@ pub(super) fn replay(configuration: &std::path::Path) -> Result<()> {
     {
         return Err("unsupported trace concurrency".into());
     }
-    let arguments = config.serve_arguments();
     let crate::HostCommandV1::Serve {
         selection: crate::preparation::ServeSelection::Bundle(selection),
         host,
         weight_keeper,
         weight_keeper_identity,
         ..
-    } = crate::parse_host_command_v1(&arguments)?
+    } = config.serve_command()?
     else {
         unreachable!()
     };

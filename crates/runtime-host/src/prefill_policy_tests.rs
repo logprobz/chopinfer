@@ -29,23 +29,24 @@ fn capture_prefill_policy_equivalence() {
                     "--context-parallel-size".into(),
                     context_parallel.to_string(),
                 ];
-                let defaults = crate::profiles::apply_defaults(
-                    &crate::profiles::direct_defaults(profile),
-                    &explicit,
-                );
-                let command = crate::profiles::direct_command(&defaults).unwrap();
+                let explicit_inputs = ServingInputsV1::decode(&explicit).unwrap();
+                let defaults = profile.inputs(None).unwrap().overlay(&explicit_inputs);
+                let command = crate::profiles::standalone(defaults).unwrap();
                 let direct = runtime_bundle::preparation::DirectProfile {
                     name: name.clone(),
                     profile: serde_json::to_value(profile).unwrap(),
                 };
-                let resolved = crate::profiles::direct_arguments(
+                let resolved = crate::profiles::direct_inputs(
                     &direct,
                     profile.tensor_parallel as u32,
-                    &explicit,
+                    &explicit_inputs,
                     Path::new("/direct-package"),
                 )
                 .unwrap();
-                assert_eq!(command, parse_host_command_v1(&resolved.arguments).unwrap());
+                assert_eq!(
+                    command,
+                    crate::profiles::standalone(resolved.inputs).unwrap()
+                );
                 let shown: serde_json::Value = serde_json::from_str(
                     &crate::profiles::inspect(&[
                         "show".into(),
@@ -82,6 +83,12 @@ fn capture_prefill_policy_equivalence() {
         else {
             panic!("serve");
         };
+        configurations.insert(
+            format!("{name}/server"),
+            serde_json::json!({
+                "config": format!("{:?}", server_config_v1(*serving, RequestSurfaceV1::Full, None).unwrap()),
+            }),
+        );
         let config = engine_config_v1(
             &manifest,
             ModelVocabulary::new(128).unwrap(),

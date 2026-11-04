@@ -55,6 +55,13 @@ pub const FAKE_SERVED_HISTORY_ENTRIES_V1: usize = 4096;
 /// and a refused fill or copy must leave a KV append uncommitted.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub enum FakeRefusalV1 {
+    AllocationAlignment,
+    CreateContext,
+    CreateMemoryPool,
+    CreateStream,
+    CreateEvent,
+    CreateMappedGather,
+    ReleaseMappedGather,
     SubmitOffload,
     QueryOffload,
     ReleaseContext,
@@ -159,7 +166,7 @@ pub struct FakeHostDeviceV1 {
     /// Every host byte this backend has been asked to upload.
     host_to_device_copy_bytes: u64,
     /// Refusals that take effect only after a number of further attempts.
-    deferred_refusals: BTreeMap<FakeRefusalV1, usize>,
+    deferred_refusals: std::cell::RefCell<BTreeMap<FakeRefusalV1, usize>>,
     refusals: BTreeSet<FakeRefusalV1>,
     /// The strongest alignment this backend claims its allocations satisfy.
     allocation_alignment: u64,
@@ -273,7 +280,7 @@ impl FakeHostDeviceV1 {
             synchronizations: 0,
             largest_host_to_device_copy_bytes: 0,
             host_to_device_copy_bytes: 0,
-            deferred_refusals: BTreeMap::new(),
+            deferred_refusals: std::cell::RefCell::new(BTreeMap::new()),
             refusals: BTreeSet::new(),
             allocation_alignment: DEFAULT_FAKE_ALLOCATION_ALIGNMENT_V1,
             device_memory_bytes: DEFAULT_FAKE_DEVICE_MEMORY_BYTES_V1,
@@ -543,12 +550,12 @@ impl FakeHostDeviceV1 {
     /// Lets one previously refused operation succeed again.
     pub fn allow(&mut self, refusal: FakeRefusalV1) {
         self.refusals.remove(&refusal);
-        self.deferred_refusals.remove(&refusal);
+        self.deferred_refusals.get_mut().remove(&refusal);
     }
 
     /// Refuses one operation once, after `allowed` more of them succeed.
     pub fn refuse_after(&mut self, refusal: FakeRefusalV1, allowed: usize) {
-        self.deferred_refusals.insert(refusal, allowed);
+        self.deferred_refusals.get_mut().insert(refusal, allowed);
     }
 
     /// How many stream waits this backend has been asked to perform.
@@ -572,16 +579,17 @@ impl FakeHostDeviceV1 {
         self.host_to_device_copy_bytes
     }
 
-    fn check(&mut self, refusal: FakeRefusalV1) -> HostDeviceResultV1<()> {
+    fn check(&self, refusal: FakeRefusalV1) -> HostDeviceResultV1<()> {
         if self.refusals.contains(&refusal) {
             return Err(BundleStatusV1::HostError);
         }
         // A deferred refusal lets the attempts before it succeed, so a failure
         // can be placed exactly where a test needs it: after the wait that
         // precedes a callback, for instance, rather than before it.
-        match self.deferred_refusals.get_mut(&refusal) {
+        let mut deferred = self.deferred_refusals.borrow_mut();
+        match deferred.get_mut(&refusal) {
             Some(0) => {
-                self.deferred_refusals.remove(&refusal);
+                deferred.remove(&refusal);
                 Err(BundleStatusV1::HostError)
             }
             Some(remaining) => {
@@ -829,6 +837,7 @@ impl HostDeviceBackendV1 for FakeHostDeviceV1 {
         &mut self,
         plan: crate::device::mapped_gather::MappedGatherPlanV1,
     ) -> HostDeviceResultV1<DeviceObjectV1> {
+        self.check(FakeRefusalV1::CreateMappedGather)?;
         self.prepare_gather(plan)
     }
     fn enqueue_mapped_gather(
@@ -852,6 +861,7 @@ impl HostDeviceBackendV1 for FakeHostDeviceV1 {
         self.complete_gather(gather)
     }
     fn release_mapped_gather(&mut self, gather: DeviceObjectV1) -> HostDeviceResultV1<()> {
+        self.check(FakeRefusalV1::ReleaseMappedGather)?;
         self.release_gather(gather)
     }
 
@@ -1051,6 +1061,7 @@ impl HostDeviceBackendV1 for FakeHostDeviceV1 {
         rank: u32,
         device_ordinal: i32,
     ) -> HostDeviceResultV1<DeviceObjectV1> {
+        self.check(FakeRefusalV1::CreateContext)?;
         if device_ordinal < 0 {
             return Err(BundleStatusV1::InvalidArgument);
         }
@@ -1082,6 +1093,7 @@ impl HostDeviceBackendV1 for FakeHostDeviceV1 {
         &mut self,
         context: DeviceObjectV1,
     ) -> HostDeviceResultV1<DeviceObjectV1> {
+        self.check(FakeRefusalV1::CreateMemoryPool)?;
         self.require(context, FakeObjectKindV1::Context)?;
         // A context's pool is one object, the way a driver's default pool is.
         // Handing out a second one would hide an aliasing mistake rather than
@@ -1336,6 +1348,7 @@ impl HostDeviceBackendV1 for FakeHostDeviceV1 {
         buffer: DeviceObjectV1,
         alignment: u64,
     ) -> HostDeviceResultV1<bool> {
+        self.check(FakeRefusalV1::AllocationAlignment)?;
         self.require(buffer, FakeObjectKindV1::Buffer)?;
         // Host memory has no device address, so this backend answers with the
         // guarantee it was configured to make.
@@ -1399,6 +1412,7 @@ impl HostDeviceBackendV1 for FakeHostDeviceV1 {
         context: DeviceObjectV1,
         _stream_kind: u32,
     ) -> HostDeviceResultV1<DeviceObjectV1> {
+        self.check(FakeRefusalV1::CreateStream)?;
         self.require(context, FakeObjectKindV1::Context)?;
         let stream = self.create(FakeObjectKindV1::Stream, Vec::new())?;
         self.context_of.insert(stream.get(), context.get());
@@ -1454,6 +1468,7 @@ impl HostDeviceBackendV1 for FakeHostDeviceV1 {
     }
 
     fn create_event(&mut self, context: DeviceObjectV1) -> HostDeviceResultV1<DeviceObjectV1> {
+        self.check(FakeRefusalV1::CreateEvent)?;
         self.require(context, FakeObjectKindV1::Context)?;
         self.create(FakeObjectKindV1::Event, Vec::new())
     }

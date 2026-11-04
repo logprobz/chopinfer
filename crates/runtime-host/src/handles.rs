@@ -72,6 +72,8 @@ struct SlotV1<T> {
 /// Slot zero is never issued, because an all-zero handle is the ABI's invalid
 /// handle. Generation zero is never issued for the same reason.
 pub(crate) struct SlotTableV1<T> {
+    #[cfg(test)]
+    refuse_registration: bool,
     slots: Vec<SlotV1<T>>,
     free: Vec<u32>,
 }
@@ -79,6 +81,8 @@ pub(crate) struct SlotTableV1<T> {
 impl<T> SlotTableV1<T> {
     pub(crate) const fn new() -> Self {
         Self {
+            #[cfg(test)]
+            refuse_registration: false,
             slots: Vec::new(),
             free: Vec::new(),
         }
@@ -94,6 +98,10 @@ impl<T> SlotTableV1<T> {
         &mut self,
         make: impl FnOnce() -> SlotResultV1<T>,
     ) -> SlotResultV1<SlotKeyV1> {
+        #[cfg(test)]
+        if self.refuse_registration {
+            return Err(BundleStatusV1::ResourceExhausted);
+        }
         if self.free.is_empty() && self.slots.len() >= MAX_SLOTS_PER_TABLE_V1 {
             // Refuse before taking a generation, so a full table does not burn
             // the process-wide domain down.
@@ -168,6 +176,13 @@ impl<T> SlotTableV1<T> {
     /// Every live value, in slot order.
     pub(crate) fn values(&self) -> impl Iterator<Item = &T> {
         self.slots.iter().filter_map(|slot| slot.value.as_ref())
+    }
+
+    /// Injects reservation exhaustion without consuming the process-wide
+    /// generation domain or changing existing handles.
+    #[cfg(test)]
+    pub(crate) fn refuse_registration(&mut self, refuse: bool) {
+        self.refuse_registration = refuse;
     }
 
     #[cfg(test)]

@@ -352,9 +352,17 @@ async fn batch_http_replicas(
 async fn batch_http_raw(
     backend: Arc<dyn GenerationBackend>,
     path: &str,
-    mut body: serde_json::Value,
+    body: serde_json::Value,
 ) -> String {
-    let config = runtime_server::ServerConfig::default();
+    batch_http_with_config(backend, path, body, runtime_server::ServerConfig::default()).await
+}
+
+async fn batch_http_with_config(
+    backend: Arc<dyn GenerationBackend>,
+    path: &str,
+    mut body: serde_json::Value,
+    config: runtime_server::ServerConfig,
+) -> String {
     let frontend = runtime_host::frontend_from_declaration_v1(
         &declaration(),
         &runtime_frontend::test_support::fixture_export_v1(),
@@ -367,12 +375,18 @@ async fn batch_http_raw(
     body["model"] = serde_json::json!("fixture/metrics-1");
     body.as_object_mut()
         .unwrap()
-        .entry("max_tokens")
+        .entry(if path == "/v1/responses" {
+            "max_output_tokens"
+        } else {
+            "max_tokens"
+        })
         .or_insert(serde_json::json!(1));
-    body.as_object_mut()
-        .unwrap()
-        .entry("return_token_ids")
-        .or_insert(serde_json::json!(true));
+    if path != "/v1/responses" {
+        body.as_object_mut()
+            .unwrap()
+            .entry("return_token_ids")
+            .or_insert(serde_json::json!(true));
+    }
     body["temperature"] = serde_json::json!(0);
     let body = body.to_string();
     let socket = tokio::net::TcpStream::connect(address).await.unwrap();
@@ -386,6 +400,197 @@ async fn batch_http_raw(
     server.abort();
     let _ = server.await;
     String::from_utf8(raw).unwrap()
+}
+
+#[tokio::test]
+async fn admitted_prefill_outlives_the_http_queue_deadline() {
+    for (path, body, background) in [
+        ("/v1/completions", serde_json::json!({"prompt":"x"}), false),
+        (
+            "/v1/completions",
+            serde_json::json!({"prompt":"x","stream":true}),
+            false,
+        ),
+        (
+            "/v1/responses",
+            serde_json::json!({"input":"x","background":true,"store":true}),
+            true,
+        ),
+    ] {
+        let (executor, resume) = FixtureExecutorV1::slow_holding(&[0]);
+        let executions = Arc::clone(&executor.executions);
+        let worker = ServedWorkerV1::start(executor);
+        let backend = Arc::new(worker.backend);
+        let config = runtime_server::ServerConfig::new(8, 8, 65536, 4096)
+            .unwrap()
+            .with_queue_wait(Duration::from_millis(250))
+            .with_responses_store(8, 64 * 1024 * 1024);
+        let response = tokio::spawn(batch_http_with_config(backend.clone(), path, body, config));
+        tokio::time::timeout(TIMEOUT, async {
+            while executions.load(Ordering::Acquire) == 0 {
+                tokio::time::sleep(Duration::from_millis(1)).await;
+            }
+        })
+        .await
+        .expect("the request reaches prefill");
+        // Execution cannot finish before the queue deadline. Admission must.
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        let finished_while_held = response.is_finished();
+        resume[0].send(()).unwrap();
+        let raw = response.await.unwrap();
+        assert!(raw.starts_with("HTTP/1.1 200"), "{path}: {raw}");
+        assert_eq!(finished_while_held, background, "{path}: {raw}");
+        backend.shutdown();
+    }
+}
+
+#[tokio::test]
+async fn background_response_is_stored_after_admitted_prefill_outlives_queue_deadline() {
+    let (mut executor, resume) = FixtureExecutorV1::slow_holding(&[0]);
+    executor.token_id = 1;
+    let executions = Arc::clone(&executor.executions);
+    let worker = ServedWorkerV1::start(executor);
+    let backend = Arc::new(worker.backend);
+    let config = runtime_server::ServerConfig::new(8, 8, 65536, 4096)
+        .unwrap()
+        .with_queue_wait(Duration::from_millis(250))
+        .with_responses_store(8, 64 * 1024 * 1024);
+    let frontend = runtime_host::frontend_from_declaration_v1(
+        &declaration(),
+        &runtime_frontend::test_support::fixture_export_v1(),
+        config,
+    )
+    .unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(runtime_server::serve(
+        listener,
+        backend.clone(),
+        frontend,
+        config,
+    ));
+    let body = serde_json::json!({"model":"fixture/metrics-1","input":"x","max_output_tokens":1,"temperature":0,"background":true,"store":true}).to_string();
+    let wire = format!(
+        "POST /v1/responses HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        body.len()
+    );
+    let initial = tokio::spawn(async move {
+        let socket = tokio::net::TcpStream::connect(address).await.unwrap();
+        batch_exchange(&socket, wire.as_bytes()).await
+    });
+    tokio::time::timeout(TIMEOUT, async {
+        while executions.load(Ordering::Acquire) == 0 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    let admitted = initial.is_finished();
+    resume[0].send(()).unwrap();
+    let raw = String::from_utf8(initial.await.unwrap()).unwrap();
+    assert!(admitted, "background admission waited for execution");
+    assert!(raw.starts_with("HTTP/1.1 200"), "{raw}");
+    let initial: serde_json::Value =
+        serde_json::from_str(raw.split_once("\r\n\r\n").unwrap().1).unwrap();
+    let id = initial["id"].as_str().unwrap();
+    let get =
+        format!("GET /v1/responses/{id} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
+    tokio::time::timeout(TIMEOUT, async {
+        loop {
+            let socket = tokio::net::TcpStream::connect(address).await.unwrap();
+            let raw = String::from_utf8(batch_exchange(&socket, get.as_bytes()).await).unwrap();
+            assert!(raw.starts_with("HTTP/1.1 200"), "{raw}");
+            let stored: serde_json::Value =
+                serde_json::from_str(raw.split_once("\r\n\r\n").unwrap().1).unwrap();
+            if stored["status"] == "completed" {
+                assert_eq!(stored["id"], id);
+                assert!(stored["usage"]["input_tokens"].as_u64().unwrap() > 0);
+                break;
+            }
+            assert!(
+                matches!(stored["status"].as_str(), Some("in_progress" | "queued")),
+                "{stored}"
+            );
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    server.abort();
+    let _ = server.await;
+    backend.shutdown();
+}
+
+#[tokio::test]
+async fn first_prefill_admission_leaves_queued_choices_unacknowledged() {
+    let (executor, resume) = FixtureExecutorV1::slow_holding(&[0]);
+    let executions = Arc::clone(&executor.executions);
+    let config = EngineConfig::new(
+        SchedulerConfig::new(1, 4, 64, 64, 1).unwrap(),
+        KvGeometry::new(16, 16).unwrap(),
+        ModelVocabulary::new(VOCABULARY_SIZE).unwrap(),
+        CONTEXT_TOKENS,
+        2,
+    )
+    .unwrap();
+    let backend = EngineGenerationBackend::new(
+        tokenizer(),
+        Engine::new(config, executor).unwrap(),
+        EngineBackendConfig::default(),
+        policy(),
+    )
+    .unwrap();
+    let (first, mut first_events) = tokio::sync::mpsc::channel(64);
+    let (second, second_events) = tokio::sync::mpsc::channel(64);
+    let cancel = CancellationSignal::new();
+    let mut admissions = backend.submit_batch(vec![
+        (
+            request("x", 1, CancellationSignal::new()),
+            EventSender::new(first),
+        ),
+        (request("y", 1, cancel.clone()), EventSender::new(second)),
+    ]);
+    let mut queued = admissions.pop().unwrap();
+    let admitted = admissions.pop().unwrap();
+    tokio::time::timeout(TIMEOUT, async {
+        while executions.load(Ordering::Acquire) == 0 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(
+        tokio::time::timeout(Duration::from_secs(1), admitted)
+            .await
+            .unwrap(),
+        Ok(())
+    );
+    assert!(futures_poll_once(&mut queued).await.is_none());
+    cancel.cancel();
+    drop(second_events);
+    drop(queued);
+    resume[0].send(()).unwrap();
+    while !matches!(
+        tokio::time::timeout(TIMEOUT, first_events.recv())
+            .await
+            .unwrap(),
+        Some(GenerationEvent::Finished { .. })
+    ) {}
+    let (next, _events) = tokio::sync::mpsc::channel(64);
+    assert_eq!(
+        tokio::time::timeout(
+            TIMEOUT,
+            backend.submit(
+                request("z", 1, CancellationSignal::new()),
+                EventSender::new(next)
+            )
+        )
+        .await
+        .unwrap(),
+        Ok(())
+    );
+    backend.shutdown();
 }
 
 #[tokio::test]

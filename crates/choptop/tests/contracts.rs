@@ -25,6 +25,8 @@ fn reads_the_options_serve_describes() {
             .find(|option| option.flag == name)
             .unwrap_or_else(|| panic!("serve describes {name}"))
     };
+    assert_eq!(flag("--max-connections").shape, Shape::Count);
+    assert!(flag("--max-connections").model_launch);
     assert_eq!(flag("--max-sequences").shape, Shape::Count);
     assert!(flag("--max-sequences").model_launch);
     assert_eq!(

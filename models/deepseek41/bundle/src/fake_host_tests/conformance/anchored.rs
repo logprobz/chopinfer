@@ -247,11 +247,14 @@ mod anchor_route_sweep {
     // CI gives each profile its own process and RSS budget.
     fn sweep(profile: &str) {
         VERIFIED_HITS.lock().unwrap().insert(profile.into(), 0);
-        route_guard::sweep::<Anchored>(
+        // A sweep in a child process counts its reuse there.
+        if !route_guard::sweep::<Anchored>(
             profile,
             include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/route-allowlist.toml")),
             env!("CARGO_PKG_NAME"),
-        );
+        ) {
+            return;
+        }
         if verify_templates() {
             let hits = VERIFIED_HITS
                 .lock()

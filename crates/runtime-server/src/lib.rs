@@ -80,6 +80,8 @@ use tokio::net::TcpListener;
 use tokio::sync::Semaphore;
 
 pub const MAX_IN_FLIGHT_REQUESTS: usize = 4_096;
+/// Accepted sockets, including those waiting for transport buffers.
+pub const DEFAULT_MAX_CONNECTIONS: usize = 1_024;
 pub const MAX_EVENT_BUFFER_CAPACITY: usize = 4_096;
 /// The largest request body any endpoint may accept.
 pub const MAX_REQUEST_BODY_BYTES: usize = 1024 * 1024 * 1024;
@@ -467,7 +469,7 @@ impl ServerConfig {
             transport_budget_bytes: transport::DEFAULT_BUDGET,
             body_read_timeout: DEFAULT_BODY_READ_TIMEOUT,
             header_read_timeout: std::time::Duration::from_secs(30),
-            max_connections: None,
+            max_connections: Some(DEFAULT_MAX_CONNECTIONS),
             stream_write_timeout: DEFAULT_STREAM_WRITE_TIMEOUT,
             maximum_context_tokens: None,
             acceptance_profile: RequestAcceptanceProfile::General,
@@ -725,6 +727,7 @@ impl ServerConfig {
     }
 
     /// Sets the deadline for each HTTP request head, including keep-alive requests.
+    /// The first head's deadline starts at accept, including buffer-slot waiting.
     #[must_use]
     pub const fn with_header_read_timeout(mut self, timeout: std::time::Duration) -> Self {
         self.header_read_timeout = timeout;
@@ -734,8 +737,19 @@ impl ServerConfig {
     /// Bounds accepted connections independently of request intake.
     #[must_use]
     pub const fn with_max_connections(mut self, limit: usize) -> Self {
-        self.max_connections = Some(if limit == 0 { 1 } else { limit });
+        self.max_connections = Some(if limit == 0 {
+            1
+        } else if limit > Semaphore::MAX_PERMITS {
+            Semaphore::MAX_PERMITS
+        } else {
+            limit
+        });
         self
+    }
+
+    #[must_use]
+    pub const fn max_connections(self) -> Option<usize> {
+        self.max_connections
     }
 
     /// Bounds how long one request body may take to arrive.
@@ -831,7 +845,7 @@ impl Default for ServerConfig {
             transport_budget_bytes: transport::DEFAULT_BUDGET,
             body_read_timeout: DEFAULT_BODY_READ_TIMEOUT,
             header_read_timeout: std::time::Duration::from_secs(30),
-            max_connections: None,
+            max_connections: Some(DEFAULT_MAX_CONNECTIONS),
             stream_write_timeout: DEFAULT_STREAM_WRITE_TIMEOUT,
             maximum_context_tokens: None,
             acceptance_profile: RequestAcceptanceProfile::General,

@@ -2673,6 +2673,152 @@ async fn completion_batches_index_choices_and_count_each_prompt_once() {
 }
 
 #[tokio::test]
+async fn completion_prompt_metadata_survives_reversed_choice_completion() {
+    for strings in [false, true] {
+        for prompt_count in [1, 2] {
+            for top in [0, 2] {
+                for echo in [false, true] {
+                    for return_ids in [false, true] {
+                        let server = InProcessServerV1::full();
+                        server.backend.hold.store(true, Ordering::Relaxed);
+                        server
+                            .backend
+                            .tokenize_prompts
+                            .store(true, Ordering::Relaxed);
+                        let texts = ["ab", "xyz"];
+                        let prompt = if strings {
+                            if prompt_count == 1 {
+                                serde_json::json!(texts[0])
+                            } else {
+                                serde_json::json!(texts)
+                            }
+                        } else if prompt_count == 1 {
+                            serde_json::json!([97, 98])
+                        } else {
+                            serde_json::json!([[97, 98], [120, 121, 122]])
+                        };
+                        let body = serde_json::json!({"prompt":prompt,"n":2,"max_tokens":1,"echo":echo,"prompt_logprobs":top,"return_token_ids":return_ids}).to_string();
+                        let incoming = server.open("/v1/completions", body.len(), body.as_bytes());
+                        timeout(Duration::from_secs(5), async {
+                            while server.backend.held.lock().unwrap().len() != prompt_count * 2 {
+                                tokio::task::yield_now().await;
+                            }
+                            let senders = std::mem::take(&mut *server.backend.held.lock().unwrap());
+                            for (index, sender) in senders.into_iter().enumerate().rev() {
+                                let text = texts[index / 2];
+                                let ids: Vec<u32> = text.bytes().map(u32::from).collect();
+                                sender
+                                    .emit(GenerationEvent::Prompt {
+                                        token_ids: ids.clone(),
+                                        text: text.to_owned(),
+                                        tokens: text.chars().map(|c| c.to_string()).collect(),
+                                    })
+                                    .await
+                                    .unwrap();
+                                sender
+                                    .emit(GenerationEvent::PromptLogprobs(
+                                        ids.iter()
+                                            .enumerate()
+                                            .skip(1)
+                                            .map(|(position, &id)| PromptTokenLogprob {
+                                                position,
+                                                token_id: id,
+                                                token: char::from(id as u8).to_string(),
+                                                logprob: -(index as f64 + position as f64),
+                                                top_logprobs: Vec::new(),
+                                            })
+                                            .collect(),
+                                    ))
+                                    .await
+                                    .unwrap();
+                                if return_ids {
+                                    sender
+                                        .emit(GenerationEvent::GeneratedTokenIds(vec![33]))
+                                        .await
+                                        .unwrap();
+                                }
+                                sender
+                                    .emit(GenerationEvent::Content(VisibleContent {
+                                        delta: "!".to_owned(),
+                                        generated_token_count: 1,
+                                    }))
+                                    .await
+                                    .unwrap();
+                                sender
+                                    .emit(GenerationEvent::Finished {
+                                        reason: FinishReason::Length,
+                                        usage: TokenUsage {
+                                            prompt_tokens: ids.len() as u64,
+                                            completion_tokens: 1,
+                                            cached_tokens: Some(1),
+                                        },
+                                    })
+                                    .await
+                                    .unwrap();
+                                // The response task has consumed this choice before the next one ends.
+                                while !sender.is_closed() {
+                                    tokio::task::yield_now().await;
+                                }
+                            }
+                        })
+                        .await
+                        .unwrap();
+                        let response = answer(&incoming).await;
+                        assert_eq!(response.status, 200, "{}", response.body);
+                        let value = response.json();
+                        for (index, choice) in
+                            value["choices"].as_array().unwrap().iter().enumerate()
+                        {
+                            let text = texts[index / 2];
+                            let ids: Vec<u32> = text.bytes().map(u32::from).collect();
+                            assert_eq!(choice["index"], index);
+                            assert_eq!(choice["prompt_token_ids"], serde_json::json!(ids));
+                            assert_eq!(choice["prompt_text"], text);
+                            assert!(choice["prompt_logprobs"][0].is_null());
+                            for (position, id) in ids.iter().enumerate().skip(1) {
+                                assert_eq!(
+                                    choice["prompt_logprobs"][position][id.to_string()]["logprob"],
+                                    -(index as f64 + position as f64)
+                                );
+                            }
+                            assert_eq!(
+                                choice["text"],
+                                if echo {
+                                    format!("{text}!")
+                                } else {
+                                    "!".to_owned()
+                                }
+                            );
+                            assert_eq!(choice["finish_reason"], "length");
+                            assert_eq!(choice.get("token_ids").is_some(), return_ids);
+                        }
+                        for field in ["prompt_token_ids", "prompt_text", "prompt_logprobs"] {
+                            if prompt_count == 1 {
+                                assert_eq!(value[field], value["choices"][0][field]);
+                            } else {
+                                assert!(
+                                    value.get(field).is_none(),
+                                    "ambiguous root {field}: {value}"
+                                );
+                            }
+                        }
+                        assert_eq!(
+                            value["usage"]["prompt_tokens"],
+                            if prompt_count == 1 { 2 } else { 5 }
+                        );
+                        assert_eq!(value["usage"]["completion_tokens"], prompt_count * 2);
+                        assert_eq!(
+                            value["usage"]["prompt_tokens_details"]["cached_tokens"],
+                            prompt_count
+                        );
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[tokio::test]
 async fn special_token_flags_preserve_the_installed_tokenizer_contract() {
     let server = InProcessServerV1::full();
     for flag in [

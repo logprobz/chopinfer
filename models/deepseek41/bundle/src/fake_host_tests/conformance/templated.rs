@@ -124,11 +124,14 @@ mod template_route_sweep {
             println!("{profile}: route sweep covers the quick tier only");
             return;
         }
-        route_guard::sweep::<Templated>(
+        // A sweep in a child process counts its reuse there.
+        if !route_guard::sweep::<Templated>(
             profile,
             include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/route-allowlist.toml")),
             env!("CARGO_PKG_NAME"),
-        );
+        ) {
+            return;
+        }
         let hits = HITS.lock().unwrap().get(profile).copied().unwrap_or(0);
         println!("{profile}: {hits} reused templates, each compared with a fresh plan");
         assert!(hits > 0, "{profile}: the sweep reused no template");

@@ -844,6 +844,26 @@ print(json.dumps(reply), flush=True)
                                      f"what it printed is in {written}")
         shutil.rmtree(written)
 
+    def test_profile_loading_preserves_environment_failures(self):
+        path = self.root / "environment-profiles.json"
+        path.write_text(json.dumps(self.helper_result("serving-profiles")))
+        for name, value in (("CHOPINFER_MODEL_OPTIONS", "malformed"),
+                            ("CHOPINFER_LOG_LEVEL", "verbose"),
+                            ("CHOPINFER_LOG_SUMMARY_SECONDS", "0")):
+            environment = dict(self.environment, **{name: value})
+            for words in (("profiles", "list", path), ("profiles", "show", path, "tp4-ar")):
+                result = subprocess.run([self.host, *words], env=environment, text=True,
+                                        capture_output=True, timeout=HANG_SECONDS)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(name, result.stderr)
+            result = subprocess.run([self.host, "models", "--json"], env=environment, text=True,
+                                    capture_output=True, timeout=HANG_SECONDS)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            catalog = json.loads(result.stdout)
+            self.assertEqual(catalog["models"], [])
+            self.assertEqual(len(catalog["errors"]), 1)
+            self.assertIn(name, catalog["errors"][0]["message"])
+
     def refusal_message(self, stderr):
         # The host's refusal is its last report: the program name and the
         # message, with the usage text a usage error carries.
@@ -851,6 +871,18 @@ print(json.dumps(reply), flush=True)
         at = text.rfind("\nchopinfer: ")
         self.assertGreaterEqual(at, 0, stderr)
         return text[at + 1:]
+
+    def test_direct_model_startup_refusal_redacts_explicit_api_keys(self):
+        for secret in ("synthetic-direct-startup-key", "--synthetic-option-looking-key"):
+            result = subprocess.run(
+                [self.host, "serve", "--model", self.root / "missing-checkpoint",
+                 "--api-key", secret, "--listen", "127.0.0.1:0"],
+                env=self.environment, text=True, capture_output=True, timeout=HANG_SECONDS)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("resolved serve:", result.stderr)
+            self.assertIn("[redacted]", result.stderr)
+            self.assertNotIn(secret, result.stdout + result.stderr)
+            self.assertIn("--model", self.refusal_message(result.stderr))
 
     def test_a_check_refuses_what_serving_refuses_with_the_same_message(self):
         checkpoint = self.copy_checkpoint("parity-checkpoint")

@@ -978,6 +978,7 @@ async fn generate_inner(
     // The submissions own the prepared prompts now. Prepared media payloads
     // hold host memory the backend releases as prefill passes each item, so
     // the handler keeps no copy while it waits for the response.
+    let prompt_count = prepared_prompts.len();
     drop(prepared_prompts);
     parsed.prepared.prompt = crate::PreparedPrompt::TokenIds(Vec::new());
     let (initial_response, initial_admitted) = tokio::sync::oneshot::channel();
@@ -1067,7 +1068,7 @@ async fn generate_inner(
     if parsed.stream {
         multiple_streaming_response(metadata, choices, parsed.choices)
     } else {
-        multiple_nonstreaming_response(metadata, choices, parsed.choices).await
+        multiple_nonstreaming_response(metadata, choices, parsed.choices, prompt_count).await
     }
 }
 
@@ -1297,13 +1298,19 @@ async fn multiple_nonstreaming_response(
     metadata: ResponseMetadata,
     choices: Vec<ChoiceStream>,
     choices_per_prompt: usize,
+    prompt_count: usize,
 ) -> Response {
     let mut tasks = tokio::task::JoinSet::new();
     for (metadata, events, active) in choices {
         let index = metadata.choice_index;
         tasks.spawn(async move { (index, nonstreaming_response(metadata, events, active).await) });
     }
-    let mut result = Value::Null;
+    let mut result = json!({
+        "id": metadata.response_id,
+        "object": match metadata.endpoint { Endpoint::Completion => "text_completion", Endpoint::Chat => "chat.completion" },
+        "created": metadata.created,
+        "model": metadata.model,
+    });
     let mut outputs = Vec::new();
     let mut completion_tokens = 0;
     let mut cached = 0;
@@ -1331,8 +1338,14 @@ async fn multiple_nonstreaming_response(
         if counts_cached_tokens(index, choices_per_prompt) {
             cached += cached_tokens(&value["usage"]);
         }
+        if prompt_count == 1 && index == 0 {
+            for field in ["prompt_token_ids", "prompt_text", "prompt_logprobs"] {
+                if let Some(alias) = value.get(field) {
+                    result[field] = alias.clone();
+                }
+            }
+        }
         outputs.append(value["choices"].as_array_mut().expect("choice array"));
-        result = value;
     }
     outputs.sort_by_key(|choice| choice["index"].as_u64());
     result["choices"] = json!(outputs);
@@ -1628,9 +1641,6 @@ async fn nonstreaming_response(
                     if expose_token_ids(&metadata) {
                         value["choices"][0]["token_ids"] = json!(token_ids);
                     }
-                    if metadata.endpoint == Endpoint::Completion {
-                        value["choices"][0]["prompt_token_ids"] = value["prompt_token_ids"].clone();
-                    }
                 }
                 return json_response(StatusCode::OK, value, &metadata.request_id);
             }
@@ -1681,10 +1691,14 @@ fn completion_value(
         "usage": usage_value(usage),
     });
     if let Some((ids, text, _)) = prompt {
+        value["choices"][0]["prompt_token_ids"] = json!(ids);
+        value["choices"][0]["prompt_text"] = json!(text);
         value["prompt_token_ids"] = json!(ids);
         value["prompt_text"] = json!(text);
         if metadata.logprobs.prompt_top.is_some() {
-            value["prompt_logprobs"] = prompt_logprob_positions(ids, prompt_logprobs);
+            let positions = prompt_logprob_positions(ids, prompt_logprobs);
+            value["choices"][0]["prompt_logprobs"] = positions.clone();
+            value["prompt_logprobs"] = positions;
         }
     }
     value

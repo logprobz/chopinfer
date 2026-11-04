@@ -14,6 +14,9 @@ use runtime_host::{HostInstanceConfigV1, HostServicesV1Backend, HostTopologyV1};
 
 use super::*;
 use crate::entry::{self, Bundle, Failed};
+use crate::fake_host::conformance::route_guard::{
+    in_own_process, memory_regression, with_rss_limit,
+};
 use crate::pipeline::Collectives;
 use crate::prefix::PrefixInstance;
 use crate::resources::{Held, status};
@@ -199,6 +202,9 @@ const NO_ENCODER: u8 = 9;
 /// Selects video, which the package does not provide.
 const UNPROVIDED: u8 = 10;
 const ALLOCATION: u8 = 11;
+/// Keeps 8 MiB of written memory after each route case, as a leak of
+/// per-case diagnostics would.
+const RETAINS: u8 = 12;
 
 struct Limits;
 impl SinkLimits for Limits {
@@ -209,7 +215,12 @@ impl SinkLimits for Limits {
 
 type Backend = HostServicesV1Backend<FakeHostDeviceV1>;
 
-struct Adapter<const REFUSE: u8>(Rc<Backend>, Serving, crate::fake_host::FakeDevice);
+struct Adapter<const REFUSE: u8>(
+    Rc<Backend>,
+    Serving,
+    crate::fake_host::FakeDevice,
+    RefCell<Vec<Vec<u8>>>,
+);
 
 impl<const REFUSE: u8> Startup for Adapter<REFUSE> {
     type Observer = crate::fake_host::NoObserver;
@@ -221,6 +232,16 @@ impl<const REFUSE: u8> Startup for Adapter<REFUSE> {
     }
     fn route_device(&self) -> &crate::fake_host::FakeDevice {
         &self.2
+    }
+    fn launched(&self, _from: usize) -> Vec<String> {
+        // The probe launches no kernels; a route sweep needs one per case.
+        vec!["probe".into()]
+    }
+    fn finish_route_case(&self) {
+        if REFUSE == RETAINS {
+            self.3.borrow_mut().push(vec![1; 8 << 20]);
+        }
+        self.route_device().clear_route_journal();
     }
 
     type Limits = Limits;
@@ -265,6 +286,7 @@ impl<const REFUSE: u8> Startup for Adapter<REFUSE> {
         Self(
             Rc::new(HostServicesV1Backend::new(FakeHostDeviceV1::new(), config)),
             serving.clone(),
+            Default::default(),
             Default::default(),
         )
     }
@@ -632,4 +654,27 @@ fn a_startup_test_needs_its_profiles_configuration() {
 #[should_panic(expected = "the profile's values")]
 fn a_startup_test_checks_its_configuration() {
     serving_startup_of::<Adapter<MISDECLARED>>("tp1-ar");
+}
+
+/// Bounds the probe's route memory sweeps, far below a model's 16 GiB.
+const PROBE_RSS_LIMIT: u64 = 256 << 20;
+
+#[test]
+fn route_memory_fails_a_sweep_whose_cases_retain_memory_past_its_budget() {
+    let sweep = || with_rss_limit(PROBE_RSS_LIMIT, memory_regression::<Adapter<RETAINS>>);
+    if in_own_process() {
+        // Failing here fails the parent's sweep below.
+        return sweep();
+    }
+    let failure = std::panic::catch_unwind(sweep).expect_err("retained memory passed the budget");
+    let message = failure.downcast_ref::<String>().map_or("", String::as_str);
+    assert!(message.contains("exceeds budget"), "{message}");
+}
+
+#[test]
+fn route_memory_is_not_charged_for_memory_its_test_process_holds() {
+    // Past the limit: a sweep measured in this process would fail.
+    let held = std::hint::black_box((!in_own_process()).then(|| vec![1u8; 384 << 20]));
+    with_rss_limit(PROBE_RSS_LIMIT, memory_regression::<Adapter<NONE>>);
+    drop(held);
 }

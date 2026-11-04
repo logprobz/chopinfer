@@ -123,7 +123,7 @@ fn host_trace_preserves_sampled_events_and_is_disabled_without_tracing() {
                     engine.host_clock.step_entered();
                 }
                 assert_eq!(
-                    engine.step_scheduled_batch().unwrap(),
+                    engine.step_scheduled_batch(&mut |_| {}).unwrap(),
                     StepStatus::Progressed
                 );
                 if trace {
@@ -174,7 +174,7 @@ fn release_host_phase_costs() {
                 let _totals = profile::TraceTotals::begin();
                 engine.host_clock.step_entered();
                 assert_eq!(
-                    engine.step_scheduled_batch().unwrap(),
+                    engine.step_scheduled_batch(&mut |_| {}).unwrap(),
                     StepStatus::Progressed
                 );
                 let record = engine.pending_step_trace.take().unwrap();

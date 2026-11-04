@@ -191,6 +191,7 @@ pub const SERIES: &[&str] = &[
     "chop_generation_worker_ready",
     "chop_generation_worker_failed",
     "chop_generation_worker_stopped",
+    "chop_generation_worker_kv_stalled",
     "chop_instance_poisoned",
     "vllm:time_to_first_token_seconds",
     "vllm:inter_token_latency_seconds",
@@ -223,7 +224,7 @@ impl Snapshot {
             values.sort_by_key(|(position, _)| *position);
             values.into_iter().map(|(_, value)| value).collect()
         };
-        let worker = ["starting", "ready", "failed", "stopped"]
+        let worker = ["starting", "ready", "failed", "stopped", "kv_stalled"]
             .into_iter()
             .find(|state| gauge(&format!("chop_generation_worker_{state}")) == Some(1.0));
         let step =
@@ -966,6 +967,17 @@ mod tests {
             idle.push(Some("a"), snapshot);
         }
         assert_eq!(idle.step_time(Window::Minute), None);
+    }
+
+    #[test]
+    fn snapshots_report_recoverable_kv_stalls() {
+        let scrape = Exposition::parse(
+            "chop_generation_worker_starting 0\nchop_generation_worker_ready 0\nchop_generation_worker_failed 0\nchop_generation_worker_stopped 0\nchop_generation_worker_kv_stalled 1\n",
+        );
+        assert_eq!(
+            Snapshot::from_exposition(&scrape, 0.0).gauges.worker,
+            Some("kv_stalled")
+        );
     }
 
     #[test]

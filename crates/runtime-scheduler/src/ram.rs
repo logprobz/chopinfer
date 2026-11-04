@@ -150,7 +150,7 @@ pub(super) enum RamChoice {
     /// Resume from the GPU match, or run cold.
     Gpu,
     /// Wait for a promotion: one it started or joined, reported with its
-    /// id, or one the step's budget defers.
+    /// id, or one the step's budget or a forced demotion in flight defers.
     Wait(Option<PendingAnchorId>),
 }
 
@@ -287,19 +287,24 @@ impl Scheduler {
 
     /// Begins a demotion: a copy of the public frontier `key` into a host
     /// entry that keeps the anchor's last GPU use. It stays outstanding until
-    /// its confirmed completion.
+    /// its confirmed completion. In forced mode the GPU anchor goes at once,
+    /// as a forced swap's does, so the key's next hit is a RAM hit.
     pub fn begin_demotion(
         &mut self,
         tier: &mut HostTier,
         key: PrefixCacheKeyV1,
     ) -> Result<KvTransferPlan, ScheduleError> {
         self.ensure_no_pending()?;
-        self.prefix_ram_active()
+        let config = self
+            .prefix_ram_active()
             .ok_or(ScheduleError::InvariantViolation)?;
         let (_, plan) = tier
             .begin_offload(&mut self.kv, key, None)
             .map_err(ScheduleError::Kv)?;
         self.ram.demotions.insert(plan.id(), key);
+        if config.forced {
+            self.kv.remove_anchor(key).map_err(ScheduleError::Kv)?;
+        }
         Ok(plan)
     }
 
@@ -367,7 +372,8 @@ impl Scheduler {
     /// h / 16)`: a promotion copies `h` tokens over PCIe, while the GPU
     /// match leaves `h - g` tokens to prefill, so the gain must be large
     /// enough for the copy, and recomputation stays last. Revisit the ratio
-    /// with the measured promotion copy rate and prefill rate.
+    /// with the measured promotion copy rate and prefill rate. Forced mode
+    /// prefers any longer host match, so every hit is a RAM hit.
     ///
     /// A preferred host entry whose promotion is pending is joined. One with
     /// none starts a promotion when the hit it leads to fits the pages
@@ -399,11 +405,21 @@ impl Scheduler {
             .lookup_host_anchor(chain, limit)
             .filter(|(key, _)| !refused(key))
             .map_or((None, 0), |(key, tokens)| (Some(key), tokens));
+        // A forced demotion removed its GPU anchor when it started; a longer
+        // entry whose copy is in flight is waited for.
+        if config.forced
+            && self
+                .kv
+                .lookup_host_demotion(chain, limit)
+                .is_some_and(|(key, tokens)| tokens > g.max(h) && !refused(&key))
+        {
+            return Ok(RamChoice::Wait(None));
+        }
         let Some(key) = key.filter(|_| h > g) else {
             return Ok(RamChoice::Gpu);
         };
         let minimum = self.offload.map_or(0, |offload| offload.minimum_tokens);
-        if h - g < minimum.max(h / 16) {
+        if !config.forced && h - g < minimum.max(h / 16) {
             return Ok(RamChoice::Gpu);
         }
         let serial = self.kv.host_entry(key).map(|entry| entry.serial);
@@ -486,7 +502,8 @@ impl Scheduler {
     }
 
     /// Ends a restore: one that resumed the promoted anchor its request
-    /// waited for counts a RAM hit.
+    /// waited for counts a RAM hit, and in forced mode the anchor goes, so
+    /// the key's next hit is a RAM hit again.
     pub(super) fn finish_prefix_ram_restore(&mut self, index: usize) -> Result<(), ScheduleError> {
         let Some((key, tokens)) = self.requests[index].ram.restore.take() else {
             return Ok(());
@@ -496,6 +513,9 @@ impl Scheduler {
             key,
             tokens,
         });
+        if self.config.prefix_ram.is_some_and(|config| config.forced) {
+            self.kv.remove_anchor(key).map_err(ScheduleError::Kv)?;
+        }
         Ok(())
     }
 

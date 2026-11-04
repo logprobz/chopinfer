@@ -648,6 +648,43 @@ fn an_exhausted_pool_falls_back_to_a_recomputed_gpu_match() {
     h.finish(true);
 }
 #[test]
+fn forced_mode_turns_each_repeat_into_a_ram_hit() {
+    let mut h = Harness::new(24, tier(true, 64));
+    let tokens = prompt(1, 17);
+    h.run(1, &tokens);
+    let key = key(&tokens, 17);
+    let demotion = h.s.begin_demotion(&mut h.tier, key).unwrap();
+    assert_eq!(h.anchors(), 0, "a forced demotion removes its GPU anchor");
+    h.check();
+    // The repeat waits for the copy in flight instead of recomputing.
+    h.submit(2, &extended(1, 17, 7, 0));
+    let report = h.admit();
+    assert!(report.admitted().is_empty() && report.ram_waits().is_empty());
+    h.complete(demotion, KvTransferStatus::Complete);
+    for (round, id) in [2u64, 3].into_iter().enumerate() {
+        if round > 0 {
+            h.submit(id, &extended(1, 17, 7, id as u32));
+        }
+        let report = h.admit();
+        assert_eq!(report.ram_waits().len(), 1, "round {round}");
+        h.promote(KvTransferStatus::Complete);
+        assert_eq!(h.step(), [(PrefixPublishV1::Published, ANCHOR_PAGES)]);
+        assert_eq!(h.admit().admitted(), [RequestId::new(id)]);
+        assert_eq!(h.anchors(), 1);
+        h.restore_all();
+        assert_eq!(h.s.take_prefix_ram_hits().len(), 1, "round {round}");
+        // The restore removed the promoted anchor and kept its host entry.
+        assert_eq!(h.anchors(), 0, "round {round}");
+        assert!(
+            h.s.drop_invalidated_host_entries(&mut h.tier)
+                .unwrap()
+                .is_empty()
+        );
+        h.finish(false);
+    }
+}
+
+#[test]
 fn an_abandoned_restore_of_a_promoted_anchor_counts_no_ram_hit() {
     let mut h = Harness::new(16, tier(false, 64));
     host_only(&mut h, 1);

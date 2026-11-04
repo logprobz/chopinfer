@@ -4033,8 +4033,9 @@ impl Scheduler {
     }
 
     /// Pages the pool's allocations have taken from its free list: appends
-    /// with their copies, snapshots, restore staging and pending anchors.
-    /// The difference of two reads is the gross allocation between them.
+    /// with their copies (a rolled-back batch's included), snapshots,
+    /// restore staging and pending anchors. The difference of two reads is
+    /// the gross allocation between them.
     #[must_use]
     pub const fn kv_allocated_pages(&self) -> u64 {
         self.kv.allocated_pages()

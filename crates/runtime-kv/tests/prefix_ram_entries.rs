@@ -716,12 +716,17 @@ fn the_allocation_counter_adds_every_page_taken_from_the_free_list() {
     pool.append(child, 1).unwrap();
     assert_eq!(taken(&pool, mark), 1);
     pool.release(child).unwrap();
-    // A rolled-back append gives its page back.
+    // A rolled-back append took its page all the same, and so does the
+    // retry: the count is gross.
     let mark = pool.allocated_pages();
     let prepared = pool.prepare_append_batch(&[(source, 6)]).unwrap();
     assert_eq!(taken(&pool, mark), 1);
     pool.rollback_prepared(prepared.id()).unwrap();
-    assert_eq!(taken(&pool, mark), 0);
+    assert_eq!(taken(&pool, mark), 1);
+    let prepared = pool.prepare_append_batch(&[(source, 6)]).unwrap();
+    assert_eq!(taken(&pool, mark), 2);
+    pool.rollback_prepared(prepared.id()).unwrap();
+    assert_eq!(taken(&pool, mark), 2);
     // A snapshot takes its state page; a capture of a key that has an
     // anchor takes none.
     pool.append(source, 6).unwrap();

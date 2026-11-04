@@ -488,7 +488,7 @@ pub struct KvPool {
     prepared: Option<PreparedAppendBatch>,
     next_prepared_id: u64,
     /// Pages allocations took from the free list; see
-    /// [`KvPool::allocated_pages`].
+    /// [`KvPool::allocated_pages`]. Telemetry, outside the pool's equality.
     allocated_pages: u64,
     /// Whether an append may rewrite committed rows of the sequence's last
     /// page (drafter rows that need later tokens), so a shared last page is
@@ -564,7 +564,6 @@ impl PartialEq for KvPool {
             && self.produced == other.produced
             && self.prepared == other.prepared
             && self.next_prepared_id == other.next_prepared_id
-            && self.allocated_pages == other.allocated_pages
             && self.rewrites_last_page == other.rewrites_last_page
     }
 }
@@ -723,9 +722,9 @@ impl KvPool {
 
     /// Pages allocations have taken from the free list since the pool was
     /// created: appends with their copies, anchor snapshots, restore staging
-    /// and pending anchors. A rolled-back append gives its pages back. The
-    /// difference of two reads is the gross allocation between them, however
-    /// many pages were freed meanwhile.
+    /// and pending anchors. A rolled-back append's pages stay counted, and a
+    /// retry counts them again. The difference of two reads is the gross
+    /// allocation between them, however many pages were freed meanwhile.
     #[must_use]
     pub const fn allocated_pages(&self) -> u64 {
         self.allocated_pages
@@ -1992,7 +1991,6 @@ impl KvPool {
             .take()
             .expect("prepared transaction was validated");
         for append in prepared.appends.into_iter().rev() {
-            self.allocated_pages -= append.allocated.len() as u64;
             for block in append.allocated.into_iter().rev() {
                 self.free_blocks.push(block);
             }

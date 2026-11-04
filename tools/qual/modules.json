@@ -237,10 +237,19 @@
    "GROUP_LINE": "number"
   },
   "kv_layout_equality": {
+   "BLOCK_BYTES": "number",
+   "KV_TAP": "str",
    "LAYOUT_FIELDS": "list",
+   "LAYOUT_PROFILE": "list",
+   "NOTHING_SELECTED": "str",
+   "PROCESS_STEP_FIELDS": "list",
+   "REQUEST_FIELDS": "list",
    "RUNNER_ARMS": "dict",
    "RUNNER_CHECK_ARM": "str",
    "RUNNER_RECORDS": "number",
+   "SHOWN": "int",
+   "SIDES": "list",
+   "TAP_BYTES": "dict",
    "_RECORD": "list"
   },
   "kv_offload": {

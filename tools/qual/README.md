@@ -454,6 +454,19 @@ Every request's text, finish reason, token IDs, tokens and selected/top
 logprobs must be bit-identical. A package identity may vary with layout and
 must be reported. This full-suite comparison is not a quick-cohort check.
 
+`kv_layout_equality.py taps NATIVE COMPARISON --native-planes PLANES.json`
+compares two [tap captures](#tap-captures) of the same requests, one from a
+diagnostic-taps server of each layout, bit for bit in logical
+representation: KV-state taps by readback (request, phase, state end),
+layer, plane, position and rank, and text taps by name, position and rank.
+A row one capture lacks is a difference; a native layout's raw stored codes
+and scales are counted, not compared. It refuses captures that differ in
+prompts, steps, serving identity, profile or `model_options`, apart from the
+package identity and the KV layout fields: `kv_cache_planes` must be present
+exactly when `kv_cache_dtype` is `mixed`, the native planes must equal
+PLANES, and the comparison arm must report none. Experimental captures
+compare only with `--experimental` and never qualify.
+
 ## Correctness runner
 
 The runner builds a release install, verifies checkpoints and starts each

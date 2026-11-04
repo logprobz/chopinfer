@@ -315,6 +315,17 @@ class TapBindingTests(unittest.TestCase):
         tap_binding.check_requests(records)
         self.assertEqual(self.admit(self.root / "pair")["requests"], records)
 
+    def test_each_request_records_the_digest_of_the_body_it_was_given(self):
+        fake, manifest = self.pair("digests", self.pairs(), prefix_cache=4)
+
+        def digest(prompt):
+            return hashlib.sha256(json.dumps({"prompt": prompt}, sort_keys=True, separators=(",", ":"))
+                                  .encode()).hexdigest()
+        # Not the model and cache salt the capture adds.
+        self.assertEqual([record["body_sha256"] for record in manifest["requests"]],
+                         [digest(self.tokens[:8]), digest(self.tokens), digest(self.tokens)])
+        self.assertEqual({tuple(sorted(body)) for body in fake.bodies}, {("cache_salt", "model", "prompt")})
+
     def test_a_pair_without_a_hit_within_its_primer_or_a_cold_request_with_a_hit_is_refused(self):
         for name, cached, error in (
                 ("miss", [0, 0, 0], r"hit: a prefix hit requires reported 0 < cached_tokens <= 8 "

@@ -22,10 +22,11 @@ request like any other. It copies the steps, numbered in order,
 into OUT/engine and writes OUT/tap-capture.json: the server's identity
 (IDENTITY) and, beside it, its complete model option map and whether the
 host marks it qualified (OPTIONS, as /health reports them; a server from
-before the report has neither), each request's challenge, engine request ID,
-reported prompt and cached tokens, cache salt, primer and steps, and the
-digests of every copied file. `check_requests` re-checks a manifest's
-cache rules.
+before the report has neither), each request's body digest (`body_sha256`,
+the canonical JSON of the body it was given, before the model and cache
+salt), challenge, engine request ID, reported prompt and cached tokens,
+cache salt, primer and steps, and the digests of every copied file.
+`check_requests` re-checks a manifest's cache rules.
 
 The server's options must be its qualified defaults
 (common.bind_checkpoint). With --experimental and a sealed pin
@@ -41,7 +42,9 @@ candidate's /health serving identity, startup nonce included, so the
 candidate is the process that wrote the steps; each step's files must
 hold their recorded digests (read without following links) and its own
 producer nonce and engine request IDs must be the recorded ones. An
-experimental capture is refused. A missing or differing binding raises
+experimental capture is refused. `recorded` reads a capture offline with
+the same step checks, for a comparison of two captures
+(kv_layout_equality.py taps). A missing or differing binding raises
 Unbound: the evidence is insufficient.
 
 Usage:
@@ -226,7 +229,7 @@ def capture(url, log, taps, requests, out, config, subject=None, experimental_pi
         salt = primed(name, primer, records)["cache_salt"] if primer else f"tap-capture/{uuid.uuid4().hex}"
         before = {step.name for step in taps.glob("step*")}
         challenge = f"tap-capture-{uuid.uuid4().hex}"
-        body = {"model": server["model"], **body, "cache_salt": salt}
+        given, body = body, {"model": server["model"], **body, "cache_salt": salt}
         response, _ = client.request(path, body, headers={"X-Client-Request-Id": challenge})
         common.confirm_live(client, server, experimental_pin=experimental_pin)
         usage = response.get("usage") or {}
@@ -249,7 +252,8 @@ def capture(url, log, taps, requests, out, config, subject=None, experimental_pi
                     shutil.copyfileobj(stream, copy)
             files[target.name] = step_files(target)
             steps.append(target.name)
-        records.append({"name": name, "path": path, "challenge": challenge, "engine_request_id": engine.pop(),
+        records.append({"name": name, "path": path, "body_sha256": wire.sha256(wire.canonical(given)),
+                        "challenge": challenge, "engine_request_id": engine.pop(),
                         "response_id": response.get("id"), **reported, "steps": steps})
     manifest = {"schema": SCHEMA, "server": identity | options_of(common.live_identity(server)),
                 "server_log_sha256": server["checkpoint"]["server_log_sha256"], "url": url,
@@ -260,23 +264,19 @@ def capture(url, log, taps, requests, out, config, subject=None, experimental_pi
     return manifest
 
 
-def admit(directory, url, config):
-    """The capture in `directory`, reverified against the live candidate at
-    `url`: its manifest, with every step bound to its recorded process and
-    request."""
+def manifest_of(directory):
+    """(directory, manifest) of the capture in `directory`."""
     directory = wire.external(Path(directory).absolute())
     manifest = wire.read_json(directory / MANIFEST)
     if manifest.get("schema") != SCHEMA:
         raise Unbound(f"{directory}/{MANIFEST} is not {SCHEMA}")
-    if experimental_determinism.MARKER in manifest or manifest.get("qualified", True) is not True:
-        raise Unbound(f"{directory} is an experimental capture of pinned diagnostic options, which no gate admits")
-    recorded = identity_of(manifest["server"])
-    if url is None:
-        raise Unbound("no live candidate to bind the capture to (--url)")
-    _, _, candidate = live(url, config)
-    for key in IDENTITY:
-        if candidate[key] != recorded[key]:
-            raise Unbound(f"the candidate's {key} differs from the capture's")
+    return directory, manifest
+
+
+def verify_steps(directory, manifest, nonce):
+    """Refuses a capture whose steps are not the ones its manifest records,
+    each holding its recorded digests and written by the process with
+    `nonce` for its own request."""
     steps = sorted(step.name for step in (directory / STEPS).glob("step*"))
     named = [step for record in manifest["requests"] for step in record["steps"]]
     if steps != sorted(named) or sorted(manifest["files"]) != sorted(named):
@@ -286,8 +286,53 @@ def admit(directory, url, config):
             step = directory / STEPS / name
             if step_files(step) != manifest["files"][name]:
                 raise Unbound(f"{step} differs from the files its manifest records")
-            verify_step(step, recorded["startup_nonce"], {record["engine_request_id"]})
+            verify_step(step, nonce, {record["engine_request_id"]})
+
+
+def admit(directory, url, config):
+    """The capture in `directory`, reverified against the live candidate at
+    `url`: its manifest, with every step bound to its recorded process and
+    request."""
+    directory, manifest = manifest_of(directory)
+    if experimental_determinism.MARKER in manifest or manifest.get("qualified", True) is not True:
+        raise Unbound(f"{directory} is an experimental capture of pinned diagnostic options, which no gate admits")
+    recorded = identity_of(manifest["server"])
+    if url is None:
+        raise Unbound("no live candidate to bind the capture to (--url)")
+    _, _, candidate = live(url, config)
+    for key in IDENTITY:
+        if candidate[key] != recorded[key]:
+            raise Unbound(f"the candidate's {key} differs from the capture's")
+    verify_steps(directory, manifest, recorded["startup_nonce"])
     return manifest
+
+
+def recorded(directory):
+    """(directory, manifest) of the capture in `directory`, read offline:
+    its identity fields and steps checked as `admit` checks them, but bound
+    to no live candidate. An experimental capture is returned; its caller
+    judges it (`experimental_marker`)."""
+    directory, manifest = manifest_of(directory)
+    verify_steps(directory, manifest, identity_of(manifest["server"])["startup_nonce"])
+    return directory, manifest
+
+
+def experimental_marker(manifest):
+    """The experimental pin a capture records, or None for a capture of the
+    qualified defaults. Refuses a capture marked unqualified without a pin,
+    or whose pin does not name its recorded options, checkpoint and process."""
+    marker = manifest.get(experimental_determinism.MARKER)
+    if marker is None:
+        if manifest.get("qualified", True) is not True:
+            raise Unbound("the capture is marked unqualified without an experimental pin")
+        return None
+    server, pin = manifest.get("server") or {}, marker.get("pin") if isinstance(marker, dict) else None
+    if (manifest.get("qualified") is not False or marker.get("qualified") is not False or not isinstance(pin, dict)
+            or server.get("model_options_qualified") is not False
+            or any(server.get(key) != pin.get(key) for key in ("model_options", "checkpoint_identity",
+                                                               "startup_nonce"))):
+        raise Unbound("the capture's experimental pin does not name its recorded options, checkpoint and process")
+    return marker
 
 
 def main():

@@ -779,7 +779,7 @@ class PinnedServer(TracingServer):
 class CheckpointBindingTests(unittest.TestCase):
     """A record binds to the gate's checkpoint pin whether or not the gate
     pins the exact reference it scores, as a configuration without
-    references (DeepSeek's kv-bf16) does not."""
+    references (a BF16 KV comparison layout) does not."""
 
     def record(self, identity=None):
         from common import checkpoint_pin

@@ -1,4 +1,4 @@
-//! The native DeepSeek KV layout and its BF16 comparison layout hold the
+//! A native quantized KV layout and its BF16 comparison layout hold the
 //! same logical values. For each plane, the BF16 layout's store of the rows
 //! the native layout quantizes equals the native decode bit for bit, at the
 //! edge scale bytes the format reaches, and one flipped stored bit, native

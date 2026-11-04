@@ -523,7 +523,7 @@ class LiveServer:
 class CheckpointBindingTests(unittest.TestCase):
     """A record binds to the gate's checkpoint pin whether or not the gate
     pins the exact reference it scores, as a configuration without
-    references (DeepSeek's kv-bf16) does not. A report still refuses a
+    references (a BF16 KV comparison layout) does not. A report still refuses a
     record that names no binding."""
 
     def setUp(self):

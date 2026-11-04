@@ -558,6 +558,15 @@ class CheckInputs(unittest.TestCase):
                                   'PATTERN = "*.py"\nMODULES = HERE.glob(PATTERN)\n'
                                   'DATA = Path(HERE, "data").glob("*.py")\n'
                                   'SCRIPTS = HERE.joinpath("deep").rglob(pattern="*.sh")\n',
+        # Character classes in a pattern, a nested global over an enclosing parameter, and
+        # resolve's positional argument.
+        "tools/listing/classes.py": 'from pathlib import Path\nHERE = Path(__file__).parent\n'
+                                    'MODULES = HERE.glob("[a-z_]*.py")\nOTHERS = HERE.glob("[!a-z]*.json")\n',
+        "tools/listing/factory.py": 'from pathlib import Path\nHERE = Path(__file__).parent\n'
+                                    'def factory(HERE):\n    def listed():\n        global HERE\n'
+                                    '        return HERE.glob("*.py")\n    return listed\n',
+        "tools/listing/strict.py": 'from pathlib import Path\nHERE = Path(__file__).resolve(True).parent\n'
+                                   'MODULES = HERE.glob("*.py")\n',
         "tools/listing/data/x.py": "",
         "tools/listing/deep/run.sh": "",
         "tools/listing/listed.py": "import tools.unlisted\n",
@@ -659,6 +668,12 @@ class CheckInputs(unittest.TestCase):
         forms = self.scanner().inputs(["python3", "-B", "tools/listing/forms.py"])
         for path in ("tools/listing/listed.py", "tools/listing/data/added.py", "tools/listing/deep/added.sh"):
             self.assertTrue(forms.covers(path), path)
+        classes = self.scanner().inputs(["python3", "-B", "tools/listing/classes.py"])
+        for path, covered in (("tools/listing/listed.py", True), ("tools/listing/Upper.json", True),
+                              ("tools/listing/cases.json", False)):
+            self.assertEqual(classes.covers(path), covered, path)
+        for script in ("tools/listing/factory.py", "tools/listing/strict.py"):
+            self.assertTrue(self.scanner().inputs(["python3", "-B", script]).covers("tools/listing/listed.py"), script)
 
     def test_the_model_inventory_check_covers_the_ci_modules_its_tests_load(self):
         import cpu

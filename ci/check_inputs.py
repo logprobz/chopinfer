@@ -57,10 +57,21 @@ SHELL_ROOT = re.compile(r"^(?:\$\{?[A-Za-z_]+\}?/)+")
 
 
 def glob_expression(pattern):
-    """A shell glob as a regular expression: `*` stays within one path part, `**` crosses parts."""
-    parts = re.split(r"(\*\*/?|\*|\?)", pattern)
+    """A shell glob as a regular expression: `*` stays within one path part, `**` crosses parts,
+    and a character class (`[a-z]`, `[!_]`) matches one character of a part."""
+    parts = re.split(r"(\*\*/?|\*|\?|\[!?\]?[^]/]*\])", pattern)
     special = {"**/": "(?:.*/)?", "**": ".*", "*": "[^/]*", "?": "[^/]"}
-    return re.compile("".join(special.get(part, re.escape(part)) for part in parts))
+
+    def translated(part):
+        if part in special:
+            return special[part]
+        if len(part) > 2 and part[0] == "[" and part[-1] == "]":
+            negated = part[1] == "!"
+            members = "".join(char if char == "-" else re.escape(char) for char in part[1 + negated:-1])
+            # The split keeps `/` out of a class, so only a negated one must exclude it.
+            return f"[^/{members}]" if negated else f"[{members}]"
+        return re.escape(part)
+    return re.compile("".join(translated(part) for part in parts))
 
 
 def unittest_names(argv, index):
@@ -258,7 +269,8 @@ def assigned_once(tree):
 def scoped_calls(tree):
     """(call, hidden) for each call in a module. `hidden` holds the names that hide
     module-level ones there: those the functions, lambdas and comprehensions around the call
-    bind, and a class body's own names in code directly in that body."""
+    bind, and a class body's own names in code directly in that body. A scope that declares
+    a name global sees the module's, whatever the scopes around it bind."""
     pending = [(tree, frozenset(), frozenset())]
     while pending:
         node, hidden, members = pending.pop()
@@ -266,13 +278,15 @@ def scoped_calls(tree):
             yield node, hidden | members
         if isinstance(node, FUNCTIONS):
             body = node.body if isinstance(node.body, list) else [node.body]
-            inner = hidden | parameters(node) | set(bindings(body))
+            names, outer, enclosing = scope_bindings(body)
+            inner = (hidden - outer) | parameters(node) | (set(names) - outer - enclosing)
             pending += [(part, hidden, members) for part in outer_parts(node)]
             pending += [(statement, inner, frozenset()) for statement in body]
         elif isinstance(node, ast.ClassDef):
-            own = frozenset(bindings(node.body))
+            names, outer, enclosing = scope_bindings(node.body)
+            own = frozenset(names) - outer - enclosing
             pending += [(part, hidden, members) for part in outer_parts(node)]
-            pending += [(statement, hidden, own) for statement in node.body]
+            pending += [(statement, hidden - outer, own) for statement in node.body]
         elif isinstance(node, COMPREHENSIONS):
             targets = {name.id for generator in node.generators for name in ast.walk(generator.target)
                        if isinstance(name, ast.Name)}
@@ -309,7 +323,8 @@ def listed_directory(node, assigned, path, hidden=frozenset(), expanding=frozens
     if isinstance(node, ast.Call):
         name = getattr(node.func, "attr", getattr(node.func, "id", None))
         method = isinstance(node.func, ast.Attribute)
-        if name in SAME_PATH and method and not node.args:
+        # resolve(strict) and absolute() name the same directory whatever their arguments.
+        if name in SAME_PATH and method:
             return named(node.func.value)
         if node.keywords or not (name in PATH_TYPES and node.args or name == "joinpath" and method):
             return None

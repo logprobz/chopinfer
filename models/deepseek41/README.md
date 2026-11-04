@@ -999,10 +999,14 @@ shared top-one and tail gates. Limits and references never move to hide a
 mismatch.
 
 The suite includes tokenizer/frontend goldens, per-layer taps, long context,
-GSM8K, media, prefix equality, determinism, native-KV offload and a BF16-KV
+GSM8K, media, prefix equality, determinism and a BF16-KV
 comparison. Native and BF16 KV must give the same served bits; BF16 KV is a
 diagnostic comparison and is not qualified for capacity, pressure
 preemption or offload. It explicitly disables speculation.
+
+The bundle declares no KV offload: the server keeps no KV in host memory,
+and a preempted request recomputes its KV. `qual.json` declares offload not
+served, so the release preview reports it as not applicable.
 
 The [numerical gates](../../docs/numerics.md#serving-qualification-gates)
 and [serving profiles](../../docs/serving-profiles.md) describe the shared

@@ -64,10 +64,10 @@ in-tree last-good baseline. Preserve the overlay/lock identities in receipts.
 ### Capabilities and required evidence
 
 `capabilities` describes the served profile. It is optional for older v1
-files; when present every field below is required. Both loaders refuse
-missing coverage, including checks omitted from `cohorts.full.checks` and
-checks marked informational. Module names identify the required checks, so
-each model chooses its own IDs.
+files; when present every field below except `not_served` is required.
+Both loaders refuse missing coverage, including checks omitted from
+`cohorts.full.checks` and checks marked informational. Module names
+identify the required checks, so each model chooses its own IDs.
 
 | Capability field | Value and required hard check modules |
 |---|---|
@@ -76,12 +76,13 @@ each model chooses its own IDs.
 | `api` | Boolean; `api`. |
 | `structured` | Boolean; `structured`. |
 | `media` | Unique list of `image`, `audio`, `video`; each modality needs its own nonempty reference inventory. Case-format media declares `qualification.media.coverage`, mapping each modality to reference item IDs; image probes cover images only. |
-| `speculation` | `none`, `lookup`, `mtp` or `dflash`; enabled speculation requires `spec_verify` and `verify_exact` with distinct control and candidate inputs, mandatory predicates, positive coverage and observed drafting. |
+| `speculation` | `none`, `lookup`, `mtp`, `dflash` or `dspark`; enabled speculation requires `spec_verify` and `verify_exact` with distinct control and candidate inputs, mandatory predicates, positive coverage and observed drafting. |
 | `prefix_cache` | Boolean; `prefix_exact` scores bitwise equality. |
 | `preemption` | Boolean; `preempt_compare compare --exact`, without `--baseline`. |
 | `long_context` | Boolean; `needle` with the declared context lengths. |
-| `stability` | Boolean; a local `soak` with timed host-RSS and device-memory samples, bounded growth and traffic in every enabled mix. A `--remote-only` soak cannot satisfy it. |
+| `stability` | Boolean; a local `soak` with timed host-RSS and device-memory samples, bounded growth and traffic in every enabled mix. A `--remote-only` soak cannot satisfy it. The media mix reads the `soak_media_fixtures` input when the declaration states one, else `media_fixtures`. |
 | `kv_offload` | Boolean. True requires model-level `kv_offload` facts and hard plain/pressure checks in the full suite. Serving offload remains off by default. |
+| `not_served` | Optional. Maps a boolean capability declared false, one the model does not serve, to its reason. The correctness runner reports each false boolean capability as a not-applicable row with its reason, never a pass, and fails one without a reason. |
 
 The soak must run the declared duration and concurrency, with samples
 spanning the interval (no gap over 60 seconds) and at most 512 MiB growth in

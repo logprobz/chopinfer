@@ -2635,6 +2635,168 @@
    "error": "capabilities.unqualified_media.image"
   },
   {
+   "name": "an unserved capability declared false with its reason",
+   "set": {
+    "/capabilities": {
+     "text": true,
+     "frontend": false,
+     "api": true,
+     "structured": false,
+     "prefix_cache": false,
+     "preemption": false,
+     "long_context": false,
+     "stability": false,
+     "media": [
+      "image"
+     ],
+     "speculation": "none",
+     "kv_offload": false,
+     "not_served": {
+      "kv_offload": "The bundle declares no KV offload; preempted requests recompute."
+     }
+    }
+   },
+   "remove": [
+    "/checks/media/informational_reason"
+   ],
+   "error": null
+  },
+  {
+   "name": "an unserved capability needs a reason",
+   "set": {
+    "/capabilities": {
+     "text": true,
+     "frontend": false,
+     "api": true,
+     "structured": false,
+     "prefix_cache": false,
+     "preemption": false,
+     "long_context": false,
+     "stability": false,
+     "media": [
+      "image"
+     ],
+     "speculation": "none",
+     "kv_offload": false,
+     "not_served": {
+      "kv_offload": " "
+     }
+    }
+   },
+   "remove": [
+    "/checks/media/informational_reason"
+   ],
+   "error": "capabilities.not_served.kv_offload"
+  },
+  {
+   "name": "an unserved capability cannot be declared true",
+   "set": {
+    "/capabilities": {
+     "text": true,
+     "frontend": false,
+     "api": true,
+     "structured": false,
+     "prefix_cache": false,
+     "preemption": false,
+     "long_context": false,
+     "stability": false,
+     "media": [
+      "image"
+     ],
+     "speculation": "none",
+     "kv_offload": false,
+     "not_served": {
+      "api": "The bundle declares no KV offload; preempted requests recompute."
+     }
+    }
+   },
+   "remove": [
+    "/checks/media/informational_reason"
+   ],
+   "error": "capabilities.not_served.api"
+  },
+  {
+   "name": "not_served names a boolean capability",
+   "set": {
+    "/capabilities": {
+     "text": true,
+     "frontend": false,
+     "api": true,
+     "structured": false,
+     "prefix_cache": false,
+     "preemption": false,
+     "long_context": false,
+     "stability": false,
+     "media": [
+      "image"
+     ],
+     "speculation": "none",
+     "kv_offload": false,
+     "not_served": {
+      "media": "The bundle declares no KV offload; preempted requests recompute."
+     }
+    }
+   },
+   "remove": [
+    "/checks/media/informational_reason"
+   ],
+   "error": "capabilities.not_served.media"
+  },
+  {
+   "name": "not_served names a known capability",
+   "set": {
+    "/capabilities": {
+     "text": true,
+     "frontend": false,
+     "api": true,
+     "structured": false,
+     "prefix_cache": false,
+     "preemption": false,
+     "long_context": false,
+     "stability": false,
+     "media": [
+      "image"
+     ],
+     "speculation": "none",
+     "kv_offload": false,
+     "not_served": {
+      "offload": "The bundle declares no KV offload; preempted requests recompute."
+     }
+    }
+   },
+   "remove": [
+    "/checks/media/informational_reason"
+   ],
+   "error": "capabilities.not_served.offload"
+  },
+  {
+   "name": "not_served must map each capability to its reason",
+   "set": {
+    "/capabilities": {
+     "text": true,
+     "frontend": false,
+     "api": true,
+     "structured": false,
+     "prefix_cache": false,
+     "preemption": false,
+     "long_context": false,
+     "stability": false,
+     "media": [
+      "image"
+     ],
+     "speculation": "none",
+     "kv_offload": false,
+     "not_served": [
+      "kv_offload"
+     ]
+    }
+   },
+   "remove": [
+    "/checks/media/informational_reason"
+   ],
+   "error": "capabilities.not_served"
+  },
+  {
    "name": "speculative coverage contracts",
    "set": {
     "/capabilities": {
@@ -2752,6 +2914,149 @@
     "/checks/media/informational_reason"
    ],
    "error": null
+  },
+  {
+   "name": "dspark speculative coverage contracts",
+   "set": {
+    "/capabilities": {
+     "text": true,
+     "frontend": false,
+     "api": true,
+     "structured": false,
+     "prefix_cache": false,
+     "preemption": false,
+     "long_context": false,
+     "stability": false,
+     "media": [
+      "image"
+     ],
+     "speculation": "dspark",
+     "kv_offload": false
+    },
+    "/checks/spec_verify": {
+     "module": "spec_verify",
+     "args": [
+      "compare",
+      "--ar",
+      "{spec_ar}",
+      "--spec",
+      "{spec_candidate}"
+     ],
+     "timeout_seconds": 7200,
+     "stdout_json": true,
+     "rules": [
+      {
+       "path": [
+        "passed"
+       ],
+       "op": "eq",
+       "value": true,
+       "source": "docs/numerics.md#serving-qualification-gates"
+      },
+      {
+       "path": [
+        "sets",
+        "copy",
+        "scored_positions"
+       ],
+       "op": "ge",
+       "value": 1,
+       "source": "docs/numerics.md#serving-qualification-gates"
+      }
+     ]
+    },
+    "/checks/verify_exact": {
+     "module": "verify_exact",
+     "args": [
+      "report",
+      "--ar",
+      "{verify_ar}",
+      "--verify",
+      "{verify_candidate}"
+     ],
+     "timeout_seconds": 7200,
+     "stdout_json": true,
+     "rules": [
+      {
+       "path": [
+        "records"
+       ],
+       "op": "count_ge",
+       "value": 1,
+       "source": "docs/numerics.md#serving-qualification-gates"
+      },
+      {
+       "path": [
+        "records",
+        "*",
+        "exact",
+        "all",
+        "gate_against_ar",
+        "passed"
+       ],
+       "op": "eq",
+       "value": true,
+       "source": "docs/numerics.md#serving-qualification-gates"
+      },
+      {
+       "path": [
+        "records",
+        "*",
+        "coverage",
+        "passed"
+       ],
+       "op": "eq",
+       "value": true,
+       "source": "tools/qual/README.md#release-gates"
+      },
+      {
+       "path": [
+        "records",
+        "*",
+        "k"
+       ],
+       "op": "ge",
+       "value": 1,
+       "source": "tools/qual/README.md#release-gates"
+      }
+     ]
+    },
+    "/cohorts/full/checks": [
+     "teacher",
+     "api",
+     "media",
+     "spec_verify",
+     "verify_exact"
+    ]
+   },
+   "remove": [
+    "/checks/media/informational_reason"
+   ],
+   "error": null
+  },
+  {
+   "name": "require speculative verification for dspark",
+   "set": {
+    "/capabilities": {
+     "text": true,
+     "frontend": false,
+     "api": true,
+     "structured": false,
+     "prefix_cache": false,
+     "preemption": false,
+     "long_context": false,
+     "stability": false,
+     "media": [
+      "image"
+     ],
+     "speculation": "dspark",
+     "kv_offload": false
+    }
+   },
+   "remove": [
+    "/checks/media/informational_reason"
+   ],
+   "error": "capabilities.speculation"
   },
   {
    "name": "AR compared with itself",

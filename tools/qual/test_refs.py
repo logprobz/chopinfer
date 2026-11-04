@@ -988,7 +988,8 @@ class ConfigurationLockTests(unittest.TestCase):
             if "capabilities" in base:
                 spec["capabilities"] = {key: (value if key == "text" else [] if key == "media" else
                                               "none" if key == "speculation" else False)
-                                        for key, value in base["capabilities"].items() if key != "unqualified_media"}
+                                        for key, value in base["capabilities"].items()
+                                        if key not in ("unqualified_media", "not_served")}
             base["configurations"] = {"own": spec}
             declaration.path(model, root).parent.mkdir(parents=True)
             declaration.path(model, root).write_text(json.dumps(base))

@@ -216,6 +216,22 @@
         "env": "CHOPINFER_DATA",
         "path": "refrun/deepseek41/media/image-probe-references.workload.json"
       }
+    },
+    "soak_media_fixtures": {
+      "directory": true,
+      "members": {
+        "blue-square.png": "3135d002787bc6f7be70ab3e4a4648b2ab1b14ad584058c70aa6d53646da2e3d",
+        "manifest.json": "656f4e9255eb196c8c2991c1f84d4755dadb664a98c58f579eba84b920446a87"
+      },
+      "path": {
+        "default": "fixtures/mimo26",
+        "env": "CHOPINFER_MIMO_FIXTURES",
+        "path": "functional"
+      },
+      "scope": [
+        "blue-square.png",
+        "manifest.json"
+      ]
     }
   },
   "model": "deepseek41",
@@ -377,6 +393,12 @@
     },
     "34e6000d48589a8c42a1dab0b58c980c0a477d0a04d900f4399d23fd943aedfa": {
       "schema": "chop-frontend-openai-v2"
+    },
+    "3135d002787bc6f7be70ab3e4a4648b2ab1b14ad584058c70aa6d53646da2e3d": {
+      "schema": "legacy-png"
+    },
+    "656f4e9255eb196c8c2991c1f84d4755dadb664a98c58f579eba84b920446a87": {
+      "schema": "legacy-json-object"
     }
   },
   "schema": "chopinfer-qual-references/v1"

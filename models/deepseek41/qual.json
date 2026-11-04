@@ -29,8 +29,6 @@
         "prefix_exact",
         "preemption_exact",
         "determinism",
-        "kv_offload_plain",
-        "kv_offload_pressure",
         "multimodal",
         "spec_verify",
         "verify_exact"
@@ -61,9 +59,7 @@
     "service": [
       "soak",
       "preemption_exact",
-      "determinism",
-      "kv_offload_plain",
-      "kv_offload_pressure"
+      "determinism"
     ],
     "speculation": [
       "verify_exact",
@@ -549,7 +545,10 @@
           "1200",
           "--concurrency",
           "32",
-          "--prefix-mix"
+          "--prefix-mix",
+          "--media-mix",
+          "--media-cases",
+          "image-blue-square.png"
         ]
       },
       "rules": [
@@ -1158,58 +1157,6 @@
           "op": "eq",
           "value": "5d63c0f78def9858b4e0e6dc6490d31c086081c80b8eca2ac069fb9e961562c1",
           "source": "models/deepseek41/README.md#qualification"
-        }
-      ]
-    },
-    "kv_offload_plain": {
-      "module": "kv_offload",
-      "args": [
-        "report",
-        "--off",
-        "{kv_offload_plain_off}",
-        "--swap",
-        "{kv_offload_plain_swap}"
-      ],
-      "timeout_seconds": 600,
-      "receipt": "*-kv-offload-plain.json",
-      "files": [
-        "kv_offload_plain_off",
-        "kv_offload_plain_swap"
-      ],
-      "rules": [
-        {
-          "path": [
-            "passed"
-          ],
-          "op": "eq",
-          "value": true,
-          "source": "docs/numerics.md#kv-offload-and-prefix-state"
-        }
-      ]
-    },
-    "kv_offload_pressure": {
-      "module": "kv_offload",
-      "args": [
-        "report",
-        "--off",
-        "{kv_offload_pressure_off}",
-        "--swap",
-        "{kv_offload_pressure_swap}"
-      ],
-      "timeout_seconds": 600,
-      "receipt": "*-kv-offload-pressure.json",
-      "files": [
-        "kv_offload_pressure_off",
-        "kv_offload_pressure_swap"
-      ],
-      "rules": [
-        {
-          "path": [
-            "passed"
-          ],
-          "op": "eq",
-          "value": true,
-          "source": "docs/numerics.md#kv-offload-and-prefix-state"
         }
       ]
     },
@@ -4525,6 +4472,12 @@
     "media_fixtures": {
       "env": "CHOPINFER_DATA",
       "path": "refrun/deepseek41/workloads-20261018-probes-served/capture"
+    },
+    "media_cases": "fixtures/mimo26/capture/multimodal_cases.py",
+    "soak_media_fixtures": {
+      "env": "CHOPINFER_MIMO_FIXTURES",
+      "path": "functional",
+      "default": "fixtures/mimo26"
     }
   },
   "references": {
@@ -4785,7 +4738,20 @@
       "media": false,
       "keep_references": [
         "teacher"
-      ]
+      ],
+      "capabilities": {
+        "text": false,
+        "frontend": false,
+        "api": false,
+        "structured": false,
+        "prefix_cache": false,
+        "preemption": false,
+        "long_context": false,
+        "stability": false,
+        "kv_offload": false,
+        "media": [],
+        "speculation": "none"
+      }
     },
     "verify-b4": {
       "serve": [
@@ -4807,7 +4773,20 @@
       "media": false,
       "keep_references": [
         "teacher"
-      ]
+      ],
+      "capabilities": {
+        "text": false,
+        "frontend": false,
+        "api": false,
+        "structured": false,
+        "prefix_cache": false,
+        "preemption": false,
+        "long_context": false,
+        "stability": false,
+        "kv_offload": false,
+        "media": [],
+        "speculation": "none"
+      }
     },
     "verify-b8": {
       "serve": [
@@ -4829,7 +4808,20 @@
       "media": false,
       "keep_references": [
         "teacher"
-      ]
+      ],
+      "capabilities": {
+        "text": false,
+        "frontend": false,
+        "api": false,
+        "structured": false,
+        "prefix_cache": false,
+        "preemption": false,
+        "long_context": false,
+        "stability": false,
+        "kv_offload": false,
+        "media": [],
+        "speculation": "none"
+      }
     },
     "verify-b12": {
       "serve": [
@@ -4886,7 +4878,20 @@
       "media": false,
       "keep_references": [
         "teacher"
-      ]
+      ],
+      "capabilities": {
+        "text": false,
+        "frontend": false,
+        "api": false,
+        "structured": false,
+        "prefix_cache": false,
+        "preemption": false,
+        "long_context": false,
+        "stability": false,
+        "kv_offload": false,
+        "media": [],
+        "speculation": "none"
+      }
     },
     "verify-b24": {
       "serve": [
@@ -4943,15 +4948,21 @@
       "media": false,
       "keep_references": [
         "teacher"
-      ]
+      ],
+      "capabilities": {
+        "text": false,
+        "frontend": false,
+        "api": false,
+        "structured": false,
+        "prefix_cache": false,
+        "preemption": false,
+        "long_context": false,
+        "stability": false,
+        "kv_offload": false,
+        "media": [],
+        "speculation": "none"
+      }
     }
-  },
-  "kv_offload": {
-    "budget_gib": 16,
-    "swap_every": 16,
-    "max_preemptions": 3,
-    "min_gated": 18,
-    "pressure_tokens": 32768
   },
   "preview": {
     "profile": "tp4-dspark",
@@ -4970,5 +4981,23 @@
     "numerical_reference": "F32-TQ reference of the pinned vendor code. DSpark verify bounds and GSM8K floor are pinned in models/deepseek41/README.md#dspark-qualification.",
     "gsm8k_floor": 193,
     "package_max_sequences": 32
+  },
+  "capabilities": {
+    "text": true,
+    "frontend": true,
+    "api": true,
+    "structured": true,
+    "prefix_cache": true,
+    "preemption": true,
+    "long_context": true,
+    "stability": true,
+    "media": [
+      "image"
+    ],
+    "speculation": "dspark",
+    "kv_offload": false,
+    "not_served": {
+      "kv_offload": "The bundle declares no KV offload capability: the server keeps no KV in host memory, and a preempted request recomputes its KV."
+    }
   }
 }

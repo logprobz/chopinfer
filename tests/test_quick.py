@@ -533,6 +533,16 @@ class CheckInputs(unittest.TestCase):
                                    'def scratch(ROOT):\n    return ROOT.rglob("*.py")\n',
         "tools/listing/rebinding.py": 'from pathlib import Path\nROOT = Path(__file__).resolve().parents[2]\n'
                                       'def staged(output):\n    ROOT = output\n    return ROOT.rglob("*.py")\n',
+        # Names bound in nested scopes, or by a comprehension around its first iterable, or in
+        # a class body around a method, do not hide the module-level ones; spacing does not matter.
+        "tools/listing/nested.py": 'from pathlib import Path\nHERE = Path(__file__).parent\n'
+                                   'def listed():\n    def helper(HERE):\n        return HERE\n'
+                                   '    return HERE.glob("*.py")\n'
+                                   'CASES = [HERE for HERE in HERE.glob("*.json")]\n'
+                                   'class Lister:\n    HERE = "unused"\n'
+                                   '    def run(self):\n        return HERE.rglob("*.sh")\n',
+        "tools/listing/spaced.py": 'from pathlib import Path\nHERE = Path(__file__).parent\n'
+                                   'for path in HERE.glob ("*.py"):\n    pass\n',
         "tools/listing/listed.py": "import tools.unlisted\n",
         "tools/unlisted.py": "",
         "fixtures/listed/deep/case.py": "",
@@ -618,6 +628,11 @@ class CheckInputs(unittest.TestCase):
             self.assertFalse(inputs.covers(path), path)
         rebinding = self.scanner().inputs(["python3", "-B", "tools/listing/rebinding.py"])
         self.assertFalse(rebinding.covers("fixtures/other/case.py"))
+        nested = self.scanner().inputs(["python3", "-B", "tools/listing/nested.py"])
+        for path in ("tools/listing/listed.py", "tools/listing/cases.json", "tools/listing/deep/run.sh"):
+            self.assertTrue(nested.covers(path), path)
+        spaced = self.scanner().inputs(["python3", "-B", "tools/listing/spaced.py"])
+        self.assertTrue(spaced.covers("tools/listing/listed.py"))
 
     def test_the_model_inventory_check_covers_the_ci_modules_its_tests_load(self):
         import cpu

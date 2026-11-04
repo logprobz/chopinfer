@@ -142,51 +142,117 @@ LISTINGS = {"glob": False, "rglob": True}
 SAME_PATH = ("Path", "PurePath", "PurePosixPath", "resolve", "absolute")
 
 
-# Scopes whose names hide module-level ones from the code inside them.
-SCOPES = (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef, ast.ListComp, ast.SetComp,
-          ast.DictComp, ast.GeneratorExp)
+FUNCTIONS = (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)
+COMPREHENSIONS = (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)
 
 
 def bound_names(node):
-    """The names one node binds: a stored name, parameter, def or class, import or capture."""
+    """The names one node binds in the scope it runs in: a stored name, import or capture."""
     if isinstance(node, ast.Name) and not isinstance(node.ctx, ast.Load):
         return [node.id]
-    if isinstance(node, ast.arg):
-        return [node.arg]
-    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-        return [node.name]
     if isinstance(node, (ast.Import, ast.ImportFrom)):
         return [(alias.asname or alias.name).split(".")[0] for alias in node.names]
     if isinstance(node, (ast.ExceptHandler, ast.MatchAs, ast.MatchStar)) and node.name:
         return [node.name]
+    if isinstance(node, ast.MatchMapping) and node.rest:
+        return [node.rest]
     return []
 
 
-def assigned_once(tree):
-    """The values of the names a file binds once at module level, by a plain assignment."""
-    counts, pending = {}, list(tree.body)
+def parameters(function):
+    arguments = function.args
+    return {argument.arg for argument in (*arguments.posonlyargs, *arguments.args, *arguments.kwonlyargs,
+                                          arguments.vararg, arguments.kwarg) if argument}
+
+
+def outer_parts(scope):
+    """The parts of a function, lambda or class that run in the scope around it."""
+    if isinstance(scope, ast.ClassDef):
+        return [*scope.decorator_list, *scope.bases, *(keyword.value for keyword in scope.keywords)]
+    arguments = scope.args
+    parts = [*arguments.defaults, *(default for default in arguments.kw_defaults if default)]
+    if isinstance(scope, ast.Lambda):
+        return parts
+    annotations = [argument.annotation for argument in (*arguments.posonlyargs, *arguments.args,
+                                                        *arguments.kwonlyargs, arguments.vararg, arguments.kwarg)
+                   if argument and argument.annotation]
+    return [*scope.decorator_list, *parts, *annotations, *([scope.returns] if scope.returns else [])]
+
+
+def comprehension_parts(node):
+    """A comprehension's parts other than its first iterable, which runs in the scope around it."""
+    first, *rest = node.generators
+    elements = [node.key, node.value] if isinstance(node, ast.DictComp) else [node.elt]
+    return [first.target, *first.ifs,
+            *(part for generator in rest for part in (generator.target, generator.iter, *generator.ifs)), *elements]
+
+
+def bindings(statements):
+    """The names code binds in its own scope, once per binding. A nested function or class
+    binds its name here, and its decorators, defaults and bases run here; a nested
+    comprehension's first iterable runs here and its `:=` targets bind here. What their
+    bodies bind does not count, nor do names declared global or nonlocal."""
+    names, declared, pending = [], set(), list(statements)
     while pending:
         node = pending.pop()
-        for name in bound_names(node):
-            counts[name] = counts.get(name, 0) + 1
-        if not isinstance(node, SCOPES):
+        if isinstance(node, (ast.Global, ast.Nonlocal)):
+            declared.update(node.names)
+        elif isinstance(node, (*FUNCTIONS, ast.ClassDef)):
+            names += [] if isinstance(node, ast.Lambda) else [node.name]
+            pending += outer_parts(node)
+        elif isinstance(node, COMPREHENSIONS):
+            pending.append(node.generators[0].iter)
+            inner = comprehension_parts(node)
+            while inner:
+                part = inner.pop()
+                if isinstance(part, ast.NamedExpr):
+                    names.append(part.target.id)
+                if not isinstance(part, (*FUNCTIONS, ast.ClassDef)):
+                    inner += ast.iter_child_nodes(part)
+        else:
+            names += bound_names(node)
             pending += ast.iter_child_nodes(node)
-    return {statement.targets[0].id: statement.value for statement in tree.body
+    return [name for name in names if name not in declared]
+
+
+def assigned_once(tree):
+    """The values of the names a module binds once, by a plain assignment in its body, and
+    that no function rebinds through `global`."""
+    counts = {}
+    for name in bindings(tree.body):
+        counts[name] = counts.get(name, 0) + 1
+    rebound = {name for node in ast.walk(tree) if isinstance(node, ast.Global) for name in node.names}
+    return {target.id: statement.value for statement in tree.body
             if isinstance(statement, ast.Assign) and len(statement.targets) == 1
-            and isinstance(statement.targets[0], ast.Name) and counts[statement.targets[0].id] == 1}
+            for target in statement.targets
+            if isinstance(target, ast.Name) and counts.get(target.id) == 1 and target.id not in rebound}
 
 
 def scoped_calls(tree):
-    """(call, hidden) for each call in a module: `hidden` holds the names the scopes around
-    it bind (parameters, locals, those of nested scopes too), which hide module-level ones."""
-    pending = [(tree, frozenset())]
+    """(call, hidden) for each call in a module. `hidden` holds the names that hide
+    module-level ones there: those the functions, lambdas and comprehensions around the call
+    bind, and a class body's own names in code directly in that body."""
+    pending = [(tree, frozenset(), frozenset())]
     while pending:
-        node, hidden = pending.pop()
-        if isinstance(node, SCOPES):
-            hidden = hidden | {name for child in ast.walk(node) if child is not node for name in bound_names(child)}
+        node, hidden, members = pending.pop()
         if isinstance(node, ast.Call):
-            yield node, hidden
-        pending += ((child, hidden) for child in ast.iter_child_nodes(node))
+            yield node, hidden | members
+        if isinstance(node, FUNCTIONS):
+            body = node.body if isinstance(node.body, list) else [node.body]
+            inner = hidden | parameters(node) | set(bindings(body))
+            pending += [(part, hidden, members) for part in outer_parts(node)]
+            pending += [(statement, inner, frozenset()) for statement in body]
+        elif isinstance(node, ast.ClassDef):
+            own = frozenset(bindings(node.body))
+            pending += [(part, hidden, members) for part in outer_parts(node)]
+            pending += [(statement, hidden, own) for statement in node.body]
+        elif isinstance(node, COMPREHENSIONS):
+            targets = {name.id for generator in node.generators for name in ast.walk(generator.target)
+                       if isinstance(name, ast.Name)}
+            pending.append((node.generators[0].iter, hidden, members))
+            pending += [(part, hidden | targets, frozenset()) for part in comprehension_parts(node)]
+        else:
+            pending += [(child, hidden, members) for child in ast.iter_child_nodes(node)]
 
 
 def listed_directory(node, assigned, path, hidden=frozenset(), expanding=frozenset()):
@@ -331,7 +397,7 @@ class Scanner:
                 tree = ast.parse(text)
             except SyntaxError:
                 return found
-            strings, imports, loads = [], [], []
+            strings, imports, loads, listed = [], [], [], False
             for node in ast.walk(tree):
                 if isinstance(node, ast.Constant) and isinstance(node.value, str):
                     strings.append(node.value)
@@ -341,6 +407,7 @@ class Scanner:
                     name = getattr(node.func, "attr", getattr(node.func, "id", None))
                     if name in LOADERS and len(node.args) > LOADERS[name]:
                         loads.append(node.args[LOADERS[name]])
+                    listed = listed or name in LISTINGS and isinstance(node.func, ast.Attribute)
             # A path is often joined from parts (ROOT / "tools" / "qual" / "x.py"), so names also
             # resolve against the directories the file names; those may be on its import path too.
             for _ in range(3):
@@ -355,11 +422,11 @@ class Scanner:
                     found.modules.update(self.module(value, bases, whole=True))
             # A listing of a repository directory covers what its pattern matches there, now or
             # once added, Python and shell files included; like computed loads, those are not
-            # scanned in turn. A literal directory resolves like a named one.
-            # Each listing with a literal pattern, unless its line declares what it walks.
+            # scanned in turn. A literal directory resolves like a named one. Each listing has a
+            # literal pattern, and its line declares nothing about what it walks.
             lines = text.splitlines()
             listings = [(node.func.value, node.args[0].value, LISTINGS[node.func.attr], hidden)
-                        for node, hidden in (scoped_calls(tree) if "glob(" in text else ())
+                        for node, hidden in (scoped_calls(tree) if listed else ())
                         if isinstance(node.func, ast.Attribute) and node.func.attr in LISTINGS and node.args
                         and isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, str)
                         and not DECLARED_WALK.search(lines[node.lineno - 1])]

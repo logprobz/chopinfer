@@ -4,6 +4,9 @@
 precision, topology and frontend declarations; `bundle/` owns native execution.
 Shared runtime code stays model-neutral.
 
+MiMo is outside the release scope: `model.toml` disables its release, and it
+keeps its CPU tests with no further GPU qualification.
+
 Images may be PNG, JPEG, GIF (the first frame) or WebP (lossy, lossless,
 with alpha, or the first frame of an animation), decoded as transformers'
 `load_image` reads them: oriented by their EXIF or XMP orientation, alpha

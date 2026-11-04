@@ -27,9 +27,11 @@ Thinking cannot be switched off. An explicit limit is honored. See
 
 ## Serving profiles
 
-The profile file owns settings, status and qualified concurrency. Read the
-[qualification scope and exceptions](../../docs/serving-profiles.md) before
-treating a compatible checkpoint or explicit override as qualified.
+`tp4-mtp`, `tp4-mtp-dcp2` and `tp4-mtp-dcp4` are the serving profiles;
+`tp4-ar` is their baseline and correctness control. The profile file owns
+settings, status and qualified concurrency. Read the [qualification scope and
+exceptions](../../docs/serving-profiles.md) before treating a compatible
+checkpoint or explicit override as qualified.
 
 ### Ordered prefill DMA
 

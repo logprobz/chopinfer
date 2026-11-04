@@ -9,7 +9,6 @@ pinned build tools. The native route uses the same release builder.
 Download a complete Hugging Face snapshot with `hf download REPOSITORY
 --revision REVISION --local-dir DIRECTORY`, retaining its download metadata.
 The model's `checkpoint-files.json` records the pinned source and revision:
-[MiMo](../models/mimo26/checkpoint-files.json),
 [Qwen](../models/qwen38/checkpoint-files.json),
 [GLM](../models/glm5next/checkpoint-files.json).
 Set `CHECKPOINT` to the local directory. Allow space for weights, build
@@ -96,7 +95,8 @@ CUDA_VISIBLE_DEVICES=0,1,2,3 chopinfer serve --model "$CHECKPOINT" \
 ```
 
 `serve --model` selects the family's profile and refuses `--profile`;
-`--speculative-tokens 0` selects AR. Explicit packages accept
+`--speculative-tokens 0` runs the AR baseline, a correctness control rather
+than a serving profile. Explicit packages accept
 [`--profile`](serving-profiles.md#selecting-a-profile). Use `serve --help`
 for options and `profiles list` for declared settings. Text and images are
 default inputs; `--modalities text` omits encoders and `--modalities all`

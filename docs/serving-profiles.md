@@ -8,11 +8,18 @@ topology, limits and capabilities.
 
 ## Selecting a profile
 
+Production serves the speculative profiles: DeepSeek `tp4-dspark`, GLM
+`tp4-mtp` and its DCP variants, and Qwen `tp4-mtp`. Each model's AR profile
+is the baseline and correctness control that speculative output is checked
+against, and a debugging aid. `tp4-dspark` drafts nothing from 32 decode
+items, so falling back to AR needs no profile switch. MiMo is outside the
+release scope; [its evidence](#mimo-evidence) is history.
+
 `serve --model DIR` selects a profile through the installed model helper and
 refuses `--profile`. Explicit packages accept a packaged name or `FILE#NAME`:
 
 ```sh
-chopinfer serve --bundle "$PACKAGE" --checkpoint "$CHECKPOINT" --profile tp4-ar
+chopinfer serve --bundle "$PACKAGE" --checkpoint "$CHECKPOINT" --profile tp4-mtp
 chopinfer profiles list models/qwen38/profiles.json
 ```
 
@@ -21,10 +28,10 @@ Four commands describe these choices as JSON, for a launcher such as
 
 ```sh
 chopinfer models --json
-chopinfer models pick --model "$CHOPINFER_MIMO_CHECKPOINT" --json
-chopinfer models command --model "$CHOPINFER_MIMO_CHECKPOINT" \
-  --tensor-parallel-size 4 --profile tp4-ar -- --max-sequences 64
-chopinfer serve --model "$CHOPINFER_MIMO_CHECKPOINT" --tensor-parallel-size 4 --check
+chopinfer models pick --model "$CHOPINFER_QWEN38_CHECKPOINT" --json
+chopinfer models command --model "$CHOPINFER_QWEN38_CHECKPOINT" \
+  --tensor-parallel-size 4 --profile tp4-mtp -- --queue-depth 64
+chopinfer serve --model "$CHOPINFER_QWEN38_CHECKPOINT" --tensor-parallel-size 4 --check
 ```
 
 - `models --json` lists each installed model's profiles with their status,
@@ -84,8 +91,13 @@ disables speculation but retains that profile's sequence cap. A profile
 cannot grant qualification to an override. `max_sequences` is the serving
 cap; `qualified_max_sequences` is the largest concurrency its evidence
 covers, or null for experimental profiles. Startup warns above that count.
-The shared default is 32; MiMo/Qwen TP4 AR and MiMo DFlash have evidence
-through 64. Package capacity alone is not serving qualification.
+The shared default is 32; Qwen `tp4-ar` has evidence through 64. Package
+capacity alone is not serving qualification.
+
+Production deployments should set `--queue-depth N` or `--queue-wait-ms N`
+([queueing](serving-request-surface.md#queueing-and-admission)). Profiles
+set neither, so by default waiting requests queue without bound and
+overload never returns 429.
 
 DeepSeek ships `tp4-ar` and `tp4-dspark`. Both use exact upper-skip prefill
 with 8192-token grid ends and 64-token aligned shared-prefix anchors. An
@@ -353,10 +365,12 @@ do not extend to arbitrary concurrent batches.
 
 ## MiMo evidence
 
-The pinned checkpoint is MiMo V2.6 Flash MOPD. Historical RL checkpoint runs
-do not qualify its tensors. `tp4-mtp` has historical serving evidence only,
-workload-specific throughput regressions and no accepted paired arm; it
-remains experimental. `tp2-ar` also remains experimental.
+MiMo is outside the release scope and gets no further GPU qualification;
+this section is history. The pinned checkpoint is MiMo V2.6 Flash MOPD.
+Historical RL checkpoint runs do not qualify its tensors. `tp4-mtp` has
+historical serving evidence only, workload-specific throughput regressions
+and no accepted paired arm; it remains experimental. `tp2-ar` also remains
+experimental.
 
 ### TP4 concurrency qualification, 2026-10-04
 

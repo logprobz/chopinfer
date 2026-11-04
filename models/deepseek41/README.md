@@ -60,10 +60,12 @@ HF corpus `tokenizer_goldens.py corpus` writes, named by
 ## Served profiles
 
 `profiles.json` ships two experimental profiles, `tp4-ar` and `tp4-dspark`.
-Both use native KV, prefix caching, at most 32 sequences, 8192-token prefill
-chunks and exact upper-layer dependency cones. AR reserves 320 MiB per rank
-for graphs; DSpark reserves 640 MiB. Package capacity and CPU checks do not
-establish release qualification.
+`tp4-dspark` is the serving profile; `tp4-ar` is its baseline, correctness
+control and debugging aid. `tp4-dspark`'s `depths` end at `32:0`, so it drafts
+nothing from 32 decode items. Both use native KV, prefix caching, at most 32
+sequences, 8192-token prefill chunks and exact upper-layer dependency cones.
+AR reserves 320 MiB per rank for graphs; DSpark reserves 640 MiB. Package
+capacity and CPU checks do not establish release qualification.
 
 The scheduler admits 64-token aligned shared-prefix anchors in addition to
 the chunk grid and prompt ends. An unaligned prompt publishes an anchor at

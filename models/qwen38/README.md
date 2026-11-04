@@ -27,6 +27,8 @@ owner decided on 2026-10-31. An explicit limit is honored. See
 
 ## Serving profiles
 
-The profile file owns settings, status and qualified concurrency. Read the
-[qualification scope and exceptions](../../docs/serving-profiles.md) before
-treating a compatible checkpoint or explicit override as qualified.
+`tp4-mtp` is the serving profile; the AR profiles (`tp4-ar`, `tp4-ar-dcp2`,
+`tp2-ar`) are its baseline and correctness control. The profile file owns
+settings, status and qualified concurrency. Read the [qualification scope and
+exceptions](../../docs/serving-profiles.md) before treating a compatible
+checkpoint or explicit override as qualified.

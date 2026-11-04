@@ -1003,12 +1003,24 @@ the reference.
 
 ## State and verification contract
 
+The accuracy principle is lossless speculation, as close to the reference as
+possible. Every emitted token is the target's own: each verify row samples
+the target as AR decode does at that generated index, and a draft is kept
+only when it equals that token. A sampled request therefore emits AR
+sampling's tokens for the same seed, given the same target logits;
+[coupled drafts](#coupled-sampled-drafts) only make drafts match more often.
+Verify rows match AR bit for bit where a model declares it
+([exact verify rows](#exact-verify-rows)) and elsewhere stay within the
+declared verify bound of AR ([batch shape](#batch-shape)). Equality across
+batch shapes is not required ([rule 6](#engine-rules)). Accuracy is judged
+by the absolute gates against the pinned reference
+([serving qualification gates](#serving-qualification-gates)).
+
 Verification prepares K + 1 rows transactionally. Commit keeps only the
 accepted prefix and the correction or bonus token; rejected KV, recurrent
 state and drafter state are restored before the next step. Streaming, stop
-handling and logprobs describe committed target tokens only. Greedy acceptance
-compares target token IDs; stochastic acceptance preserves the target
-distribution rather than forcing AR text equality. Graph row capacities are
+handling and logprobs describe committed target tokens only. Greedy and
+sampled acceptance both compare target token IDs. Graph row capacities are
 compile-time bounds; unused rows never become samples or committed state.
 
 The MiMo release preview records both speculation and AR with

@@ -28,6 +28,9 @@ use runtime_eval::kinds;
 use runtime_eval::pyjson::{self, Object};
 use serde_json::{Value, json};
 
+mod scratch;
+use scratch::Scratch;
+
 const CHECKPOINT: &str = "4444444444444444444444444444444444444444444444444444444444444444";
 const NONCE: &str = "0123456789abcdef0123456789abcdef";
 const MODEL: &str = "served";
@@ -493,12 +496,8 @@ fn fake_server(outputs: Outputs) -> (String, Log) {
 
 /// A root whose model declares the structured check with `args` and
 /// `constants`, and the path of its frontend.
-fn declared(name: &str, args: &[&str], constants: Value) -> (Loaded, PathBuf) {
-    let root = std::env::temp_dir().join(format!(
-        "runtime-eval-structured-{name}-{}",
-        std::process::id()
-    ));
-    let _ = std::fs::remove_dir_all(&root);
+fn declared(name: &str, args: &[&str], constants: Value) -> (Loaded, PathBuf, Scratch) {
+    let root = Scratch::new(&format!("runtime-eval-structured-{name}"));
     let model = root.join("models/example");
     std::fs::create_dir_all(&model).unwrap();
     std::fs::create_dir_all(root.join("fixtures/example")).unwrap();
@@ -538,7 +537,7 @@ fn declared(name: &str, args: &[&str], constants: Value) -> (Loaded, PathBuf) {
         "receipts": {"env": "RUNTIME_EVAL_TEST_UNSET", "path": "qual/example"}
     });
     std::fs::write(model.join("qual.json"), declaration.to_string()).unwrap();
-    (declaration::load(&model).unwrap(), frontend)
+    (declaration::load(&model).unwrap(), frontend, root)
 }
 
 /// The structured capture of the declared check against `url`, within
@@ -737,7 +736,7 @@ fn captured_as_python_does(
     mechanics: bool,
     reasons: bool,
 ) -> Value {
-    let (loaded, frontend) = declared(name, args, constants.clone());
+    let (loaded, frontend, _root) = declared(name, args, constants.clone());
     if reasons {
         let value = json!({"reasoning": {"thinking_keywords": ["thinking", "think"],
                                          "allow_disabled": false}});
@@ -789,7 +788,7 @@ fn statuses(receipt: &Value) -> Vec<&str> {
 
 /// The verdict of a captured receipt under the documented predicates.
 fn rescored(receipt: &Value, mechanics: bool) -> kind::Rescored {
-    let (loaded, _) = declared("rescore", &[], json!({}));
+    let (loaded, _, _root) = declared("rescore", &[], json!({}));
     let mut check = loaded.declaration.checks[0].clone();
     let rules = json!([
         {"path": ["passed"], "op": "eq", "value": true},
@@ -851,7 +850,7 @@ fn every_case_passes_against_a_conforming_server_as_in_python() {
 fn answer_only_cases_reason_where_thinking_cannot_be_disabled() {
     let receipt = captured_as_python_does("reasons", valid, &REASONS_ARGS, json!({}), false, true);
     assert_eq!(receipt["passed"], true);
-    let (loaded, frontend) = declared("reasons-requests", &REASONS_ARGS, json!({}));
+    let (loaded, frontend, _root) = declared("reasons-requests", &REASONS_ARGS, json!({}));
     let value = json!({"reasoning": {"thinking_keywords": ["thinking"], "allow_disabled": false}});
     std::fs::write(&frontend, value.to_string()).unwrap();
     let (url, log) = fake_server(valid);
@@ -900,7 +899,7 @@ fn shipped_frontends(switch: &str) -> Vec<(String, Value)> {
 /// with `frontend` as the declared frontend: its receipt and what the
 /// server read.
 fn captured_with(name: &str, args: &[&str], frontend: &Value, mechanics: bool) -> (Value, Log) {
-    let (loaded, path) = declared(name, args, json!({}));
+    let (loaded, path, _root) = declared(name, args, json!({}));
     std::fs::write(&path, frontend.to_string()).unwrap();
     let (url, log) = fake_server(valid);
     let receipt = capture(&loaded, &url, Duration::from_secs(120), mechanics).unwrap();
@@ -1025,7 +1024,7 @@ fn thinking_object_frontends_send_the_declared_switch_as_python_does() {
                 Value::Null
             };
             assert_eq!(switches, [&expected, &expected], "{label}");
-            let (loaded, path) = declared(
+            let (loaded, path, _root) = declared(
                 &format!("object-{name}-{variant}-mechanics"),
                 &[],
                 json!({}),
@@ -1204,7 +1203,7 @@ fn texts_decode_as_python_decodes_them() {
 fn unknown_settings_constants_an_unreachable_server_or_a_spent_budget_are_refused() {
     let (url, log) = fake_server(valid);
     let refused = |args: &[&str], constants: Value| {
-        let (loaded, _) = declared("refused", args, constants);
+        let (loaded, _, _root) = declared("refused", args, constants);
         capture(&loaded, &url, Duration::from_secs(60), false).unwrap_err()
     };
     assert_eq!(
@@ -1235,7 +1234,7 @@ fn unknown_settings_constants_an_unreachable_server_or_a_spent_budget_are_refuse
         "argument --repeat: invalid int value: 'two'"
     );
     assert!(log.lock().unwrap().is_empty());
-    let (loaded, _) = declared("unreachable", &[], json!({}));
+    let (loaded, _, _root) = declared("unreachable", &[], json!({}));
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let unreachable = format!("http://{}", listener.local_addr().unwrap());
     drop(listener);
@@ -1270,7 +1269,8 @@ fn outputs_python_cannot_read_stop_the_run() {
             "structured.py cannot read the output of type 'int'",
         ),
     ] {
-        let (loaded, _) = declared("unreadable", &["--cases", "chat_json_object"], json!({}));
+        let (loaded, _, _root) =
+            declared("unreadable", &["--cases", "chat_json_object"], json!({}));
         let (url, _) = fake_server(outputs);
         let result = capture(&loaded, &url, Duration::from_secs(60), false);
         if error.starts_with("Recursion") {
@@ -1291,7 +1291,7 @@ fn a_late_final_response_cannot_pass() {
         valid(case)
     }
     let (url, log) = fake_server(late);
-    let (loaded, _) = declared("late-final", &["--repeat", "1"], json!({}));
+    let (loaded, _, _root) = declared("late-final", &["--repeat", "1"], json!({}));
     let started = Instant::now();
     let result = capture(&loaded, &url, Duration::from_millis(400), false);
     let elapsed = started.elapsed();

@@ -21,6 +21,9 @@ use runtime_eval::kind::{self, Capture, Kind, KindError};
 use runtime_eval::kinds;
 use serde_json::{Map, Value, json};
 
+mod scratch;
+use scratch::Scratch;
+
 fn root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
@@ -638,9 +641,12 @@ fn inputs(root: &Path, bodies_by_name: bool) -> Map<String, Value> {
 
 /// A root whose model declares the api check (with `constants`), and the
 /// paths of its declared inputs.
-fn declared(name: &str, bodies_by_name: bool, constants: Value) -> (Loaded, Map<String, Value>) {
-    let root = std::env::temp_dir().join(format!("runtime-eval-api-{name}-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&root);
+fn declared(
+    name: &str,
+    bodies_by_name: bool,
+    constants: Value,
+) -> (Loaded, Map<String, Value>, Scratch) {
+    let root = Scratch::new(&format!("runtime-eval-api-{name}"));
     let model = root.join("models/example");
     std::fs::create_dir_all(&model).unwrap();
     std::fs::create_dir_all(root.join("fixtures/example")).unwrap();
@@ -674,7 +680,7 @@ fn declared(name: &str, bodies_by_name: bool, constants: Value) -> (Loaded, Map<
         "receipts": {"env": "RUNTIME_EVAL_TEST_UNSET", "path": "qual/example"}
     });
     std::fs::write(model.join("qual.json"), declaration.to_string()).unwrap();
-    (declaration::load(&model).unwrap(), paths)
+    (declaration::load(&model).unwrap(), paths, root)
 }
 
 /// The api capture of the declared check against `url`, within `budget`.
@@ -843,7 +849,7 @@ fn captures_as_python_does(
     constants: Value,
     mechanics: bool,
 ) -> Value {
-    let (loaded, inputs) = declared(name, bodies_by_name, constants.clone());
+    let (loaded, inputs, _root) = declared(name, bodies_by_name, constants.clone());
     if matches!(flaw, Flaw::AlwaysReasons | Flaw::AcceptsDisabled) {
         let frontend = json!({"reasoning": {"thinking_keywords": ["thinking", "think"],
                                             "allow_disabled": false}});
@@ -929,7 +935,7 @@ fn reasoning_server(frontend: Value, wrong_mode: Option<bool>) -> (String, Log) 
 }
 
 fn object_reasoning_capture(name: &str, wrong_mode: Option<bool>) -> (Value, Log) {
-    let (loaded, inputs) = declared(name, true, json!({}));
+    let (loaded, inputs, _root) = declared(name, true, json!({}));
     let frontend = json!({"reasoning": {"thinking_keywords": ["ignored"],
                                         "switch": "thinking-object"},
                           "response": {"reasoning_field": "reasoning_content"}});
@@ -993,7 +999,7 @@ fn shipped_template_controls_preserve_recorded_api_requests_and_assertions() {
             continue;
         }
         let name = directory.file_name().unwrap().to_str().unwrap();
-        let (loaded, inputs) = declared(&format!("shipped-{name}"), true, json!({}));
+        let (loaded, inputs, _root) = declared(&format!("shipped-{name}"), true, json!({}));
         std::fs::write(inputs["frontend"].as_str().unwrap(), frontend.to_string()).unwrap();
         let (url, log) = reasoning_server(frontend.clone(), None);
         let receipt = capture(&loaded, &url, Duration::from_secs(60), false).unwrap();
@@ -1004,7 +1010,8 @@ fn shipped_template_controls_preserve_recorded_api_requests_and_assertions() {
         } else {
             Flaw::None
         };
-        let (baseline, baseline_inputs) = declared(&format!("baseline-{name}"), true, json!({}));
+        let (baseline, baseline_inputs, _baseline_root) =
+            declared(&format!("baseline-{name}"), true, json!({}));
         let baseline_frontend = json!({"reasoning": {"thinking_keywords": ["thinking"],
                                                     "allow_disabled": !always}});
         std::fs::write(
@@ -1203,7 +1210,7 @@ fn a_mechanics_run_sends_the_fixed_tool_request_as_in_python() {
 #[test]
 fn an_unknown_constant_an_unreachable_server_or_a_spent_budget_is_refused() {
     let constants = json!({"api": {"TOOL_RESULT_MAX_TOKENS": {"value": 512, "source": "test"}}});
-    let (mut loaded, _) = declared("refused", true, constants);
+    let (mut loaded, _, _root) = declared("refused", true, constants);
     loaded.declaration.checks[0].declared["constants"]["api"]["OTHER"] = json!({"value": 1});
     let (url, log) = fake_server(Flaw::None);
     assert_eq!(
@@ -1212,7 +1219,7 @@ fn an_unknown_constant_an_unreachable_server_or_a_spent_budget_is_refused() {
             "checks.api.constants.api.OTHER is not applied by chopinfer eval".into()
         ))
     );
-    let (loaded, _) = declared("unreachable", true, json!({}));
+    let (loaded, _, _root) = declared("unreachable", true, json!({}));
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let unreachable = format!("http://{}", listener.local_addr().unwrap());
     drop(listener);

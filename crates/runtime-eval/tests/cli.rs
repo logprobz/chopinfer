@@ -3,13 +3,16 @@
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpListener;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::thread::JoinHandle;
 
 use runtime_eval::cli;
 use runtime_eval::json::{canonical_sha256, sha256_hex};
 use runtime_eval::{Exit, Tool};
 use serde_json::{Value, json};
+
+mod scratch;
+use scratch::Scratch;
 
 const CHECKPOINT: &str = "4444444444444444444444444444444444444444444444444444444444444444";
 const OTHER_CHECKPOINT: &str = "6666666666666666666666666666666666666666666666666666666666666666";
@@ -33,9 +36,8 @@ fn rule() -> Value {
 }
 
 /// A root with one model whose teacher reference and lock verify.
-fn synthetic_root(name: &str) -> PathBuf {
-    let root = std::env::temp_dir().join(format!("runtime-eval-cli-{name}-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&root);
+fn synthetic_root(name: &str) -> Scratch {
+    let root = Scratch::new(&format!("runtime-eval-cli-{name}"));
     let model = root.join("models/example");
     std::fs::create_dir_all(&model).unwrap();
     std::fs::create_dir_all(root.join("fixtures/example")).unwrap();
@@ -221,7 +223,6 @@ fn usage_and_declaration_errors_exit_2() {
     value["colour"] = json!("red");
     std::fs::write(&declaration, value.to_string()).unwrap();
     assert_eq!(run(&["list", "--model", model]), Exit::Usage);
-    std::fs::remove_dir_all(root).unwrap();
 }
 
 #[test]
@@ -237,7 +238,6 @@ fn listing_and_verifying_references() {
         Exit::Insufficient
     );
     assert_eq!(run(&["list", "--model", model]), Exit::Pass);
-    std::fs::remove_dir_all(root).unwrap();
 }
 
 #[test]
@@ -278,7 +278,6 @@ fn external_reference_paths_preserve_digest_and_missing_data_checks() {
         run(&["verify-references", "--model", model]),
         Exit::Insufficient
     );
-    std::fs::remove_dir_all(root).unwrap();
     std::fs::remove_dir_all(external).unwrap();
 }
 
@@ -309,7 +308,6 @@ fn floor_only_capture_requires_an_authenticated_binding() {
     value["checks"]["teacher"]["constants"]["teacher"]["ALLOW_FLOOR_ONLY"]["value"] = json!(1);
     std::fs::write(&path, value.to_string()).unwrap();
     assert!(runtime_eval::declaration::load(&model).is_err());
-    std::fs::remove_dir_all(root).unwrap();
 }
 
 /// Adds the variant `other` to a synthetic root: another checkpoint with
@@ -418,7 +416,6 @@ fn a_variant_is_selected_by_name() {
         run(&["list", "--model", model, "--variant", "other"]),
         Exit::Usage
     );
-    std::fs::remove_dir_all(root).unwrap();
 }
 
 #[test]
@@ -522,7 +519,6 @@ fn a_run_reports_every_selected_check() {
         ]),
         Exit::Usage
     );
-    std::fs::remove_dir_all(root).unwrap();
 }
 
 #[test]
@@ -547,7 +543,6 @@ fn a_run_against_another_checkpoint_fails() {
     server.join().unwrap();
     assert_eq!(exit, Exit::Fail);
     assert_eq!(report(&directory)["checks"][0]["status"], "fail");
-    std::fs::remove_dir_all(root).unwrap();
 }
 
 #[test]
@@ -593,7 +588,6 @@ fn a_missing_reference_is_insufficient_and_an_unreachable_server_is_environmenta
     ]);
     assert_eq!(exit, Exit::Environment);
     assert_eq!(report(&directory)["exit"], 4);
-    std::fs::remove_dir_all(root).unwrap();
 }
 
 #[test]
@@ -664,7 +658,6 @@ fn identity_failures_fail_the_run_whatever_its_checks() {
     server.join().unwrap();
     assert_eq!(exit, Exit::Insufficient);
     assert_eq!(value["checks"], json!([]));
-    std::fs::remove_dir_all(root).unwrap();
 }
 
 #[test]
@@ -684,7 +677,6 @@ fn a_health_transport_failure_is_environmental() {
     server.join().unwrap();
     assert_eq!(exit, Exit::Environment);
     assert_eq!(value["failure"]["exit"], 4);
-    std::fs::remove_dir_all(root).unwrap();
 }
 
 #[test]
@@ -727,7 +719,6 @@ fn timeouts_out_of_range_are_usage_errors() {
         Exit::Usage
     );
     assert!(!report.exists());
-    std::fs::remove_dir_all(root).unwrap();
 }
 
 #[test]
@@ -739,7 +730,7 @@ fn a_package_or_an_install_root_names_its_model() {
     let package = root.join("packages/example");
     std::fs::create_dir_all(&package).unwrap();
     std::fs::write(package.join("manifest.json"), r#"{"id": "example.v1"}"#).unwrap();
-    for directory in [&root, &package] {
+    for directory in [&*root, package.as_path()] {
         let directory = directory.to_str().unwrap();
         assert_eq!(run(&["list", "--package", directory]), Exit::Pass);
         assert_eq!(
@@ -755,7 +746,6 @@ fn a_package_or_an_install_root_names_its_model() {
     let manifest = root.join("packages/example/manifest.json");
     std::fs::write(manifest, r#"{"id": "other.v1"}"#).unwrap();
     assert_eq!(run(&["list", "--package", package]), Exit::Usage);
-    std::fs::remove_dir_all(root).unwrap();
 }
 
 #[test]

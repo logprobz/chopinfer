@@ -22,6 +22,9 @@ use runtime_eval::kind::{self, Capture, Kind, KindError};
 use runtime_eval::kinds;
 use serde_json::{Map, Value, json};
 
+mod scratch;
+use scratch::Scratch;
+
 fn root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
@@ -565,18 +568,15 @@ fn fake_server(extra_cached: u64) -> (String, Log) {
 
 /// A root whose model declares the determinism check with `args` and a
 /// frontend whose thinking switch is `thinking`.
-fn declared(name: &str, args: &[&str]) -> Loaded {
+fn declared(name: &str, args: &[&str]) -> (Loaded, Scratch) {
     let frontend = json!({"reasoning": {"thinking_keywords": ["thinking", "think"]}});
-    declared_with(name, args, &frontend).0
+    let (loaded, _, root) = declared_with(name, args, &frontend);
+    (loaded, root)
 }
 
 /// As [`declared`] with `frontend` as the declared frontend, and its path.
-fn declared_with(name: &str, args: &[&str], frontend: &Value) -> (Loaded, PathBuf) {
-    let root = std::env::temp_dir().join(format!(
-        "runtime-eval-determinism-{name}-{}",
-        std::process::id()
-    ));
-    let _ = std::fs::remove_dir_all(&root);
+fn declared_with(name: &str, args: &[&str], frontend: &Value) -> (Loaded, PathBuf, Scratch) {
+    let root = Scratch::new(&format!("runtime-eval-determinism-{name}"));
     let model = root.join("models/example");
     std::fs::create_dir_all(&model).unwrap();
     std::fs::create_dir_all(root.join("fixtures/example")).unwrap();
@@ -609,7 +609,7 @@ fn declared_with(name: &str, args: &[&str], frontend: &Value) -> (Loaded, PathBu
         "receipts": {"env": "RUNTIME_EVAL_TEST_UNSET", "path": "qual/example"}
     });
     std::fs::write(model.join("qual.json"), declaration.to_string()).unwrap();
-    (declaration::load(&model).unwrap(), frontend_path)
+    (declaration::load(&model).unwrap(), frontend_path, root)
 }
 
 /// The determinism capture of the declared check against `url`, within
@@ -771,7 +771,7 @@ fn records_as_python_does(name: &str, image: bool) {
     if image {
         args.extend(["--image", "--image-reason", "the test serves images"]);
     }
-    let loaded = declared(name, &args);
+    let (loaded, _root) = declared(name, &args);
     let (url, log) = fake_server(0);
     let receipt = capture(&loaded, &url, Duration::from_secs(60)).unwrap();
     let (requests, salts) = posts(&log);
@@ -860,7 +860,7 @@ fn the_image_request_carries_the_declared_answer_switch_as_python_does() {
         }
         for (variant, frontend) in [("shipped", &shipped), ("other", &other)] {
             let label = format!("{name} {variant}");
-            let (loaded, frontend_path) =
+            let (loaded, frontend_path, _root) =
                 declared_with(&format!("switch-{name}-{variant}"), &args, frontend);
             let (url, log) = fake_server(0);
             let receipt = capture(&loaded, &url, Duration::from_secs(60)).unwrap();
@@ -915,7 +915,7 @@ fn the_image_request_carries_the_declared_answer_switch_as_python_does() {
 
 #[test]
 fn a_record_refuses_cached_cold_requests_and_missing_arguments() {
-    let loaded = declared("cached", &["--arm", "spec", "--run-id", "run-1"]);
+    let (loaded, _root) = declared("cached", &["--arm", "spec", "--run-id", "run-1"]);
     let (url, _) = fake_server(5);
     assert_eq!(
         capture(&loaded, &url, Duration::from_secs(60)),
@@ -923,7 +923,7 @@ fn a_record_refuses_cached_cold_requests_and_missing_arguments() {
             "capital: a cold request requires reported cached_tokens=0, got 5".into()
         ))
     );
-    let loaded = declared("unnamed", &["--arm", "spec"]);
+    let (loaded, _root) = declared("unnamed", &["--arm", "spec"]);
     assert_eq!(
         capture(&loaded, &url, Duration::from_secs(60)),
         Err(KindError::Invalid("record needs --arm and --run-id".into()))
@@ -932,7 +932,7 @@ fn a_record_refuses_cached_cold_requests_and_missing_arguments() {
 
 #[test]
 fn an_unreachable_server_or_a_spent_budget_is_the_environments() {
-    let loaded = declared("unreachable", &["--arm", "spec", "--run-id", "run-1"]);
+    let (loaded, _root) = declared("unreachable", &["--arm", "spec", "--run-id", "run-1"]);
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let url = format!("http://{}", listener.local_addr().unwrap());
     drop(listener);
@@ -952,7 +952,7 @@ fn an_unreachable_server_or_a_spent_budget_is_the_environments() {
 
 #[test]
 fn eval_capture_writes_the_record_python_writes() {
-    let loaded = declared("command", &[]);
+    let (loaded, _root) = declared("command", &[]);
     let model = loaded.root.join("models/example");
     let (url, log) = fake_server(0);
     let server_log = loaded.root.join("server.log");

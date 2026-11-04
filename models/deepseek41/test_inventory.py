@@ -117,8 +117,9 @@ class DeepseekInventory(ModelRequirements):
 
 def load_tests(loader, tests, pattern):
     from models.deepseek41.tests.test_long_context_qualification import LongContextQualificationTests
+    from models.deepseek41.tests.test_spec_qualification import DsparkEvidenceTests
     from models.deepseek41.tests.test_verify_capacities import VerifyCapacityTests
-    for case in (LongContextQualificationTests, VerifyCapacityTests):
+    for case in (LongContextQualificationTests, DsparkEvidenceTests, VerifyCapacityTests):
         tests.addTests(loader.loadTestsFromTestCase(case))
     return tests
 

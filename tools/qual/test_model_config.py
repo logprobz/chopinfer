@@ -32,12 +32,25 @@ import verify_exact
 # reproduces the spec_continuation pin,
 # a9e05356ce8fb010e310000560e5471d6e3aeefc73683d5b3c64a45c39697b1e.
 # The full cohorts gained kv_offload_prefix_pressure on 2026-11-04; without it
-# the gates hash to the release pins d8280c1a (MiMo) and f84f7167 (Qwen3.8).
+# each gate hashes to its previous pin (PREVIOUS_POLICY_HASHES).
 POLICY_HASHES = {'mimo26': '7e8388962cc9bf0e51677834667d9f90a7d0c49b7b53cb419bc5fdda8173c2a2',
                  'qwen38': 'af105b32a524a8520b3b099d17c63235402b575ecbbf2578456d6e45f958002e'}
+PREVIOUS_POLICY_HASHES = dict(zip(POLICY_HASHES, ('d8280c1ab2804d3da4f40f93dae0cb54e7ec225a1928bebc0550978b8fe27cab',
+                                                  'f84f7167b4f7c41613d224afe55e23dec288788acaa671a50f20befd07596462')))
 # The cohort budgets the hashes were pinned with, before cohorts lost their
 # overall deadline (budget_seconds). Restored only to compare with the pins.
 RETIRED_BUDGETS = {'quick': 900, 'full': 172800}
+
+
+def gate_hash(config, without=()):
+    """The pinned digest of a compiled gate's cohorts and the checks they
+    run, with the checks named in `without` taken out."""
+    profiles = {profile: {"budget_seconds": RETIRED_BUDGETS[profile], **policy,
+                          "checks": [check for check in policy["checks"] if check not in without]}
+                for profile, policy in config["profiles"].items()}
+    selected = {name for profile in profiles.values() for name in profile["checks"]}
+    gate = {"profiles": profiles, "checks": [check for check in config["checks"] if check["id"] in selected]}
+    return hashlib.sha256(json.dumps(policy_without_sources(gate), sort_keys=True).encode()).hexdigest()
 
 
 def policy_without_sources(value):
@@ -113,13 +126,10 @@ class ModelConfigTests(unittest.TestCase):
             self.assertFalse([check['id'] for check in config['checks'] if check.get('informational_reason')])
             # The checks a cohort runs: qual.json also declares checks only its
             # other configurations run.
-            selected = {name for profile in config["profiles"].values() for name in profile["checks"]}
             self.assertFalse([profile for profile in config["profiles"].values() if "budget_seconds" in profile])
-            profiles = {profile: {"budget_seconds": RETIRED_BUDGETS[profile], **policy}
-                        for profile, policy in config["profiles"].items()}
-            gate = {"profiles": profiles, "checks": [check for check in config["checks"] if check["id"] in selected]}
-            actual = hashlib.sha256(json.dumps(policy_without_sources(gate), sort_keys=True).encode()).hexdigest()
-            self.assertEqual(actual, expected)
+            self.assertEqual(gate_hash(config), expected)
+            # Only the prefix-pressure check moved the pin.
+            self.assertEqual(gate_hash(config, {"kv_offload_prefix_pressure"}), PREVIOUS_POLICY_HASHES[name])
             with patch.dict(os.environ, {"CHOPINFER_QUAL_CONFIG": str(path),
                     "CHOPINFER_DATA": "/data/example", "CHOPINFER_MIMO_FIXTURES": "/data/fixtures"}):
                 self.assertEqual(common.resolve_input("receipts"), Path(f"/data/example/qual/{name}"))

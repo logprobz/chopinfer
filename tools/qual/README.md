@@ -410,7 +410,8 @@ so C16 finds the anchors the fill evicted only in RAM. `report --off
 PRESSURE_OFF --tier TIER` judges it against the pressure off arm: every C1
 request bitwise equal, promotions and RAM hits above zero, missed demotions
 recorded, and no pending transfer, swapped request or stall at the end.
-MiMo, Qwen3.8 and GLM declare it as `kv_offload_prefix_pressure`.
+Models whose bundles declare `chop.kv-offload.v1` run it in their full
+cohorts as `kv_offload_prefix_pressure`.
 
 ## KV layout equality
 

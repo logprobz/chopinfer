@@ -494,10 +494,11 @@ class ReportRefusalTests(unittest.TestCase):
             ids = list(range(70))
             exact.write_text(json.dumps({"schema": prefix_exact.prefix_policy()["reference_schema"],
                                          "texts": [text("a", ids, [-1.0] * 69, ids[1:])]}))
-            main = {"family": "mimo26", "server": serving_server(), "run_id": "test",
+            family = prefix_exact.prefix_policy()["family"]
+            main = {"family": family, "server": serving_server(), "run_id": "test",
                     "reference_sha256": hashlib.sha256(exact.read_bytes()).hexdigest(),
                     "block_tokens": 64, "top_logprobs": 5, "positions": [], "prompt_end": [], "detokenized": {}}
-            split = {"family": "mimo26", "server": serving_server(), "rows": [split_row(64, -1.0, -1.0)],
+            split = {"family": family, "server": serving_server(), "rows": [split_row(64, -1.0, -1.0)],
                      "hit_tier": "ram", "ram_hits": []}
             (root / "main.json").write_text(json.dumps(main))
             (root / "split.json").write_text(json.dumps(split))
@@ -1017,7 +1018,9 @@ class RamHitArmTests(unittest.TestCase):
         self.assertEqual(prefix_exact.scored_cached(rows), [0, 64, 0, 0, 64, 0])
         section = prefix_exact.ram_section("split", dict.fromkeys(prefix_exact.RAM_COUNTERS, 0),
                                            dict.fromkeys(prefix_exact.RAM_COUNTERS, 2), prefix_exact.scored_cached(rows))
-        with mock.patch.dict(os.environ, {"CHOPINFER_QUAL_CONFIG": str(declaration.path("qwen38"))}):
+        # A granule of 64 resumes the 64-token split anchor whatever the selected policy.
+        policy = {**prefix_exact.prefix_policy(), "prefill_granule": 64, "exact_prompt_ends": False}
+        with mock.patch.object(prefix_exact, "prefix_policy", return_value=policy):
             self.assertTrue(prefix_exact.judged_split({"rows": rows, "hit_tier": "ram", "ram_hits": [section]},
                                                       64)["passed"])
             failed = prefix_exact.judged_split({"rows": rows, "hit_tier": "ram", "ram_hits": []}, 64)

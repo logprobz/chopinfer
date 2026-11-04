@@ -41,6 +41,7 @@ const REVIEWED_UNSAFE_FILES: &[&str] = &[
     "crates/runtime-bundle-abi/src/loader.rs",
     "crates/runtime-bundle-abi/src/prefill.rs",
     "crates/runtime-bundle-abi/src/device_results/sink.rs",
+    "crates/runtime-bundle-abi/src/device_results/mapped.rs",
     "crates/runtime-bundle-abi/src/trampoline.rs",
     "crates/runtime-bundle-abi/tests/native_loader.rs",
     "crates/runtime-bundle-abi/tests/abi_contract.rs",
@@ -262,6 +263,14 @@ mod tests {
             (
                 "crates/runtime-bundle-abi/src/device_results/sink.rs",
                 include_str!("../../runtime-bundle-abi/src/device_results/sink.rs"),
+            ),
+            (
+                "crates/runtime-bundle-abi/src/device_results/mapped.rs",
+                include_str!("../../runtime-bundle-abi/src/device_results/mapped.rs"),
+            ),
+            (
+                "crates/runtime-bundle-abi/src/loader.rs",
+                include_str!("../../runtime-bundle-abi/src/loader.rs"),
             ),
         ] {
             audit_unsafe_source(Path::new(path), source).unwrap();

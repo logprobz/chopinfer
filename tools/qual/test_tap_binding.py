@@ -1,7 +1,7 @@
 """tap_binding: a tap step counts only when its own metadata names the live
 candidate process (startup nonce) and the fresh request (engine request
 ID) that wrote it, and the candidate's whole serving identity is the
-capture's. Synthetic servers and steps; needs numpy for the step files."""
+capture's. Synthetic servers and steps, written without numpy."""
 
 import contextlib
 import copy
@@ -11,17 +11,13 @@ import json
 import os
 from pathlib import Path
 import shutil
+import struct
 import sys
 import tempfile
 import unittest
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-try:
-    import numpy as np
-    from tools.qual.test_tapdiff import item, write_step
-except ModuleNotFoundError:
-    np = None
 import common  # noqa: E402
 import declaration  # noqa: E402
 import experimental_determinism  # noqa: E402
@@ -34,6 +30,39 @@ SERVING = {"bundle_id": "qwen38.flash.v2", "checkpoint_identity": PIN["checkpoin
            "source_commit": "3" * 40, "version": "0.1.0", "profile": {"name": None, "tensor_parallel_size": 1}}
 # A complete option map at its qualified defaults, as /health reports it.
 OPTIONS = {"model_options": {"prefill_chunk_tokens": 8192, "fast_route": True}, "model_options_qualified": True}
+
+
+def item(request, start, positions, tokens):
+    """A step item of `request`'s rows, as test_tapdiff.item makes one."""
+    return {"request": request, "start": start, "rows": len(positions), "prefix": positions[0],
+            "positions": positions, "tokens": tokens}
+
+
+def write_step(directory, items, tensors, encoder=None, producer=None):
+    """A step directory as test_tapdiff.write_step writes one: `tensors` maps
+    a stored name to its per-rank (first_row, rows, dtype) parts. Rows given
+    as lists of F32 rows are written here, without numpy; numpy arrays (from
+    the tap gates' tests, which need numpy) go to test_tapdiff's writer."""
+    if any(not isinstance(rows, list) for parts in tensors.values() for _, rows, _ in parts):
+        from tools.qual.test_tapdiff import write_step as write_arrays
+        return write_arrays(directory, items, tensors, encoder=encoder, producer=producer)
+    directory.mkdir(parents=True)
+    lines = []
+    for name, parts in tensors.items():
+        for rank, (first, rows, dtype) in enumerate(parts):
+            assert dtype == "f32", dtype
+            (directory / f"{name}.r{rank}.bin").write_bytes(b"".join(struct.pack(f"<{len(row)}f", *row)
+                                                                     for row in rows))
+            line = {"name": name, "rank": rank, "first_row": first, "rows": len(rows), "cols": len(rows[0]),
+                    "dtype": dtype}
+            lines.append(line | {"axis": "encoder"} if name in (encoder or {}) else line)
+    capture = {"schema": "chopinfer.taps.v1", "ranks": 1,
+               "expected": [{"name": line["name"], "rank": line["rank"]} for line in lines]} \
+        | ({"producer": {"startup_nonce": producer}} if producer else {})
+    (directory / "capture.json").write_text(json.dumps(capture))
+    (directory / "items.json").write_text(json.dumps({"items": items, **({"encoder": encoder} if encoder else {})}))
+    (directory / "index.jsonl").write_text("".join(json.dumps(line) + "\n" for line in lines))
+    (directory / "completion.json").write_text(json.dumps({"completion": "full", "reason": None}))
 
 
 def serving(model):
@@ -113,7 +142,6 @@ def serve(fake):
     return patch.object(common, "Client", lambda url, retries=0, timeout=None: fake)
 
 
-@unittest.skipIf(np is None, "needs numpy (set CHOPINFER_REFRUN_PYTHON)")
 class TapBindingTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(dir=os.environ.get("TMPDIR"))
@@ -121,7 +149,7 @@ class TapBindingTests(unittest.TestCase):
         self.root = Path(self.temp.name)
         self.config = declaration.load(declaration.path("qwen38"))
         self.tokens = list(range(100, 110))
-        self.tensors = {"L00.out": np.ones((10, 16), dtype=np.float32)}
+        self.tensors = {"L00.out": [[1.0] * 16 for _ in self.tokens]}
 
     def capture(self, name="cap", experimental_pin=None, **server):
         taps = self.root / f"taps-{name}"

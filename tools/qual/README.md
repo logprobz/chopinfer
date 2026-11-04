@@ -459,13 +459,19 @@ compares two [tap captures](#tap-captures) of the same requests, one from a
 diagnostic-taps server of each layout, bit for bit in logical
 representation: KV-state taps by readback (request, phase, state end),
 layer, plane, position and rank, and text taps by name, position and rank.
-A row one capture lacks is a difference; a native layout's raw stored codes
-and scales are counted, not compared. It refuses captures that differ in
-prompts, steps, serving identity, profile or `model_options` (compared with
-their JSON types), apart from the startup nonce, the package identity and
-the KV layout fields: each `kv_cache_dtype` must be `bf16`, `fp8` or
-`mixed`, `kv_cache_planes` must be present exactly when it is `mixed`, the
-native planes must equal PLANES, and the comparison arm must report none.
+A row one capture lacks is a difference. The native capture's raw stored
+codes and scales are not compared across layouts, but must be present for
+every plane, rank and readback and decode exactly to its logical values
+(window E4M3 with a UE8M0 scale per 32, compressed E2M1 with a UE4M3 scale
+per 16, index E2M1 with a UE8M0 scale per 32, as `kernel_core` decodes
+them); a product that is not exactly a finite BF16 is refused, never
+rounded, and the comparison capture holds no raw taps. It refuses captures
+that differ in prompts, steps, serving identity, profile or `model_options`
+(compared with their JSON types), apart from the startup nonce, the package
+identity and the KV layout fields: each `kv_cache_dtype` must be `bf16`,
+`fp8` or `mixed`, `kv_cache_planes` must be present exactly when it is
+`mixed`, the native planes must equal PLANES, and the comparison arm must
+report none.
 It also refuses a row no position or item names, and a comparison that
 compared no text rows or no KV-state rows of a plane or phase (a restore
 when the captures hold a prefix-hit pair). Experimental captures compare

@@ -6,6 +6,7 @@ import math
 import os
 from pathlib import Path
 import random
+import re
 import struct
 import subprocess
 import sys
@@ -110,8 +111,11 @@ class CompareTests(unittest.TestCase):
 RANKS = 2
 WINDOW = 4
 RATIO = 2
-# Each plane's code, scale format, scale block and width.
-PLANES = {"window": ("e4m3", "ue8m0", 32, 128), "compressed": ("e2m1", "e4m3", 16, 64),
+# Each plane's code, scale format, scale block and width, as kernel_core's
+# trained KV quantizers store them: E4M3 codes with a UE8M0 scale per 32,
+# E2M1 codes with a UE4M3 (unsigned E4M3) scale per 16, and E2M1 codes with
+# a UE8M0 scale per 32.
+PLANES = {"window": ("e4m3", "ue8m0", 32, 128), "compressed": ("e2m1", "ue4m3", 16, 64),
           "index": ("e2m1", "ue8m0", 32, 128)}
 LAYERS = {0: ("window",), 2: ("window", "compressed", "index")}
 TEXT_TAPS = (("L00.attn.out", "bf16", (0,)), ("L00.x.attn.partial", "f32", (0, 1)))
@@ -150,7 +154,7 @@ def bf16(value):
 def stored(layer, plane, position, rank):
     """A native row's stored codes and scales, distinct per layer, plane,
     position and rank: E4M3 codes without NaNs, E2M1 codes two per byte,
-    the even channel in the low nibble, UE8M0 scales 2^-4 .. 2^3 and E4M3
+    the even channel in the low nibble, UE8M0 scales 2^-4 .. 2^3 and UE4M3
     scales 0.5 .. 1.875."""
     code, scale, block, width = PLANES[plane]
     draw = random.Random(f"{layer}/{plane}/{position}/{rank}").randrange
@@ -384,7 +388,9 @@ class TapsTests(unittest.TestCase):
         # Every rank's window, compressed and index rows of every readback.
         kv_rows = sum(RANKS * len(axis_rows(plane, end)) for _, _, end in readbacks()
                       for held in LAYERS.values() for plane in held)
-        self.assertEqual(result["compared"], {"requests": 2, "steps": 17, "kv_rows": kv_rows, "text_rows": 3 * 11})
+        # Every native row's codes and scales decode to its logical values.
+        self.assertEqual(result["compared"], {"requests": 2, "steps": 17, "kv_rows": kv_rows, "text_rows": 3 * 11,
+                                              "native_rows_decoded": kv_rows})
         # Only the native layout writes its raw stored bytes, which are its own.
         self.assertEqual(result["raw_rows"], {"native": 2 * kv_rows, "comparison": 0})
         self.assertNotIn("qualified", result)
@@ -435,12 +441,55 @@ class TapsTests(unittest.TestCase):
                 lacked = "native" if layout == "native" else "comparison"
                 self.assertEqual((first["tap"], first["rank"], first["difference"]),
                                  (*omitted, f"missing from the {lacked} capture"))
-        # The native layout's raw stored bytes are not compared: a capture
-        # without them still compares equal.
-        bare = self.capture("native", "bare", omit=[(f"L{layer:02d}.x.kv.{plane}.{part}", rank)
-                                                    for layer, held in LAYERS.items() for plane in held
-                                                    for part in ("codes", "scales") for rank in range(RANKS)])
-        self.assertTrue(self.compare(native=bare)["passed"])
+
+    def test_native_codes_and_scales_must_decode_exactly_to_its_logical_values(self):
+        codes, scales = "L00.x.kv.window.codes", "L00.x.kv.window.scales"
+
+        def rewrite(tap, value=None):
+            """Sets (or flips the lowest bit of) the first stored byte of
+            `tap`'s rank 0 in the primer's first window readback."""
+            def change(step):
+                path = step / f"{tap}.r0.bin"
+                data = bytearray(path.read_bytes())
+                data[0] = data[0] ^ 1 if value is None else value
+                path.write_bytes(bytes(data))
+            return change
+        where = r"L00\.x\.kv\.window rank 0 \(prefill readback ending at 4, request primer position 0\)"
+        for name, changes, error in (
+                ("changed code", [rewrite(codes)],
+                 f"the native capture's {where} holds values its codes and scales do not decode to"),
+                # E4M3 448 times 2^127 overflows BF16.
+                ("overflow", [rewrite(codes, 0x7E), rewrite(scales, 254)],
+                 rf"insufficient evidence: the native capture's {where} decodes channel 0 to 7\.6\d*e\+40, not an "
+                 "exact finite BF16"),
+                # E4M3 2^-9 times 2^-127 lies between BF16 subnormals.
+                ("subnormal", [rewrite(codes, 0x01), rewrite(scales, 0)],
+                 rf"insufficient evidence: the native capture's {where} decodes channel 0 to 1\.14\d*e-41, not an "
+                 "exact finite BF16")):
+            with self.subTest(name):
+                native = self.capture("native", f"native-{name}")
+                for change in changes:
+                    change(native / tap_binding.STEPS / "step0001")
+                result = self.compare(native=reseal(native))
+                self.assertFalse(result["passed"])
+                self.assertTrue(any(re.fullmatch(error, message) for message in result["errors"]), result["errors"])
+                # Refused, not a difference between the layouts.
+                self.assertTrue(result["equal"])
+        # The native capture must hold both raw taps of every plane it
+        # writes, and the comparison capture none.
+        raw = [(f"L{layer:02d}.x.kv.{plane}.{part}", rank) for layer, held in LAYERS.items() for plane in held
+               for part in ("codes", "scales") for rank in range(RANKS)]
+        for name, omitted in (("bare", raw), ("no scales", [tap for tap in raw if tap[0].endswith(".scales")])):
+            with self.subTest(name), self.assertRaisesRegex(
+                    tap_binding.Unbound, r"step0001: the native capture holds L00\.x\.kv\.window rank 0 without "
+                                         "its stored codes and scales"):
+                self.compare(native=self.capture("native", name, omit=omitted))
+        relabeled = self.capture("native", "relabeled")
+        edit_manifest(relabeled, lambda m: [m["server"]["profile"].update(kv_cache_dtype="bf16"),
+                                            m["server"]["profile"].pop("kv_cache_planes")])
+        with self.assertRaisesRegex(tap_binding.Unbound, r"step0001: the comparison capture holds raw stored tap "
+                                                         r"L00\.x\.kv\.window\.codes rank 0"):
+            self.compare(comparison=relabeled)
 
     def test_rows_kept_from_a_position_compare_at_their_positions_and_steps_that_kept_none_pair(self):
         # From token 4 on: the primer's first chunk keeps no row and writes

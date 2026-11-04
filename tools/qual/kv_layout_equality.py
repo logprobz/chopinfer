@@ -40,10 +40,17 @@ and the result is never qualification.
 Within each pair of steps every tap row is compared bit for bit, in logical
 representation. A KV-state tap (`L<nn>.x.kv.<plane>` in a step whose
 items.json has `kv`) is keyed by readback (request, phase and state end),
-layer, plane, position and rank: its logical BF16 values are compared, while
-a layout's raw stored bytes (`<tap>.codes`, `<tap>.scales`) are its own
-representation, counted and never compared across layouts. A text tap is
-keyed by name, request, position (or encoder row) and rank. A row one
+layer, plane, position and rank: its logical BF16 values are compared. A
+layout's raw stored bytes (`<tap>.codes`, `<tap>.scales`) are its own
+representation and are not compared across layouts, but the native capture
+must hold both for every plane, rank and readback it writes, and they must
+decode exactly to its logical values in the formats NATIVE_KV_FORMATS names
+(window E4M3 codes with a UE8M0 scale per 32, compressed E2M1 codes with a
+UE4M3 scale per 16, index E2M1 codes with a UE8M0 scale per 32, decoded as
+kernel_core::codec does). A product that is not exactly a finite BF16 is
+refused as insufficient evidence, never rounded, and the comparison capture
+must hold no raw taps. A text tap is keyed by name, request, position (or
+encoder row) and rank. A row one
 capture holds and the other lacks is a difference. The result names the
 first difference in the native capture's order (requests, steps, taps in
 program order, positions), lists up to SHOWN differences and counts the
@@ -59,10 +66,14 @@ no row, or a verify step) compares as empty.
 """
 
 import argparse
+import contextlib
 import copy
+import functools
 import json
+import math
 from pathlib import Path
 import re
+import struct
 import sys
 
 from common import receipt
@@ -107,6 +118,14 @@ BLOCK_BYTES = 16 << 20
 KV_PLANES = ("window", "compressed", "index")
 KV_PHASES = ("prefill", "decode")
 RESTORE_PHASE = "restore"
+# Each native KV-state plane's stored element code, scale format and values
+# per scale, as kernel_core's trained KV quantizers store them
+# (precision::quantizer::BlockQuantization E4M3_CEIL32, E2M1E4M3Scale16 and
+# E2M1Ceil32): E4M3 codes with a UE8M0 scale per 32, E2M1 codes (two a
+# byte, the even channel in the low nibble) with a UE4M3 (unsigned E4M3)
+# scale per 16, and E2M1 codes with a UE8M0 scale per 32.
+NATIVE_KV_FORMATS = {"window": ["e4m3", "ue8m0", 32], "compressed": ["e2m1", "ue4m3", 16],
+                     "index": ["e2m1", "ue8m0", 32]}
 # The completion reason of a step that wrote no tensor (runtime_bundle_sdk
 # taps): with CHOPINFER_TAPS_FROM past its rows, or no tap declared.
 NOTHING_SELECTED = "no selected live tensors"
@@ -368,6 +387,135 @@ class Step:
         return key
 
 
+def decoded(fmt, code):
+    """The exact value of `code` in `fmt` (e4m3, e2m1, ue4m3 or ue8m0), as
+    kernel_core::codec decodes it: NaN for E4M3's all-ones magnitude, for
+    UE4M3 codes from 0x80 and for UE8M0 0xFF."""
+    if fmt == "ue8m0":
+        return math.nan if code == 0xFF else math.ldexp(1.0, code - 127)
+    if fmt == "ue4m3" and code & 0x80:
+        return math.nan
+    if fmt in ("e4m3", "ue4m3"):
+        exponent, mantissa, sign = (code >> 3) & 0xF, code & 7, code & 0x80
+        if exponent == 15 and mantissa == 7:
+            return math.nan
+        value = math.ldexp(mantissa, -9) if exponent == 0 else math.ldexp(8 + mantissa, exponent - 10)
+    elif fmt == "e2m1":
+        exponent, mantissa, sign = (code >> 1) & 3, code & 1, code & 8
+        value = math.ldexp(mantissa, -1) if exponent == 0 else math.ldexp(2 + mantissa, exponent - 2)
+    else:
+        raise ValueError(f"no decoder for {fmt}")
+    return -value if sign else value
+
+
+def bf16_bits(value):
+    """The BF16 bits of `value` when it is exactly a finite BF16, else None:
+    nothing is rounded."""
+    if not math.isfinite(value):
+        return None
+    try:
+        packed = struct.pack("<f", value)
+    except OverflowError:
+        return None
+    bits = struct.unpack("<I", packed)[0]
+    return None if struct.unpack("<f", packed)[0] != value or bits & 0xFFFF else bits >> 16
+
+
+@functools.lru_cache(maxsize=None)
+def products(element, scale_format, scale):
+    """For one scale code, per stored code byte: translate tables of each
+    little-endian byte of its channels' BF16 products (one channel a byte,
+    or two for E2M1, the even channel in the low nibble), and a table of 1
+    for the bytes whose every product is exactly a finite BF16."""
+    factor, pairs = decoded(scale_format, scale), element == "e2m1"
+    tables, valid = [bytearray(256) for _ in range(4 if pairs else 2)], bytearray(256)
+    for byte in range(256):
+        bits = [bf16_bits(decoded(element, code) * factor) for code in ((byte & 0xF, byte >> 4) if pairs else (byte,))]
+        if None in bits:
+            continue
+        valid[byte] = 1
+        for at, value in enumerate(bits):
+            tables[2 * at][byte], tables[2 * at + 1][byte] = value & 0xFF, value >> 8
+    return [bytes(table) for table in tables], bytes(valid)
+
+
+def native_row(plane, codes, scales, values):
+    """None when a native row's stored codes and scales decode exactly to
+    its logical BF16 `values`; ("inexact", channel, product) for the first
+    channel whose product is not exactly a finite BF16; ("differs",) when
+    the products are not `values`."""
+    element, scale_format, block = NATIVE_KV_FORMATS[plane]
+    per_byte = 2 if element == "e2m1" else 1
+    span = block // per_byte
+    for at, scale in enumerate(scales):
+        tables, valid = products(element, scale_format, scale)
+        chunk = codes[at * span:(at + 1) * span]
+        flags = chunk.translate(valid)
+        if 0 in flags:
+            byte = flags.index(0)
+            for part, code in enumerate((chunk[byte] & 0xF, chunk[byte] >> 4) if per_byte == 2 else (chunk[byte],)):
+                product = decoded(element, code) * decoded(scale_format, scale)
+                if bf16_bits(product) is None:
+                    return "inexact", at * block + byte * per_byte + part, product
+        expected = values[at * block * 2:(at + 1) * block * 2]
+        if any(chunk.translate(table) != expected[part::len(tables)] for part, table in enumerate(tables)):
+            return ("differs",)
+    return None
+
+
+def native_storage(step):
+    """(rows decoded, errors) of a KV step of the native capture. Each plane
+    and rank must hold its logical values, codes and scales over the same
+    rows, in the widths NATIVE_KV_FORMATS gives, or the capture is refused;
+    an error names a row whose stored bytes do not decode exactly to its
+    logical values: products differ, or one is not exactly a finite BF16
+    (insufficient evidence, never rounded)."""
+    groups = {}
+    for entry in step.index:
+        layer, plane, part = step.kv_tap(entry["name"])
+        groups.setdefault((layer, plane, entry["rank"]), {})[part] = entry
+    rows, errors = 0, []
+    for (layer, plane, rank), parts in groups.items():
+        values = parts.get(None)
+        if values is None or set(parts) != {None, "codes", "scales"}:
+            name = values["name"] if values else next(iter(parts.values()))["name"]
+            raise tap_binding.Unbound(f"{step.dir}: the native capture holds {name} rank {rank} without its "
+                                      + ("stored codes and scales" if values else "logical values"))
+        if plane not in NATIVE_KV_FORMATS:
+            raise tap_binding.Unbound(f"{step.dir}: no native format for plane {plane} (NATIVE_KV_FORMATS)")
+        element, _, block = NATIVE_KV_FORMATS[plane]
+        width = values["cols"]
+        widths = {"codes": width // (2 if element == "e2m1" else 1), "scales": width // block}
+        for part, entry in parts.items():
+            if part is not None and ((entry["first_row"], entry["rows"]) != (values["first_row"], values["rows"])
+                                     or entry["dtype"] != "u32" or entry["cols"] * 4 != widths[part]
+                                     or width % block):
+                raise tap_binding.Unbound(f"{step.dir}: the native capture's {entry['name']} rank {rank} does not "
+                                          f"hold {widths[part]} stored bytes of each of {values['name']}'s rows")
+        labels = step.labels(values)
+        with contextlib.ExitStack() as files:
+            streams = {}
+            for part, entry in parts.items():
+                stream, size = files.enter_context(wire.opened(step.dir / f"{entry['name']}.r{rank}.bin"))
+                row_bytes = entry["cols"] * TAP_BYTES[entry["dtype"]]
+                if size != entry["rows"] * row_bytes:
+                    raise tap_binding.Unbound(f"{step.dir}: {entry['name']} rank {rank} does not hold the rows its "
+                                              "index declares")
+                streams[part] = stream, row_bytes
+            for label in labels:
+                read = {part: stream.read(row_bytes) for part, (stream, row_bytes) in streams.items()}
+                found = native_row(plane, read["codes"], read["scales"], read[None])
+                if found and len(errors) < SHOWN:
+                    where = (f"the native capture's {values['name']} rank {rank} ({step.kv.get('phase')} readback "
+                             f"ending at {step.kv.get('end')}, request {step.request} position {label})")
+                    errors.append(f"{where} holds values its codes and scales do not decode to"
+                                  if found[0] == "differs" else
+                                  f"insufficient evidence: {where} decodes channel {found[1]} to {found[2]!r}, not "
+                                  "an exact finite BF16")
+            rows += len(labels)
+    return rows, errors
+
+
 def differing_rows(left, right, row_bytes, rows):
     """The rows whose bytes differ between two tap files of `rows` rows."""
     found, block = [], max(1, BLOCK_BYTES // row_bytes) * row_bytes
@@ -420,12 +568,21 @@ def compare_steps(native_dir, native, comparison_dir, comparison):
         return errors, None
     for side in (0, 1):
         unique_rows(pair[side] for pair in pairs)
-    shown, taps, raw = [], {}, {side: 0 for side in SIDES}
-    compared = {"requests": len(native["requests"]), "steps": len(pairs), "kv_rows": 0, "text_rows": 0}
+    shown, taps, raw, storage = [], {}, {side: 0 for side in SIDES}, []
+    compared = {"requests": len(native["requests"]), "steps": len(pairs), "kv_rows": 0, "text_rows": 0,
+                "native_rows_decoded": 0}
     readbacks, planes, phases = {}, dict.fromkeys(KV_PLANES, 0), {}
     for pair in pairs:
         if pair[0].kv is not None:
             readbacks.setdefault(pair[0].kv.get("phase"), set()).add((pair[0].request, pair[0].kv.get("end")))
+            decoded_rows, errors_of = native_storage(pair[0])
+            compared["native_rows_decoded"] += decoded_rows
+            storage += errors_of
+        if pair[1].kv is not None:
+            for entry in pair[1].index:
+                if pair[1].kv_tap(entry["name"])[2] is not None:
+                    raise tap_binding.Unbound(f"{pair[1].dir}: the comparison capture holds raw stored tap "
+                                              f"{entry['name']} rank {entry['rank']}")
         entries = [{(entry["name"], entry["rank"]): entry for entry in step.index} for step in pair]
         for key in [*entries[0], *(key for key in entries[1] if key not in entries[0])]:
             found = [side.get(key) for side in entries]
@@ -472,7 +629,7 @@ def compare_steps(native_dir, native, comparison_dir, comparison):
     return [], {"equal": total == 0, "first_difference": shown[0] if shown else None, "differences": shown,
                 "differing_rows": total, "differing_taps": [[tap, rows] for tap, rows in taps.items()],
                 "compared": compared, "kv_readbacks": {phase: len(held) for phase, held in readbacks.items()},
-                "kv_planes": planes, "kv_phases": phases, "raw_rows": raw,
+                "kv_planes": planes, "kv_phases": phases, "raw_rows": raw, "storage_errors": storage,
                 "insufficient": [f"insufficient evidence: no {what} were compared" for what in insufficient]}
 
 
@@ -503,7 +660,7 @@ def compare_taps(native, comparison, native_planes, experimental=False):
             result |= compared
             if not compared["equal"]:
                 errors.append(describe_taps(compared))
-            errors += compared["insufficient"]
+            errors += compared["storage_errors"] + compared["insufficient"]
     return dict(result, passed=not errors, errors=errors)
 
 

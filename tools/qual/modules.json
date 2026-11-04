@@ -244,6 +244,7 @@
    "KV_TAP": "str",
    "LAYOUT_FIELDS": "list",
    "LAYOUT_PROFILE": "list",
+   "NATIVE_KV_FORMATS": "dict",
    "NOTHING_SELECTED": "str",
    "PROCESS_STEP_FIELDS": "list",
    "REQUEST_FIELDS": "list",

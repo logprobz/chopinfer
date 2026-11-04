@@ -197,12 +197,40 @@ class Offload(unittest.TestCase):
         self.assertEqual(config["kv_offload"], FACTS["kv_offload"])
         self.assertNotIn("preview", config)
 
-    def test_host_prefix_arm_is_a_usage_error(self):
-        result = subprocess.run([str(kvo.kinds.eval_binary()), "serve", "--bundle", "unused",
-                                 "--kv-offload-prefix", "on"], capture_output=True, text=True,
-                                timeout=10, check=False)
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn("requires the deferred host prefix cache", result.stderr)
+    def test_the_host_prefix_arm_meets_the_tier_prerequisites_serve_checks(self):
+        def serve(words):
+            with tempfile.TemporaryDirectory() as directory:
+                return subprocess.run([str(kvo.kinds.eval_binary()), "serve", "--bundle",
+                                       str(Path(directory) / "missing"), *words],
+                                      capture_output=True, text=True, timeout=10, check=False)
+        tier = kvo.arms(FACTS, {"page_tokens": 64})["kv-offload-prefix-pressure"]
+        def replaced(flag, value):
+            words = list(tier)
+            words[words.index(flag) + 1] = value
+            return words
+        for words, refusal in (
+                (["--kv-offload-prefix", "on"], "--kv-offload-prefix on requires positive --kv-offload-gib"),
+                (replaced("--kv-offload-gib", "0"), "--kv-offload-prefix on requires positive --kv-offload-gib"),
+                (replaced("--prefix-cache", "off"), "--kv-offload-prefix on requires --prefix-cache on"),
+                (replaced("--admission", "reserved"), "--kv-offload-gib requires --admission optimistic"),
+                ([*replaced("--kv-offload-prefix", "off"), "--debug-prefix-ram"],
+                 "--debug-prefix-ram requires --kv-offload-prefix on")):
+            with self.subTest(words=words):
+                result = serve(words)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(f"chopinfer: {refusal}\n", result.stderr)
+                self.assertNotIn("resolved serve: ", result.stderr)
+        # The arm's own words, and with them the forced mode, pass every
+        # check with the tier on: serve stops only at the missing bundle.
+        for words in (tier, [*tier, "--debug-prefix-ram"]):
+            with self.subTest(words=words):
+                result = serve(words)
+                self.assertNotEqual(result.returncode, 0)
+                resolved = [line for line in result.stderr.splitlines() if line.startswith("resolved serve: ")]
+                self.assertEqual(len(resolved), 1, result.stderr)
+                self.assertIn("kv_offload_prefix: true", resolved[0])
+                self.assertIn(f"debug_prefix_ram: {str('--debug-prefix-ram' in words).lower()}", resolved[0])
+                self.assertIn("startup/serving failure: No such file or directory", result.stderr)
 
     def test_arms_derive_stripes_for_each_parallel_size(self):
         for parallel, pages in ((1, 512), (2, 256), (4, 128)):

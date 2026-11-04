@@ -592,12 +592,14 @@ fn the_step_budget_defers_promotions_and_a_large_one_waits_for_demotions() {
     assert_eq!(h.s.deferred_promotion_pages(), ANCHOR_PAGES);
     // A second admission pass in the same step finds the budget spent.
     assert!(h.admit().ram_waits().is_empty());
+    // The deferral lasts until admission starts the promotion.
     h.step();
-    assert_eq!(h.s.deferred_promotion_pages(), 0);
+    assert_eq!(h.s.deferred_promotion_pages(), ANCHOR_PAGES);
     let report = h.admit();
     assert_eq!(report.ram_waits().len(), 1);
     assert_eq!(report.ram_waits()[0].1.key(), keys[1]);
     assert_eq!(h.s.reserved_pages(), 2 * ANCHOR_PAGES);
+    assert_eq!(h.s.deferred_promotion_pages(), 0);
 
     // A promotion larger than the budget starts alone, and only with no
     // demotion outstanding.
@@ -618,6 +620,48 @@ fn the_step_budget_defers_promotions_and_a_large_one_waits_for_demotions() {
     assert_eq!(h.admit().ram_waits().len(), 1);
     assert_eq!(h.s.reserved_pages(), ANCHOR_PAGES);
 }
+#[test]
+fn a_deferred_promotion_stays_deferred_until_admission_reaches_it_again() {
+    for cancel in [false, true] {
+        // A promotion larger than the budget waits for no demotion to be
+        // outstanding, and four live requests then take every sequence
+        // slot, so admission stops before the waiter.
+        let mut h = Harness::new(32, tier(false, ANCHOR_PAGES - 2));
+        host_only(&mut h, 1);
+        let other = prompt(2, 9);
+        h.run(2, &other);
+        h.evict_oldest(3);
+        let demotion = h.s.begin_demotion(&mut h.tier, key(&other, 9)).unwrap();
+        h.check();
+        h.submit(4, &extended(1, 17, 7, 0));
+        for id in 5..9 {
+            h.submit(id, &prompt(id as u32, 4));
+        }
+        let report = h.admit();
+        assert!(report.ram_waits().is_empty());
+        assert_eq!(report.admitted().len(), 4);
+        assert_eq!(h.s.deferred_promotion_pages(), ANCHOR_PAGES);
+        // Later steps keep the deferral, the demotion's end included.
+        h.step();
+        assert!(h.admit().admitted().is_empty());
+        assert_eq!(h.s.deferred_promotion_pages(), ANCHOR_PAGES);
+        h.complete(demotion, KvTransferStatus::Complete);
+        h.step();
+        assert_eq!(h.s.deferred_promotion_pages(), ANCHOR_PAGES);
+        if cancel {
+            h.s.cancel(RequestId::new(4)).unwrap();
+            h.check();
+            assert_eq!(h.s.deferred_promotion_pages(), 0);
+            continue;
+        }
+        // Once a slot frees, admission reaches the waiter again and starts
+        // its promotion.
+        h.finish(true);
+        assert_eq!(h.s.pending_promotions().len(), 1);
+        assert_eq!(h.s.deferred_promotion_pages(), 0);
+    }
+}
+
 /// A short anchor of prompt 1 on the GPU, its 17-token anchor in RAM, and a
 /// 44-token anchor under demotion filling the pool: its lease leaves four
 /// evictable pages, while a promotion of the 17-token entry needs six.

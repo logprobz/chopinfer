@@ -122,6 +122,11 @@ pub(super) struct RequestRam {
     /// It waited this step for an outstanding demotion's cancel after its
     /// promotion found the pool exhausted.
     pub(super) exhausted: bool,
+    /// The host entry and pages of the promotion the step's budget or an
+    /// outstanding demotion deferred, until admission chooses for it again.
+    /// Admission stops before it while every sequence slot is taken, so the
+    /// deferral outlives the step.
+    pub(super) deferred: Option<(PrefixCacheKeyV1, usize)>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -143,8 +148,6 @@ pub(super) struct PrefixRamState {
     hits: Vec<PrefixRamHitV1>,
     /// Promotion pages started since the step began.
     budget_used: usize,
-    /// The largest promotion this step deferred for the budget.
-    deferred_pages: usize,
     /// Forced mode: published promoted anchors the tier still owns, with
     /// their anchor lifetime. Each goes after the first restore from it
     /// completes, or once no request can restore it.
@@ -258,7 +261,6 @@ impl Scheduler {
     pub fn begin_prefix_ram_step(&mut self) -> Result<Vec<PrefixRamSettledV1>, ScheduleError> {
         self.ensure_no_pending()?;
         self.ram.budget_used = 0;
-        self.ram.deferred_pages = 0;
         if self.requests.iter().any(|record| record.ram.exhausted) {
             for record in &mut self.requests {
                 record.ram.exhausted = false;
@@ -449,13 +451,22 @@ impl Scheduler {
             .demotion_headroom(key, f_pages.min(self.step_allocation_bound()))
     }
 
-    /// The largest promotion this step deferred because the step's budget
-    /// was spent or a demotion was outstanding: the largest pending
-    /// promotion a measured F adds. One larger than the budget waits for no
-    /// demotion to be outstanding.
+    /// The largest promotion deferred because a step's budget was spent or
+    /// a demotion was outstanding, of a request still queued whose host
+    /// entry remains: the largest pending promotion a measured F adds. One
+    /// larger than the budget waits for no demotion to be outstanding. A
+    /// deferral lasts until admission chooses for the request again, which
+    /// it does not while every sequence slot is taken.
     #[must_use]
-    pub const fn deferred_promotion_pages(&self) -> usize {
-        self.ram.deferred_pages
+    pub fn deferred_promotion_pages(&self) -> usize {
+        self.requests
+            .iter()
+            .filter(|record| record.state == RequestState::Queued)
+            .filter_map(|record| record.ram.deferred)
+            .filter(|(key, _)| self.kv.host_entry(*key).is_some())
+            .map(|(_, pages)| pages)
+            .max()
+            .unwrap_or(0)
     }
 
     /// Drops the host entries a resume, a recapture or a new resident
@@ -512,6 +523,7 @@ impl Scheduler {
         let Some(config) = self.prefix_ram_active() else {
             return Ok(RamChoice::Gpu);
         };
+        self.requests[index].ram.deferred = None;
         // Admission's own fallbacks hold for one pass; a settled
         // promotion's reason stays until the request admits.
         let fallback = &mut self.requests[index].ram.fallback;
@@ -596,7 +608,7 @@ impl Scheduler {
         if self.ram.budget_used + pages > config.promotion_budget_pages
             && (self.ram.budget_used > 0 || !self.ram.demotions.is_empty())
         {
-            self.ram.deferred_pages = self.ram.deferred_pages.max(pages);
+            self.requests[index].ram.deferred = Some((key, pages));
             return Ok(RamChoice::Wait(None));
         }
         let id = match self.kv.create_pending_anchor(key, state_pages) {

@@ -284,15 +284,20 @@ python3 tools/qual/tap_binding.py capture --url URL --server-log LOG \
 
 It sends each request once under a fresh `X-Client-Request-Id` and cache
 salt and copies only the new steps that name the live startup nonce and that
-request (`OUT/engine`, `OUT/tap-capture.json`). The manifest also keeps the
-server's complete `model_options` and `model_options_qualified`, which must
-be the qualified defaults. A diagnostic option override is captured only
-with `--experimental` and a sealed pin, as `determinism.py` takes one; such a
-capture records the pin and `qualified: false`, and no gate admits it. The
-gate then admits the capture only if the candidate at `--url` has the
-capture's `/health` serving identity, startup nonce included, and every step
-holds its recorded digests, so run the tap checks while that server still
-serves.
+request (`OUT/engine`, `OUT/tap-capture.json`). `--prefix-hit
+NAME=PRIMER=PATH=BODY.json` sends the continuation of an earlier
+`--request PRIMER` under the primer's salt (serve with prefix caching on
+for it): the primer must report 0 cached tokens and the continuation
+`0 < cached_tokens <=` the primer's prompt tokens, as determinism's
+prefix-hit rule requires, and both bind their steps to their own requests.
+The manifest also keeps the server's complete `model_options` and
+`model_options_qualified`, which must be the qualified defaults. A
+diagnostic option override is captured only with `--experimental` and a
+sealed pin, as `determinism.py` takes one; such a capture records the pin
+and `qualified: false`, and no gate admits it. The gate then admits the
+capture only if the candidate at `--url` has the capture's `/health` serving
+identity, startup nonce included, and every step holds its recorded digests,
+so run the tap checks while that server still serves.
 
 ### Text layers
 

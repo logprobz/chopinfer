@@ -56,15 +56,32 @@ class FakeServer:
     its process and request, and traces its X-Client-Request-Id to N in `log`.
     `during(taps)` runs inside the request, as another writer could. With
     `steps_of(engine, body)`, a request writes the (items, tensors, encoder)
-    steps it returns instead."""
+    steps it returns instead. Each request reports its token prompt's
+    length (else len(tokens)) as its prompt tokens and `cached` cached
+    prompt tokens (the next of a list per request), or with a `prefix_cache`
+    granule G, the whole G-token granules its token prompt shares with an
+    earlier prompt under its cache salt, as a server's prefix cache would."""
 
     def __init__(self, taps, log, tensors, tokens, serving=SERVING, cached=0, steps=1, first_request=1,
-                 during=None, steps_of=None):
+                 during=None, steps_of=None, prefix_cache=None):
         self.url, self.taps, self.log, self.tensors, self.tokens = URL, taps, log, tensors, tokens
         self.serving, self.cached, self.steps, self.next, self.during = serving, cached, steps, first_request, during
         self.steps_of = steps_of or (lambda engine, body: [
             ([item(engine, 0, list(range(len(self.tokens))), self.tokens)], self.tensors, None)] * self.steps)
-        self.responders = set()
+        self.responders, self.prefix_cache, self.prompts, self.bodies = set(), prefix_cache, {}, []
+
+    def usage(self, body):
+        """(prompt tokens, cached prompt tokens) the request reports."""
+        prompt = body["prompt"] if isinstance(body.get("prompt"), list) else self.tokens
+        if self.prefix_cache is None:
+            return len(prompt), self.cached.pop(0) if isinstance(self.cached, list) else self.cached
+        shared = 0
+        for earlier in self.prompts.get(body["cache_salt"], []):
+            common_prefix = next((at for at, (a, b) in enumerate(zip(prompt, earlier)) if a != b),
+                                 min(len(prompt), len(earlier)))
+            shared = max(shared, min(common_prefix, len(prompt) - 1) // self.prefix_cache * self.prefix_cache)
+        self.prompts.setdefault(body["cache_salt"], []).append(prompt)
+        return len(prompt), shared
 
     def identity(self, model=None):
         self.responders.add((self.serving["checkpoint_identity"], self.serving["startup_nonce"]))
@@ -73,6 +90,8 @@ class FakeServer:
     def request(self, path, body, headers=None):
         assert body["cache_salt"] and headers["X-Client-Request-Id"]
         self.responders.add((self.serving["checkpoint_identity"], self.serving["startup_nonce"]))
+        self.bodies.append(body)
+        prompt_tokens, cached = self.usage(body)
         engine, self.next = self.next, self.next + 1
         for items, tensors, encoder in self.steps_of(engine, body):
             write_step(self.taps / f"step{len(list(self.taps.glob('step*'))):04d}", items,
@@ -85,8 +104,8 @@ class FakeServer:
         with self.log.open("a") as log:
             log.write(json.dumps({"schema": tap_binding.TRACE, "request_id": headers["X-Client-Request-Id"],
                                   "engine_request_id": engine}) + "\n")
-        return {"id": f"cmpl_{engine}", "usage": {"prompt_tokens": len(self.tokens),
-                                                   "prompt_tokens_details": {"cached_tokens": self.cached}}}, 0.1
+        return {"id": f"cmpl_{engine}", "usage": {"prompt_tokens": prompt_tokens,
+                                                   "prompt_tokens_details": {"cached_tokens": cached}}}, 0.1
 
 
 def serve(fake):
@@ -113,6 +132,22 @@ class TapBindingTests(unittest.TestCase):
         with serve(fake):
             return tap_binding.capture(URL, log, taps, [("p", "/v1/completions", {"prompt": self.tokens})],
                                        self.root / name, self.config, **pinned)
+
+    def pair(self, name, requests, **server):
+        """(fake server, manifest) of a capture of `requests`, each (name,
+        prompt tokens, primer or None)."""
+        taps = self.root / f"taps-{name}"
+        taps.mkdir()
+        log = server_log(self.root / f"{name}.log", server.get("serving", SERVING))
+        fake = FakeServer(taps, log, self.tensors, self.tokens, **server)
+        sends = [(request, "/v1/completions", {"prompt": prompt}, *([primer] if primer else []))
+                 for request, prompt, primer in requests]
+        with serve(fake):
+            return fake, tap_binding.capture(URL, log, taps, sends, self.root / name, self.config)
+
+    def pairs(self):
+        """A primer of 8 tokens, a cold request and the primer's continuation."""
+        return [("primer", self.tokens[:8], None), ("cold", self.tokens, None), ("hit", self.tokens, "primer")]
 
     def sealed(self, options, serving=SERVING):
         """A sealed experimental pin of `options` for the process `serving`
@@ -264,6 +299,80 @@ class TapBindingTests(unittest.TestCase):
                 self.assertEqual(tap_binding.main(), 3)
             self.assertIn("require --experimental", error.getvalue())
             self.assertEqual(passed, [])
+
+    def test_a_prefix_hit_pair_shares_one_fresh_salt_and_binds_each_step_to_its_own_request(self):
+        # The fake caches by salt, so the continuation hits only under its
+        # primer's salt.
+        fake, manifest = self.pair("pair", self.pairs(), prefix_cache=4)
+        records = manifest["requests"]
+        self.assertEqual([(r["name"], r["primer"], r["prompt_tokens"], r["cached_tokens"]) for r in records],
+                         [("primer", None, 8, 0), ("cold", None, 10, 0), ("hit", "primer", 10, 8)])
+        self.assertEqual([body["cache_salt"] for body in fake.bodies], [r["cache_salt"] for r in records])
+        self.assertEqual(records[2]["cache_salt"], records[0]["cache_salt"])
+        self.assertNotEqual(records[1]["cache_salt"], records[0]["cache_salt"])
+        self.assertEqual([(r["engine_request_id"], r["steps"]) for r in records],
+                         [(1, ["step0000"]), (2, ["step0001"]), (3, ["step0002"])])
+        tap_binding.check_requests(records)
+        self.assertEqual(self.admit(self.root / "pair")["requests"], records)
+
+    def test_a_pair_without_a_hit_within_its_primer_or_a_cold_request_with_a_hit_is_refused(self):
+        for name, cached, error in (
+                ("miss", [0, 0, 0], r"hit: a prefix hit requires reported 0 < cached_tokens <= 8 "
+                                    r"\(the prompt tokens of its primer primer\), got 0"),
+                ("beyond", [0, 0, 9], "got 9"),
+                ("warm-primer", [4, 0, 8], "primer: the server reused 4 cached prompt tokens"),
+                ("warm-cold", [0, 4, 8], "cold: the server reused 4 cached prompt tokens")):
+            with self.subTest(name), self.assertRaisesRegex(tap_binding.Unbound, error):
+                self.pair(name, self.pairs(), cached=cached)
+
+    def test_a_continuation_reuses_its_primers_salt_and_names_one_earlier_cold_primer(self):
+        _, manifest = self.pair("pair", self.pairs(), prefix_cache=4)
+        for at, salt_of, error in ((2, 1, "hit: does not reuse the cache salt of its primer primer"),
+                                   (2, None, "hit: records no cache salt"),
+                                   (1, 0, "cold: shares its cache salt with an earlier request")):
+            records = copy.deepcopy(manifest["requests"])
+            records[at]["cache_salt"] = None if salt_of is None else records[salt_of]["cache_salt"]
+            with self.subTest(error), self.assertRaisesRegex(tap_binding.Unbound, error):
+                tap_binding.check_requests(records)
+        primer, hit = self.pairs()[0], self.pairs()[2]
+        for name, requests, error in (
+                ("late", [hit, primer], "hit: names no single earlier cold request primer as its primer"),
+                ("chained", [primer, hit, ("again", self.tokens, "hit")],
+                 "again: names no single earlier cold request hit as its primer"),
+                ("twice", [primer, hit, ("again", self.tokens, "primer")], "again: primer already primes hit")):
+            with self.subTest(name), self.assertRaisesRegex(tap_binding.Unbound, error):
+                self.pair(name, requests, prefix_cache=4)
+
+    def test_each_step_of_a_continuation_must_name_its_own_request(self):
+        def steps_of(engine, body):
+            # The continuation's (engine request 2) step names its primer's.
+            named = engine - 1 if engine == 2 else engine
+            return [([item(named, 0, list(range(len(body["prompt"]))), body["prompt"])], self.tensors, None)]
+        with self.assertRaisesRegex(tap_binding.Unbound, r"engine requests \[1\], not \[2\]"):
+            self.pair("borrowed", [self.pairs()[0], self.pairs()[2]], prefix_cache=4, steps_of=steps_of)
+
+    def test_the_command_sends_prefix_hits_in_order_after_their_primers(self):
+        bodies = {}
+        for name, prompt in (("short", self.tokens[:8]), ("long", self.tokens)):
+            bodies[name] = self.root / f"{name}.json"
+            bodies[name].write_text(json.dumps({"prompt": prompt}))
+        sent = []
+
+        def capture(url, log, taps, requests, out, config, experimental_pin=None):
+            sent.extend(requests)
+            return {"requests": []}
+        argv = ["tap_binding", "capture", "--url", URL, "--server-log", str(self.root / "server.log"),
+                "--taps-dir", str(self.root), "--out", str(self.root / "out"),
+                "--request", f"primer=/v1/completions={bodies['short']}",
+                "--prefix-hit", f"hit=primer=/v1/completions={bodies['long']}",
+                "--request", f"cold=/v1/completions={bodies['long']}"]
+        with patch.object(tap_binding, "capture", capture), \
+                patch.object(common, "qualification_config", lambda: self.config), \
+                patch("sys.argv", argv), contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(tap_binding.main(), 0)
+        self.assertEqual(sent, [("primer", "/v1/completions", {"prompt": self.tokens[:8]}),
+                                ("hit", "/v1/completions", {"prompt": self.tokens}, "primer"),
+                                ("cold", "/v1/completions", {"prompt": self.tokens})])
 
 
 if __name__ == "__main__":

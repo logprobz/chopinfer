@@ -13,12 +13,19 @@ with a fresh X-Client-Request-Id challenge and cache salt, requires every
 response to name the bound process (common.confirm_live) and no cached
 prompt tokens, reads the challenge's engine request ID from the bound log,
 and admits only the new steps whose producer nonce is the live one and
-whose items are all that request's. It copies them, numbered in order,
+whose items are all that request's. A prefix hit (--prefix-hit) is the
+continuation of a named primer, an earlier cold request: it is sent under
+the primer's salt, so the pair shares one fresh salt, and must report
+0 < cached_tokens <= the primer's prompt tokens, as determinism.py's
+prefix-hit rule requires; its steps must name the process and its own
+request like any other. It copies the steps, numbered in order,
 into OUT/engine and writes OUT/tap-capture.json: the server's identity
 (IDENTITY) and, beside it, its complete model option map and whether the
 host marks it qualified (OPTIONS, as /health reports them; a server from
-before the report has neither), each request's challenge, engine request ID
-and steps, and the digests of every copied file.
+before the report has neither), each request's challenge, engine request ID,
+reported prompt and cached tokens, cache salt, primer and steps, and the
+digests of every copied file. `check_requests` re-checks a manifest's
+cache rules.
 
 The server's options must be its qualified defaults
 (common.bind_checkpoint). With --experimental and a sealed pin
@@ -40,6 +47,7 @@ Unbound: the evidence is insufficient.
 Usage:
   python3 tools/qual/tap_binding.py capture --url URL --server-log LOG \\
       --taps-dir DIR --out OUT --request NAME=PATH=BODY.json [...] \\
+      [--prefix-hit NAME=PRIMER=PATH=BODY.json ...] \\
       [--experimental --experimental-pin PIN --experimental-pin-sha256 SHA256]
 """
 
@@ -159,12 +167,53 @@ def engine_requests(log, url, challenge, nonce):
     return found
 
 
+def primed(name, primer, earlier):
+    """The record of `primer` among the `earlier` requests, which the prefix
+    hit `name` continues: a cold request that primes no other."""
+    cold = [record for record in earlier if record.get("name") == primer and record.get("primer") is None]
+    if len(cold) != 1:
+        raise Unbound(f"{name}: names no single earlier cold request {primer} as its primer")
+    if other := next((record["name"] for record in earlier if record.get("primer") == primer), None):
+        raise Unbound(f"{name}: {primer} already primes {other}")
+    return cold[0]
+
+
+def check_request(record, earlier):
+    """Refuses a request that breaks the cache rules given the `earlier`
+    requests of its capture: a cold request carries its own cache salt and
+    reports 0 cached prompt tokens; a prefix hit reuses its primer's salt and
+    reports 0 < cached_tokens <= the primer's prompt tokens."""
+    name, salt, primer, cached = (record.get(key) for key in ("name", "cache_salt", "primer", "cached_tokens"))
+    if not isinstance(salt, str) or not salt:
+        raise Unbound(f"{name}: records no cache salt")
+    if primer is None:
+        if any(other.get("cache_salt") == salt for other in earlier):
+            raise Unbound(f"{name}: shares its cache salt with an earlier request")
+        if type(cached) is not int or cached != 0:
+            raise Unbound(f"{name}: the server reused {cached} cached prompt tokens")
+        return
+    first = primed(name, primer, earlier)
+    if salt != first.get("cache_salt"):
+        raise Unbound(f"{name}: does not reuse the cache salt of its primer {primer}")
+    length = first.get("prompt_tokens")
+    if not (type(cached) is int and type(length) is int and 0 < cached <= length):
+        raise Unbound(f"{name}: a prefix hit requires reported 0 < cached_tokens <= {length} (the prompt tokens "
+                      f"of its primer {primer}), got {cached}")
+
+
+def check_requests(records):
+    """Refuses a capture's request records that break the cache rules."""
+    for at, record in enumerate(records):
+        check_request(record, records[:at])
+
+
 def capture(url, log, taps, requests, out, config, subject=None, experimental_pin=None):
-    """Sends `requests` ((name, path, body) each) once to the bound server at
-    `url` and writes the capture of their new steps in `out`. `subject` is
-    recorded beside them (what the steps were captured against). With
-    `experimental_pin` the server serves the pinned options, and the capture
-    is experimental."""
+    """Sends `requests` ((name, path, body) each, or (name, path, body,
+    primer) for a prefix hit continuing the earlier cold request `primer`)
+    once to the bound server at `url` and writes the capture of their new
+    steps in `out`. `subject` is recorded beside them (what the steps were
+    captured against). With `experimental_pin` the server serves the pinned
+    options, and the capture is experimental."""
     client, server, identity = live(url, config, log, experimental_pin)
     taps = wire.external(Path(taps).absolute())
     out = Path(out).absolute()
@@ -172,16 +221,19 @@ def capture(url, log, taps, requests, out, config, subject=None, experimental_pi
     wire.external(out)
     (out / STEPS).mkdir()
     records, files, count = [], {}, 0
-    for name, path, body in requests:
+    for name, path, body, *hit in requests:
+        primer = hit[0] if hit else None
+        salt = primed(name, primer, records)["cache_salt"] if primer else f"tap-capture/{uuid.uuid4().hex}"
         before = {step.name for step in taps.glob("step*")}
         challenge = f"tap-capture-{uuid.uuid4().hex}"
-        body = {"model": server["model"], **body, "cache_salt": f"tap-capture/{uuid.uuid4().hex}"}
+        body = {"model": server["model"], **body, "cache_salt": salt}
         response, _ = client.request(path, body, headers={"X-Client-Request-Id": challenge})
         common.confirm_live(client, server, experimental_pin=experimental_pin)
         usage = response.get("usage") or {}
         cached = (usage.get("prompt_tokens_details") or {}).get("cached_tokens")
-        if cached != 0:
-            raise Unbound(f"{name}: the server reused {cached} cached prompt tokens")
+        reported = {"prompt_tokens": usage.get("prompt_tokens"), "cached_tokens": cached, "cache_salt": salt,
+                    "primer": primer}
+        check_request({"name": name, **reported}, records)
         engine = engine_requests(log, url, challenge, identity["startup_nonce"])
         new = sorted(step for step in taps.glob("step*") if step.name not in before)
         if not new:
@@ -198,8 +250,7 @@ def capture(url, log, taps, requests, out, config, subject=None, experimental_pi
             files[target.name] = step_files(target)
             steps.append(target.name)
         records.append({"name": name, "path": path, "challenge": challenge, "engine_request_id": engine.pop(),
-                        "response_id": response.get("id"), "prompt_tokens": usage.get("prompt_tokens"),
-                        "cached_tokens": cached, "steps": steps})
+                        "response_id": response.get("id"), **reported, "steps": steps})
     manifest = {"schema": SCHEMA, "server": identity | options_of(common.live_identity(server)),
                 "server_log_sha256": server["checkpoint"]["server_log_sha256"], "url": url,
                 "requests": records, "files": files, "subject": subject}
@@ -247,7 +298,11 @@ def main():
     make.add_argument("--server-log", required=True)
     make.add_argument("--taps-dir", required=True)
     make.add_argument("--out", required=True)
-    make.add_argument("--request", action="append", required=True, metavar="NAME=PATH=BODY.json")
+    make.add_argument("--request", action="append", dest="sends", required=True, metavar="NAME=PATH=BODY.json",
+                      type=lambda text: (text, False), help="a cold request")
+    make.add_argument("--prefix-hit", action="append", dest="sends", metavar="NAME=PRIMER=PATH=BODY.json",
+                      type=lambda text: (text, True),
+                      help="a prefix hit: the continuation of PRIMER, an earlier --request, under its cache salt")
     make.add_argument("--experimental", action="store_true",
                       help="capture a server serving the sealed pin's diagnostic options; no gate admits it")
     make.add_argument("--experimental-pin", type=Path,
@@ -255,9 +310,9 @@ def main():
     make.add_argument("--experimental-pin-sha256", help="SHA256 of the sealed pin file")
     args = parser.parse_args()
     requests = []
-    for text in args.request:
-        name, path, body = text.split("=", 2)
-        requests.append((name, path, json.loads(Path(body).read_text())))
+    for text, hit in args.sends:
+        name, *primer, path, body = text.split("=", 3 if hit else 2)
+        requests.append((name, path, json.loads(Path(body).read_text()), *primer))
     config = common.qualification_config()
     try:
         pin = experimental_determinism.selected(args)

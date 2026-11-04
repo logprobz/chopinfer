@@ -1,4 +1,5 @@
-//! A logical zero-filled mapped table with bounded gather allocations.
+//! A logical zero-filled mapped table with bounded gather allocations, or
+//! one whose rows' bytes follow their ids (`MappedHost::with_row_ids`).
 //! All other services use the ordinary fake host, including span checks.
 use super::*;
 use runtime_bundle_abi::{BundleMappedGatherHandleV1, MappedGatherPlaneV1, MappedGatherStatsV1};
@@ -20,6 +21,8 @@ struct Gather {
     indices: DeviceBufferSpanV1,
     planes: Vec<MappedGatherPlaneV1>,
     pending: Option<u64>,
+    /// The ids the enqueue read, with `row_ids`.
+    ids: Vec<u32>,
     waited: std::collections::BTreeSet<u64>,
     waited_at: usize,
 }
@@ -30,6 +33,7 @@ pub(in crate::fake_host_tests) struct MappedHost {
     delayed_completion: bool,
     completed_at: std::cell::Cell<usize>,
     fail_gather: std::cell::Cell<Option<(&'static str, usize)>>,
+    row_ids: bool,
 }
 impl MappedHost {
     pub(in crate::fake_host_tests) fn new<H: MappedServices + 'static>(host: Rc<H>) -> Self {
@@ -40,7 +44,47 @@ impl MappedHost {
             delayed_completion: false,
             completed_at: Default::default(),
             fail_gather: Default::default(),
+            row_ids: false,
         }
+    }
+
+    /// Each gathered row's bytes follow its id, and a prepared gather reads
+    /// the ids the bundle uploaded when it is enqueued, as the host's id
+    /// copy does; ids a kernel wrote read as row 0. A gather of the wrong
+    /// rows then lands other bytes than the synchronous gather.
+    pub(in crate::fake_host_tests) fn with_row_ids(host: Rc<Host>) -> Self {
+        Self {
+            row_ids: true,
+            ..Self::new(host)
+        }
+    }
+
+    /// This host, failing the `after`-th later call of `stage` (`enqueue`,
+    /// `wait` or `complete`).
+    pub(in crate::fake_host_tests) fn failing(self, stage: &'static str, after: usize) -> Self {
+        self.fail_gather.set(Some((stage, after)));
+        self
+    }
+
+    /// The uploaded ids `indices` holds, the first `rows` of them.
+    fn uploaded_ids(&self, indices: DeviceBufferSpanV1, rows: u64) -> Vec<u32> {
+        let uploads = self.host.fake().uploads.borrow();
+        let bytes = rows as usize * 4;
+        uploads
+            .range((indices.buffer.raw, 0)..=(indices.buffer.raw, indices.offset))
+            .next_back()
+            .and_then(|(&(_, offset), uploaded)| {
+                let at = (indices.offset - offset) as usize;
+                uploaded.get(at..at + bytes)
+            })
+            .map_or_else(
+                || vec![0; rows as usize],
+                |ids| {
+                    ids.chunks_exact(4)
+                        .map(|id| u32::from_le_bytes(id.try_into().unwrap()))
+                        .collect()
+                },
+            )
     }
 
     /// A stream wait queues a dependency. Completion becomes observable
@@ -131,8 +175,21 @@ impl MappedHost {
             gather.rank,
             String::from_utf8_lossy(gather.view_id)
         ));
-        self.host
-            .copy_host_to_device(stream, destination, &vec![0; destination.length as usize])
+        let bytes = if self.row_ids {
+            gather
+                .rows
+                .iter()
+                .flat_map(|&row| {
+                    (0..gather.row_bytes).map(move |at| {
+                        (row.wrapping_mul(2_654_435_761).rotate_left(at as u32 % 32) as u8)
+                            ^ at as u8
+                    })
+                })
+                .collect()
+        } else {
+            vec![0; destination.length as usize]
+        };
+        self.host.copy_host_to_device(stream, destination, &bytes)
     }
 }
 
@@ -292,6 +349,7 @@ impl HostServicesBackendV1 for MappedHost {
                 indices,
                 planes: planes.to_vec(),
                 pending: None,
+                ids: Vec::new(),
                 waited: Default::default(),
                 waited_at: 0,
             },
@@ -307,6 +365,17 @@ impl HostServicesBackendV1 for MappedHost {
         rows: u64,
     ) -> HostServiceResultV1<()> {
         self.gather_failure("enqueue")?;
+        let indices = self
+            .gathers
+            .borrow()
+            .get(&handle.raw)
+            .ok_or(BundleStatusV1::StaleHandle)?
+            .indices;
+        let ids = if self.row_ids {
+            self.uploaded_ids(indices, rows.min(indices.length / 4))
+        } else {
+            Vec::new()
+        };
         let mut gathers = self.gathers.borrow_mut();
         let gather = gathers
             .get_mut(&handle.raw)
@@ -328,6 +397,7 @@ impl HostServicesBackendV1 for MappedHost {
             return Err(BundleStatusV1::InvalidArgument);
         }
         gather.pending = Some(rows);
+        gather.ids = ids;
         gather.waited.clear();
         self.host.fake().note(format!(
             "async mapped ids {} {}",
@@ -341,7 +411,7 @@ impl HostServicesBackendV1 for MappedHost {
         stream: BundleStreamHandleV1,
     ) -> HostServiceResultV1<()> {
         self.gather_failure("wait")?;
-        let (rows, planes) = {
+        let (rows, planes, ids) = {
             let mut gathers = self.gathers.borrow_mut();
             let gather = gathers
                 .get_mut(&handle.raw)
@@ -361,7 +431,7 @@ impl HostServicesBackendV1 for MappedHost {
             if planes.is_empty() {
                 return Err(BundleStatusV1::InvalidArgument);
             }
-            (rows, planes)
+            (rows, planes, gather.ids.clone())
         };
         self.host
             .fake()
@@ -372,6 +442,14 @@ impl HostServicesBackendV1 for MappedHost {
                 plane.destination.offset,
                 rows * plane.row_bytes,
             );
+            let at = (plane.index_offset / 4) as usize;
+            let rows_of = if self.row_ids {
+                ids.get(at..at + rows as usize)
+                    .ok_or(BundleStatusV1::InvalidArgument)?
+                    .to_vec()
+            } else {
+                vec![0; rows as usize]
+            };
             self.emulate_mapped_rows(
                 stream,
                 destination,
@@ -380,7 +458,7 @@ impl HostServicesBackendV1 for MappedHost {
                     rank: plane.rank,
                     view_id: &plane.view_id,
                     row_bytes: plane.row_bytes,
-                    rows: &vec![0; rows as usize],
+                    rows: &rows_of,
                 },
             )?;
         }

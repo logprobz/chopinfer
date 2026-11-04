@@ -17,6 +17,7 @@ mod graph_budget;
 pub(super) mod host;
 mod item_keys;
 mod layers;
+mod mixed_engram;
 #[cfg(test)]
 mod native_package;
 mod phased_reduce;

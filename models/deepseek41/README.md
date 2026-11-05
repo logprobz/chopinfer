@@ -186,6 +186,30 @@ step-time measurement. The knob entries read raw or width-1 tile scales; a
 bank the census encodes at width 2 or 4 expands its scales first. See the
 [lab qualification](lab/moe_direct_small.md#served-body-candidates).
 
+Flash TP4 native-KV eager prefill scores and selects its full-index batches
+(the ratio-2 sources and the layer-20 candidate source) past the short tiled
+band with the tile4 scorer and the early-stop selector. A phase whose largest
+position is at least 32768 and whose page-rounded extent is at most 262144 takes,
+per batch, the CTA count the indexer table gives its rows
+(`indexer.long_compressed_scores.prefill` and
+`indexer.long_candidate_scores.prefill`: 192 CTAs for small batches, 32 or 16
+for wider ones) instead of the coarse guarded scorer at 192 CTAs, and the
+early-stop selector and merge instead of the live selector or the 128K cached
+selector. Batches below 32 rows, ratio-2 batches above 4032 rows, longer extents,
+compact reindex batches and the layer-20 producer keep their routes;
+`text_config.indexer_prefill_tile=false` turns the band off with the short band.
+The scorer is the guarded fast scorer with a four-tile position loop and the
+selector stops its radix cutoff once the boundary bucket is kept whole, so
+scores, statuses, ordered IDs and candidate records are unchanged. The route
+was adopted from the `indexer_prefill_long` candidate option on 2026-11-05:
+kernel-lab pairs at contexts from 32832 to 262144 matched bitwise and gained
+18 to 35% in scoring and selection at every measured batch, served greedy,
+seeded, packed and mixed requests on tp4-ar and tp4-dspark matched bit for bit,
+and the served step-time A/B on tp4-dspark gained 2.6% in 512-row mixed steps at
+200K context with 16 decoders, 3.0% with 8, 1.7 to 2.1% at 100K and 6.3% in cold
+8192-row chunks past 32K, with decode-only steps unchanged
+([indexer prefill batching](indexer-prefill-batching.md#long-context-scoring-and-selection)).
+
 Every MXFP8 dense projection stores E4M3 codes in
 `mxfp8-fold-packed-8x128-v1`. It needs no create-time packed duplicate.
 The 2026-10-23 TP4 comparison with 65,536 KV pages kept AR and DSpark outputs

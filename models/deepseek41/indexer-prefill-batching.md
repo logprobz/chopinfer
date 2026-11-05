@@ -104,3 +104,88 @@ was 0.585, ranging from 0.301 to 0.984. The smallest difference is within
 timing noise. These are synthetic kernel-chain measurements, not served
 TTFT or token-throughput measurements. Integrated serving comparison remains
 part of the integration round's qualification.
+
+## Long-context scoring and selection
+
+Past the short tiled band (`text_config.indexer_prefill_tile`, every position
+below 32768), the batches above still ran the coarse guarded scorer at 192
+CTAs per row and the live selector (or the 128K cached
+selector). A profile on 2026-11-04 of tp4-dspark 512-row mixed steps beside 8
+and 16 streaming decoders put full-source scoring and selection at 11.0 to
+11.3% of the 200K step and at all of the step's growth from 100K to 200K.
+
+A phase whose largest position is at least 32768 and whose page-rounded extent
+is at most 262144 now scores each full-source batch with the tile4 scorer at the
+CTA count the indexer table gives its rows, and selects with the early-stop
+selector and merge:
+
+| Source | Rows | CTAs |
+| --- | --- | ---: |
+| Ratio 2 | 32-191 | 192 |
+| Ratio 2 | 192-1535 | 32 |
+| Ratio 2 | 1536-4032 | 16 |
+| Layer 20 | 32-447 | 192 |
+| Layer 20 | 448-512 | 32 |
+
+Other rows keep the previous route. A ratio-2 batch exceeds 4032 rows only when
+the phase's largest position is exactly 32768; no measured context produced
+that shape. Every batch of a phase shares its extent, so a phase that straddles
+32768 takes the band for all of its rows. Compact reindex batches, the layer-20
+three-stage producer, decode and verify, BF16 keys and the short band are
+unchanged.
+
+The tile4 scorer is the guarded fast scorer's body with a four-tile position
+loop: the same packed query, FP4 MMA, exactness predicate, coarse bound, SIMT
+repair and ordered 32-head chain. Its position loop and its negative-infinity
+tail are grid-stride over the grid's x size, so any CTA count writes every
+score once with the same value. The early-stop selector differs from the live
+one only in stopping its radix cutoff once the boundary bucket is kept whole;
+it keeps the integer keys, ordered ties and ordered merge. The cached selector
+lost to it at every measured batch, the 128K extent included, so the table
+chooses only the CTA count.
+
+The kernel-lab pair compared the previous route with tile4 at 8, 16, 32 and 192
+CTAs, each with the early-stop or the cached selector, at contexts of 32832,
+65536, 100544, 131072, 200512 and 262144, over the batch sizes the planner
+produces for 512-row mixed steps, 8192-row chunks and upper-skip and adaptive
+tails, and on both sides of every row-range edge. On 2026-11-04 it compared raw
+scores before cleanup, final scores, statuses, ordered IDs and layer-20
+candidate records bit for bit, 15872 plane comparisons in its complete run, on
+seeded inputs and on ties, repair scale edges, NaN and off-grid queries,
+non-finite weights, scale bytes, page holes, inactive rows and packed short and
+long rows; each case rejected a one-bit ordered-ID corruption. Timed with cold
+caches, one warmup and three paired rounds per visit and three visits per
+batch, every admitted range beat its in-job A/A spread in all 474 visits
+(spread median 0.27%, largest 3.70%), with minimum gains of 17.8 to 34.6% per
+batch size. Projected per rank, a 512-row mixed step saves 3.9 ms at 100K and
+6.7 ms at 200K, and an 8192-row chunk 62 ms at 100K and 105 ms at 200K.
+
+Served evidence, 2026-11-05, one install with the candidate option off (A) and
+on (B), 300 W enforced on all four GPUs, nothing set:
+
+- Exactness: on tp4-ar and tp4-dspark, 28 requests each matched bit for bit in
+  token IDs, text, top-20 logprobs, finish reasons, usage and cached tokens:
+  cold greedy prompts of 40000, 100003 and 200003 tokens, the top-20 prompt
+  logprobs of every row of a cold 40000-token prompt, seeded sampled prompts of
+  60000 and 150003 tokens, prefix-hit continuations of 100032- and 200000-token
+  prompts beside eight streaming decoders and their lone restores, and eight
+  packed cold prompts (five past 32K) and their restores.
+- Step time on tp4-dspark, visits A1, B1, B2, A2, each a fresh keeper-borrowed
+  process, Engram residency 92.7 to 100% and 12 to 57 major faults per visit.
+  The primary metric is the median step time less its Engram wait (synchronous
+  mapped gathers plus the prepared gathers' exposed waits); the raw median is
+  secondary. Gains are mean (spread) over the two pairs:
+
+| Cell | Samples per visit | Adjusted gain | Raw gain |
+| --- | ---: | ---: | ---: |
+| 512-row mixed step, 200K, 16 decoders | 12 | 2.58% (0.06) | 3.22% (1.07) |
+| 512-row mixed step, 200K, 8 decoders | 12 | 2.96% (2.09) | 3.42% (2.99) |
+| 512-row mixed step, 100K, 16 decoders | 12 | 1.66% (0.52) | 1.21% (1.21) |
+| 512-row mixed step, 100K, 8 decoders | 12 | 2.07% (0.09) | 1.98% (0.25) |
+| Cold 200003-token prompt, 8192-row chunks past 32K | 40 | 6.30% (0.18) | 5.91% (0.36) |
+| The same chunks from 32K to 96K | 16 | 4.98% (0.12) | 4.65% (0.40) |
+| The same chunks from 96K | 24 | 7.92% (0.18) | 7.52% (0.03) |
+
+The decode-only steps of the same windows moved by -0.04 to 0.19% (adjusted),
+within their spreads. A repeat of A1 with the same seeds differed from it by at
+most 0.64% in any cell.

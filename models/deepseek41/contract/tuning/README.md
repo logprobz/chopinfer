@@ -222,6 +222,19 @@ the row at rows 1 to 6, adopted on 2026-11-01 from the
 `verify_row_fusions` candidate option, which ran the fusions through 32
 rows: served timing resolved a gain only at six-row verify steps.
 
+`indexer.long_compressed_scores.prefill` (bucket 4096) and
+`indexer.long_candidate_scores.prefill` (bucket 512), both with weights `fp4`
+and shape `top_k=512`, give the long band's schedule `tile4` and its `ctas`
+knob (4, 8, 16, 32 or 192 CTAs). Flash TP4 native-KV eager prefill full-index
+batches of a phase whose largest position is at least 32768 and whose
+page-rounded extent is at most 262144 take the tile4 scorer at that x grid and
+the early-stop selector and merge. The ratio-2 sources take 192 CTAs at rows
+32 to 191, 32 at 192 to 1535 and 16 at 1536 to 4032; the layer-20 candidate
+source takes 192 at rows 32 to 447 and 32 at 448 to 512. A missing row keeps
+the guarded scorer at 192 CTAs and the live or 128K cached selector. Flash TP4
+serves the rows, adopted on 2026-11-05 from the `indexer_prefill_long`
+candidate option ([indexer prefill batching](../../indexer-prefill-batching.md#long-context-scoring-and-selection)).
+
 Exact F32 rows take precedence over bands. Blocked and wide overrides retain
 their existing order, followed by head reuse, head-last and optional bounded
 reuse at registration. Their separate sites retain the original entry

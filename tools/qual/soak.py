@@ -735,6 +735,19 @@ def memory_sample(root_pid, started, client, views=None):
             "mib": device_memory(root_pid), **host_memory(root_pid, views), **mapped_views(client)}
 
 
+def sample_until(deadline, sample, interval=30, clock=time.monotonic, sleep=time.sleep):
+    """Calls `sample` every `interval` seconds until a call starts at or after
+    `deadline`. A sample is timed when it starts, so however long one takes
+    to read, the last is timed at or after the deadline, and a soak has at
+    least two samples with its baseline."""
+    while True:
+        sleep(min(interval, max(0, deadline - clock())))
+        started = clock()
+        sample()
+        if started >= deadline:
+            return
+
+
 def main():
     parser = arguments(__doc__, model_facts=lambda args: args.media_mix or args.structured_mix)
     parser.add_argument("--duration", type=float, default=1800)
@@ -879,7 +892,6 @@ def main():
             turn += 1
 
     started = time.monotonic()
-    deadline = started + duration
 
     def sample():
         load.append(host_load_sample())
@@ -889,12 +901,13 @@ def main():
             except Exception as error:
                 errors.append({"memory": str(error)})
 
+    # The baseline sample comes before the load, and the timed work starts
+    # after it, so a slow first sample shortens no soak.
     sample()
+    deadline = time.monotonic() + duration
     with ThreadPoolExecutor(max_workers=concurrency + 1) as pool:
         futures = [pool.submit(worker, index) for index in range(concurrency)]
-        while time.monotonic() < deadline:
-            time.sleep(min(30, max(0, deadline - time.monotonic())))
-            sample()
+        sample_until(deadline, sample)
         measured_duration = time.monotonic() - started
         for future in futures:
             future.result()

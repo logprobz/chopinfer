@@ -10,6 +10,7 @@ import shutil
 import tempfile
 import subprocess
 import threading
+import time
 import unittest
 from unittest.mock import patch
 
@@ -111,6 +112,51 @@ class SoakMemoryTests(unittest.TestCase):
             self.assertEqual({key: sample[key] for key in (*parts, "mapped_view_bytes")},
                              {**parts, "mapped_view_bytes": 8192})
         self.assertEqual(report["errors"], [])
+
+    def test_a_first_sample_slower_than_the_soak_still_leaves_a_deadline_sample(self):
+        # On a loaded host the first sample can outlast a short soak; the
+        # soak still samples once at or after its deadline.
+        argv = ["soak", "--duration", "0.3", "--concurrency", "2", "--server-pid", "123"]
+        parts = {"host_rss_mib": 3, "host_rss_anon_mib": 1.5, "host_rss_file_mib": 1, "host_rss_shmem_mib": 0.5}
+        calls = []
+
+        def slow_first(pid, views=None):
+            calls.append(pid)
+            if len(calls) == 1:
+                time.sleep(0.5)
+            return parts
+
+        with patch("sys.argv", argv), patch.object(soak, "Client", FakeClient), \
+             patch.object(soak, "device_memory", return_value=350), \
+             patch.object(soak, "host_memory", side_effect=slow_first), \
+             patch.object(soak, "metrics_text", return_value="chop_mapped_view_bytes 8192\n"), \
+             patch.object(soak, "receipt") as receipt:
+            with self.assertRaises(SystemExit):
+                soak.main()
+        report = receipt.call_args.args[2]
+        self.assertEqual(len(report["memory_samples"]), 2)
+        self.assertGreaterEqual(report["memory_samples"][-1]["elapsed_seconds"], 0.3)
+        self.assertEqual((report["passed"], report["errors"]), (True, []))
+
+    def test_the_last_sample_starts_at_or_after_the_deadline_however_slow_the_reads(self):
+        # Samples are timed when they start; one that starts before the
+        # deadline and ends after it is not the last.
+        for read, deadline in ((0.75, 1200.5), (0.0, 1200.0), (31.0, 100.0), (5.0, 0.0)):
+            with self.subTest(read=read, deadline=deadline):
+                now = [0.0]
+                starts = []
+
+                def sleep(seconds):
+                    now[0] += seconds
+
+                def sample():
+                    starts.append(now[0])
+                    now[0] += read
+
+                soak.sample_until(deadline, sample, clock=lambda: now[0], sleep=sleep)
+                self.assertGreaterEqual(starts[-1], deadline)
+                self.assertTrue(all(start < deadline for start in starts[:-1]))
+                self.assertTrue(all(b - a <= 30 + read for a, b in zip(starts, starts[1:])))
 
     def test_the_recorded_parts_leave_the_memory_verdict_alone(self):
         limits = {"device": 512, "host": 512}

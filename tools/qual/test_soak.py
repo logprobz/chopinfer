@@ -508,14 +508,15 @@ TABLES = ["tables/table-a.bin", "tables/table-b.bin"]
 REAL = {"read_text": Path.read_text, "read_bytes": Path.read_bytes, "readlink": os.readlink}
 
 
-def server_mappings(store, exempt=0, driver=0, anon=0, other=0, writable=0, later=None, protected=False):
+def server_mappings(store, exempt=0, driver=0, anon=0, other=0, writable=0, later=None, protected=False, gone=False):
     """The server's mappings as (range, perms, offset, path, Size kB, Rss
     kB): the four table views under `store` (the first grown by `exempt`
     kB), the driver's control node (pinned host buffers, grown by `driver`),
     anonymous memory (`anon`), an undeclared checkpoint file (`other`), a
     writable mapping of a declared file (`writable`) and, when `later` is
     not None, a mapping of a declared file the first sample did not see.
-    `protected` makes the first table view writable, as mprotect would. The
+    `protected` makes the first table view writable, as mprotect would, and
+    `gone` leaves it out, as munmap would. The
     table views, libc and their Size and Rss are a 2026-11-05 GPU soak's;
     each other mapping spans 1 GiB (the anonymous one 8 GiB), room for the
     tests' growth."""
@@ -532,18 +533,20 @@ def server_mappings(store, exempt=0, driver=0, anon=0, other=0, writable=0, late
             ("700500000000-700540000000", "rw-s", "00000000", table_b, 1048576, 1000 + writable)]
     if later is not None:
         rows.append(("700600000000-700640000000", "r--s", "00000000", table_a, 1048576, later))
-    return rows
+    return rows[1:] if gone else rows
 
 
 class FakeProc:
     """/proc of a serving tree: a wrapper (pid 100) whose command line holds
     the server's, and the server (pid 101), started in `cwd`. `mappings(n)`
     gives the server's mappings at the nth sample (the nth listing of the
-    tree); `unreadable(n)` the pids whose smaps cannot be read then."""
+    tree), `start(n)` its start time; `unreadable(n)` the pids whose smaps
+    cannot be read then."""
 
     def __init__(self, cwd, mappings, argv=("chopinfer", "serve", "--model", "checkpoint"),
-                 unreadable=lambda n: ()):
+                 unreadable=lambda n: (), start=lambda n: 5001):
         self.cwd, self.mappings, self.argv, self.unreadable = cwd, mappings, list(argv), unreadable
+        self.start = start
         self.samples = -1
         self.smaps_reads = 0
 
@@ -575,10 +578,16 @@ class FakeProc:
                       f"Private_Dirty:  {rss:8} kB", "Anonymous:             0 kB", "VmFlags: rd mr me sd"]
         return ("\n".join(lines) + "\n").encode()
 
+    def stat(self, pid):
+        # Field 22, the start time, after a command name holding spaces and
+        # parentheses.
+        start = 5000 if pid == 100 else self.start(self.samples)
+        return f"{pid} (serve (x) y) S 1 {pid} {pid} 0 -1 4194560 {' '.join(['0'] * 8)} 20 0 1 0 {start} 0 0\n"
+
     def read_text(self, path, *args, **kwargs):
         parts = str(path).split("/")
-        if parts[:2] == ["", "proc"] and parts[2] in ("100", "101") and parts[3] == "status":
-            return self.status(int(parts[2]))
+        if parts[:2] == ["", "proc"] and parts[2] in ("100", "101") and parts[3] in ("status", "stat"):
+            return (self.status if parts[3] == "status" else self.stat)(int(parts[2]))
         return REAL["read_text"](path, *args, **kwargs)
 
     def read_bytes(self, path):
@@ -698,6 +707,65 @@ class MappedViewScope(unittest.TestCase):
         rows, _ = self.sampled(lambda t: {"protected": t >= 600})
         rule = self.rule(rows)
         self.assertEqual((rule["host_memory_growth_mib"], rule["passed"]), (3905472 / 1024, False))
+
+    def test_an_exempt_mapping_a_sample_lacks_or_holds_writable_is_retired(self):
+        # Unmapped, or made writable, at 600 s, then read-only again with the
+        # same identity and 600 MiB more resident: it counts from 600 s on.
+        for change in ("gone", "protected"):
+            with self.subTest(change):
+                rows, _ = self.sampled(lambda t: {change: t == 600, "exempt": 600 * 1024 if t > 600 else 0})
+                self.assertEqual(rows[-1]["host_judged_mib"] - rows[0]["host_judged_mib"],
+                                 (3905472 + 600 * 1024) / 1024)
+                self.assertEqual(rows[-1]["host_exempt_rss_mib"], (2672428 + 3904596 + 2612208) / 1024)
+                self.assertFalse(self.rule(rows)["passed"])
+
+    def test_a_restarted_server_or_a_recycled_pid_counts(self):
+        # The same PID and mappings, but another process from 600 s on.
+        rows, _ = self.sampled(start=lambda n: 5001 if n < 20 else 9001)
+        self.assertEqual([row["host_exempt_rss_mib"] for row in rows[19:21]],
+                         [(3905472 + 2672428 + 3904596 + 2612208) / 1024, 0])
+        self.assertEqual(rows[-1]["host_judged_mib"], rows[-1]["host_rss_mib"])
+        self.assertFalse(self.rule(rows)["passed"])
+
+    def test_a_real_mapping_unmapped_and_mapped_again_counts(self):
+        # This process maps a declared file, unmaps it and maps it again at
+        # the same address, offset and file: the same identity in smaps.
+        import ctypes
+        import mmap
+        libc = ctypes.CDLL(None, use_errno=True)
+        libc.mmap.argtypes = (ctypes.c_void_p, ctypes.c_size_t, ctypes.c_int, ctypes.c_int, ctypes.c_int,
+                              ctypes.c_long)
+        libc.mmap.restype = ctypes.c_void_p
+        libc.munmap.argtypes = (ctypes.c_void_p, ctypes.c_size_t)
+        path = Path(self.store) / "table.bin"
+        path.write_bytes(b"x" * mmap.PAGESIZE)
+        descriptor = os.open(path, os.O_RDONLY)
+        self.addCleanup(os.close, descriptor)
+
+        def mapped(address, flags):
+            pointer = libc.mmap(address, mmap.PAGESIZE, mmap.PROT_READ, flags, descriptor, 0)
+            self.assertNotEqual(pointer, ctypes.c_void_p(-1).value, os.strerror(ctypes.get_errno()))
+            self.assertEqual(ctypes.string_at(pointer, 1), b"x")
+            return pointer
+
+        views, pid = soak.MappedViews(["table.bin"]), os.getpid()
+
+        def sample():
+            with patch.object(soak, "process_tree", return_value={pid}), \
+                    patch.object(soak, "checkpoint_directory", return_value=self.store):
+                return soak.host_memory(pid, views)
+
+        pointer = mapped(None, mmap.MAP_SHARED)
+        first = sample()
+        self.assertEqual(libc.munmap(pointer, mmap.PAGESIZE), 0)
+        absent = sample()
+        # MAP_FIXED_NOREPLACE: the same address, or a failure.
+        again = mapped(pointer, mmap.MAP_SHARED | 0x100000)
+        self.addCleanup(libc.munmap, again, mmap.PAGESIZE)
+        self.assertEqual(again, pointer)
+        later = sample()
+        self.assertEqual([row["host_exempt_rss_mib"] for row in (first, absent, later)],
+                         [mmap.PAGESIZE / 2 ** 20, 0, 0])
 
     def test_an_unreadable_smaps_leaves_its_sample_without_evidence(self):
         rows, _ = self.sampled(unreadable=lambda n: (100,) if n == 7 else ())

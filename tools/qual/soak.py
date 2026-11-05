@@ -75,10 +75,11 @@ CACHE_ALLOWANCE_MIB = {"host": 0, "device": 0}
 # large read-only checkpoint files, judges VmRSS less the Rss of the read-only
 # mappings of MAPPED_VIEW_FILES (file names relative to the served checkpoint
 # directory) that the serving tree holds at the first sample, attributed per
-# mapping from /proc/PID/smaps. Every other mapping counts: a later mapping,
-# even of the same file, a writable one, and every other file-backed mapping,
-# such as the driver's pinned host buffers mapped through the GPU device
-# nodes.
+# mapping from /proc/PID/smaps, while each stays present and read-only in
+# every sample. Every other mapping counts: a later mapping, even of the same
+# file or with the same identity, a writable one, and every other file-backed
+# mapping, such as the driver's pinned host buffers mapped through the GPU
+# device nodes.
 HOST_MEMORY_SCOPE = "rss"
 MAPPED_VIEW_FILES = ()
 
@@ -427,12 +428,23 @@ def checkpoint_directory(pids):
     return found.pop()
 
 
+def start_time(pid):
+    """A process's start time, in clock ticks after boot (/proc/PID/stat
+    field 22), which tells a restarted process or a recycled PID apart."""
+    # The command name, field 2, is in parentheses and may hold either.
+    return int(Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[19])
+
+
 class MappedViews:
     """The mappings the rss_less_mapped_views scope exempts: the read-only
     mappings of the declared files under the served checkpoint directory
     that the serving tree holds at the first sample, each identified by its
-    process, address range, device, inode and offset. A first sample that
-    cannot identify them leaves every later sample without the evidence."""
+    process (PID and start time), address range, device, inode and offset.
+    An exempt mapping must be present, read-only, in every sample from the
+    first on: one a sample lacks or holds writable is retired for the rest
+    of the soak, so a later mapping with the same identity counts. A first
+    sample that cannot identify them leaves every later sample without the
+    evidence."""
 
     def __init__(self, files):
         self.files = files
@@ -442,25 +454,26 @@ class MappedViews:
         self.mappings = []
 
     def establish(self, tree):
-        directory = checkpoint_directory(tree)
+        directory = checkpoint_directory([pid for pid, _ in tree])
         paths = {os.path.realpath(os.path.join(directory, name)) for name in self.files}
         exempt = set()
-        for pid, mappings in tree.items():
+        for (pid, start), mappings in tree.items():
             for mapping in mappings:
                 if mapping["path"] in paths and "w" not in mapping["perms"]:
-                    exempt.add((pid, *mapping["key"]))
+                    exempt.add((pid, start, *mapping["key"]))
                     span, device, inode, offset = mapping["key"]
-                    self.mappings.append({"pid": pid, "range": span, "perms": mapping["perms"], "offset": offset,
-                                          "device": device, "inode": inode, "path": mapping["path"],
-                                          "size_mib": mapping["Size"] / 1024})
+                    self.mappings.append({"pid": pid, "start_time": start, "range": span, "perms": mapping["perms"],
+                                          "offset": offset, "device": device, "inode": inode,
+                                          "path": mapping["path"], "size_mib": mapping["Size"] / 1024})
         self.exempt = exempt
 
     def judge(self, tree, rss, unread=None):
         """A sample's judged host memory (VmRSS `rss` less the exempt Rss),
         the exempt Rss and their bound (the exempt mappings' Size), in MiB,
-        from the tree's mappings ({pid: smaps}). None beside
+        from the tree's mappings ({(pid, start time): smaps}). None beside
         `host_exempt_error` when a process's mappings were `unread`, or the
-        first sample could not identify the exempt ones."""
+        first sample could not identify the exempt ones; an unread process's
+        exempt mappings are retired."""
         if self.exempt is None and self.error is None:
             try:
                 if unread:
@@ -468,29 +481,29 @@ class MappedViews:
                 self.establish(tree)
             except (OSError, ValueError) as error:
                 self.error = f"the first sample identified no exempt mappings: {error}"
+        present = {(pid, start, *mapping["key"]): mapping for (pid, start), mappings in tree.items()
+                   for mapping in mappings if "w" not in mapping["perms"]}
+        if self.exempt is not None:
+            self.exempt &= present.keys()
         if error := self.error or (unread and f"no mappings of {unread}"):
             return {"host_judged_mib": None, "host_exempt_rss_mib": None, "host_exempt_bound_mib": None,
                     "host_exempt_error": error}
-        rss_kib = size_kib = 0
-        for pid, mappings in tree.items():
-            for mapping in mappings:
-                if (pid, *mapping["key"]) in self.exempt and "w" not in mapping["perms"]:
-                    rss_kib += mapping["Rss"]
-                    size_kib += mapping["Size"]
+        rss_kib = sum(present[identity]["Rss"] for identity in self.exempt)
+        size_kib = sum(present[identity]["Size"] for identity in self.exempt)
         exempt = rss_kib / 1024
         return {"host_judged_mib": rss - exempt, "host_exempt_rss_mib": exempt,
                 "host_exempt_bound_mib": size_kib / 1024}
 
 
 def process_memory(pid, mapped):
-    """A process's /proc/PID/status and, when `mapped`, its mappings, or None
-    beside why they cannot be read. Raises FileNotFoundError or
-    ProcessLookupError when the process is gone."""
+    """A process's /proc/PID/status and, when `mapped`, its (start time,
+    mappings), or None beside why they cannot be read. Raises
+    FileNotFoundError or ProcessLookupError when the process is gone."""
     status = Path(f"/proc/{pid}/status").read_text()
     if not mapped:
         return status, None, None
     try:
-        return status, smaps(pid), None
+        return status, (start_time(pid), smaps(pid)), None
     except (FileNotFoundError, ProcessLookupError):
         raise
     except (OSError, ValueError) as error:
@@ -513,12 +526,13 @@ def host_memory(root_pid, views=None):
     tree, unread = {}, None
     for pid in process_tree(root_pid):
         try:
-            status, mappings, error = process_memory(pid, views is not None)
+            status, listed, error = process_memory(pid, views is not None)
         except (FileNotFoundError, ProcessLookupError):
             if pid == root_pid:
                 raise RuntimeError("serving process exited during memory sampling") from None
             continue
-        tree[pid] = mappings or []
+        start, mappings = listed or (None, [])
+        tree[pid, start] = mappings
         unread = unread or error
         for field, key in fields.items():
             match = re.search(rf"^{field}:\s+(\d+) kB$", status, re.MULTILINE)

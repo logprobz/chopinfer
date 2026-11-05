@@ -28,11 +28,13 @@ QUALIFICATION_RUNS_ONCE = "runner orchestration with fake servers and children o
 MODELS = sorted(runner.declaration.previewed(runner.ROOT))
 # A value input's value, as another run's check run ID looks.
 VALUE = '20261014T000000000000Z-0123abcd'
-# The shipped opt-in configurations: every other one (GLM's experimental k5
-# included) is selected by a full run and required by last good.
-OPT_IN = {('glm5next', 'ram-forced'), ('qwen38', 'ram-forced')}
 # The serve words that force the RAM prefix tier: every hit restored from RAM.
 RAM_FORCED = ['--kv-offload-gib', '16', '--kv-offload-prefix', 'on', '--debug-prefix-ram']
+# The shipped opt-in configurations are the declared ones that force the RAM
+# prefix tier, and only those: every other configuration (experimental ones
+# included) is selected by a full run and required by last good.
+OPT_IN = {(name, config) for name in MODELS for config, spec in declaration.configurations(name).items()
+          if '--debug-prefix-ram' in spec.get('serve', [])}
 
 
 def model(predicate=lambda facts: True):
@@ -372,6 +374,7 @@ class PlanTests(unittest.TestCase):
             declared = runner.configurations(name)
             self.assertEqual(declared['default']['profile'], facts['profile'])
             self.assertEqual(list(runner.selected_configurations(name, [], 'quick')), ['default'])
+            self.assertTrue(OPT_IN)
             required = [config for config in declared if (name, config) not in OPT_IN]
             self.assertEqual(runner.required_configurations(name), required)
             self.assertEqual(list(runner.selected_configurations(name, [], 'full')), required)
@@ -436,11 +439,17 @@ class PlanTests(unittest.TestCase):
         import checks as check_runs
         import release_gate as gate
 
-        def prefix_record(name, tier, ram_hits=True):
+        def prefix_record(name, rules, tier, ram_hits=True):
+            """A prefix_exact record holding the default configuration's
+            own input `rules` for it, of the GPU-hit or the RAM-hit arm."""
             flags = {key: True for key in ('cache', 'hit_equals_cold', 'chunked_equals_cold', 'hit_vs_cold')}
-            value = {'passed': True, 'skipped': [], 'errors': [], 'checks': flags,
-                     'server': {'model': name, 'health': {'serving': {'profile': {
-                         'tensor_parallel_size': 4, 'kv_cache_dtype': 'fp8', 'context_parallel_size': 1}}}}}
+            value = {'passed': True, 'skipped': [], 'errors': [], 'checks': flags, 'server': {'model': name}}
+            for rule in rules:
+                self.assertEqual(rule['op'], 'eq')
+                node = value
+                for key in rule['path'][:-1]:
+                    node = node.setdefault(key, {})
+                node[rule['path'][-1]] = name if rule['value'] == '{model}' else rule['value']
             if tier == 'ram':
                 flags['ram_hits'] = ram_hits
                 value.update(hit_tier='ram', passed=ram_hits)
@@ -470,7 +479,8 @@ class PlanTests(unittest.TestCase):
                     for key in files:
                         inputs[key] = str(case / f'{key}.json')
                         Path(inputs[key]).parent.mkdir(parents=True, exist_ok=True)
-                        Path(inputs[key]).write_text(json.dumps(prefix_record(served, tier, ram_hits)))
+                        rules = declared[name].get('input_rules', {}).get(key, [])
+                        Path(inputs[key]).write_text(json.dumps(prefix_record(served, rules, tier, ram_hits)))
                     (case / 'inputs.json').write_text(json.dumps(inputs))
                     reached = []
 
@@ -3278,11 +3288,19 @@ class PromotionTests(FakeRunTests):
                 self.assertFalse(runner.whole_model_full_pass(result(name, [*declared, 'external']), name))
                 self.assertFalse(runner.whole_model_full_pass(
                     dict(result(name, declared), configurations=[*declared, declared[0]]), name))
-        self.assertIn('k5', runner.required_configurations('glm5next'))
+        experimental = [(name, config) for name in MODELS for config, spec in declaration.configurations(name).items()
+                        if spec.get('experimental')]
+        self.assertTrue(experimental)
+        for name, config in experimental:
+            self.assertIn(config, runner.required_configurations(name))
 
     def test_an_opt_in_configuration_runs_only_when_named_and_never_gates_last_good(self):
         clean = FakeRun.identity()
-        name = 'mimo26'
+        # The smallest model with another configuration and none opt-in, so
+        # every declared configuration is required until one is made opt-in.
+        name = min((name for name in MODELS if len(runner.configurations(name)) > 1
+                    and not any(config['opt_in'] for config in runner.configurations(name).values())),
+                   key=lambda name: len(runner.configurations(name)))
         declared = list(runner.configurations(name))
         optional = declared[-1]
         self.assertNotEqual(optional, 'default')

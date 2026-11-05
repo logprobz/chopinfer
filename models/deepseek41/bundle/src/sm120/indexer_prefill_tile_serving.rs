@@ -1,5 +1,5 @@
 //! Qualified eager prefill scoring at the measured full-batch sizes, and the
-//! long-band candidate past the short band.
+//! long band past the short band.
 use crate::{ops::Lowered, shape::Shape};
 use kernel_core::contract::Refusal;
 use model_deepseek41_contract::{geometry::FLASH, state::KvStorage};
@@ -29,8 +29,7 @@ impl crate::Kernels {
         storage: KvStorage,
         positions: Option<&[i32]>,
     ) -> bool {
-        shape.indexer_prefill_long
-            && shape.geometry == &FLASH
+        shape.geometry == &FLASH
             && shape.runtime.indexer_prefill_tile
             && shape.runtime.indexer_mma
             && storage == KvStorage::Native
@@ -249,9 +248,8 @@ mod tests {
     /// The long band starts where the short band ends and stops at a
     /// page-rounded 256K extent, for every row of the batch.
     #[test]
-    fn long_band_admission_is_bounded_and_needs_the_candidate_and_tile_opt_in() {
-        let base = Shape::new(&FLASH, Ranks::TP4).unwrap();
-        let shape = base.with_indexer_prefill_long(true);
+    fn long_band_admission_is_bounded_and_follows_the_tile_opt_out() {
+        let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
         let long = |shape: &Shape, positions: &[i32]| {
             crate::Kernels::prefill_long_enabled(shape, KvStorage::Native, Some(positions))
         };
@@ -280,10 +278,8 @@ mod tests {
             KvStorage::Bf16,
             Some(&[40000])
         ));
-        // The candidate option, the tiled-route opt-out and the native
-        // scorer each disable it; so do other top-k and candidate pools.
-        assert!(long(&base, &[40000]));
-        assert!(!long(&base.with_indexer_prefill_long(false), &[40000]));
+        // The tiled-route opt-out and the native scorer each disable it; so
+        // do other top-k and candidate pools.
         for edit in [
             |s: &mut Shape| s.runtime.indexer_prefill_tile = false,
             |s: &mut Shape| s.runtime.indexer_mma = false,

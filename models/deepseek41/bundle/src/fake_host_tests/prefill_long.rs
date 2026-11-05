@@ -1,27 +1,17 @@
-//! The `indexer_prefill_long` option (on by default) on eager prefill:
-//! full-source batches past the short band, up to a 256K extent, take the
-//! tile4 scorer at the table's CTA count and the early-stop selector. Every
-//! other launch, and every launch outside the band or with the option off,
-//! is unchanged.
+//! The long band on eager prefill: full-source batches past the short band,
+//! up to a 256K extent, take the tile4 scorer at the table's CTA count and
+//! the early-stop selector; other rows, longer extents and the opt-outs keep
+//! the guarded scorer at 192 CTAs and the live or cached selector.
 use super::*;
-use model_deepseek41_contract::execution_options::INDEXER_PREFILL_LONG;
 
 /// Each chunk's launches, by its first position, for one prompt prefilled
 /// to `end`: 4096 tokens, 8192-token chunks to 36864 (one straddles the
 /// short band's end at 32768), 4096 tokens, then 8192-token chunks, which
 /// end on the 128K and 256K extents.
-fn prefill(
-    shape: Shape,
-    kv: KvLayout,
-    enabled: Option<bool>,
-    end: u64,
-) -> BTreeMap<u64, Vec<String>> {
+fn prefill(shape: Shape, kv: KvLayout, end: u64) -> BTreeMap<u64, Vec<String>> {
     let host = FakeHost::new(shape, kv);
     host.kv_pages.set(8192);
-    let mut record = crate::config::tests::record(&shape, kv, 1, false);
-    if let Some(enabled) = enabled {
-        record = crate::config::tests::with_option(record, INDEXER_PREFILL_LONG, enabled.into());
-    }
+    let record = crate::config::tests::record(&shape, kv, 1, false);
     let mut instance = api()
         .create(HostServicesTableV1::new(Rc::clone(&host)), &record)
         .unwrap();
@@ -93,65 +83,58 @@ fn packed(items: &[(u64, u64, u64, u64, bool)]) -> Vec<u8> {
         .unwrap()
 }
 
-/// `off` with each full-source guarded scorer retargeted to its band's tile4
-/// grid, and its local selector and merge to the early-stop entries; the
-/// number of batches the band took.
-fn expected(off: &[String]) -> (Vec<String>, usize) {
-    let mut lines = off.to_vec();
-    let mut taken = 0;
-    for at in 0..lines.len() {
-        let line = &off[at];
+/// Checks every full-source batch's scorer, local selector and merge: the
+/// band's tile4 grid and early-stop entries where `band` holds and the table
+/// admits the batch's rows, the guarded scorer at 192 CTAs and the live or
+/// cached selector otherwise. Returns the batches the band took and the
+/// batches checked.
+fn full_source_batches(lines: &[String], band: bool) -> (usize, usize) {
+    let (mut taken, mut checked) = (0, 0);
+    for (at, line) in lines.iter().enumerate() {
         if !(line.contains("chop_position_indexer_")
-            && line.contains("_scores_v3_live_v1_mma_fp4_guard_fast_v1 "))
+            && line.contains("_scores_v3_live_v1_mma_fp4_")
+            && !line.contains("_pack_fp4_"))
         {
             continue;
         }
         let n = super::shared_overlap::journal_spans(line)[0].2 / 8192;
-        let Some(ctas) = crate::Kernels::prefill_long_selected(!line.contains("_r2_"), n as u32)
-        else {
-            continue;
-        };
-        taken += 1;
-        lines[at] = line
-            .replacen(
-                "_mma_fp4_guard_fast_v1 ",
-                "_mma_fp4_tile4_mode0_trace0_v1 ",
-                1,
-            )
-            .replacen("grid_x: 192, ", &format!("grid_x: {ctas}, "), 1);
-        // Today's route may already select with the 128K cached selector.
-        let local = off[at + 1].replacen("_select_v3_cached4_v1 ", "_select_v3_live_v1 ", 1);
-        assert!(local.contains("_all_select_v3_live_v1 "), "{local}");
-        assert!(off[at + 2].contains("_all_select_v3_live_merge_v1 "));
-        lines[at + 1] = local.replacen("_select_v3_live_v1 ", "_select_v3_live_early_v1 ", 1);
-        lines[at + 2] = off[at + 2].replacen(
-            "_select_v3_live_merge_v1 ",
-            "_select_v3_live_merge_early_v1 ",
-            1,
-        );
+        let (local, merge) = (&lines[at + 1], &lines[at + 2]);
+        assert!(local.contains("_all_select_v3_"), "{local}");
+        assert!(merge.contains("_all_select_v3_live_merge"), "{merge}");
+        checked += 1;
+        let admitted = band
+            .then(|| crate::Kernels::prefill_long_selected(!line.contains("_r2_"), n as u32))
+            .flatten();
+        if let Some(ctas) = admitted {
+            taken += 1;
+            assert!(line.contains("_mma_fp4_tile4_mode0_trace0_v1 "), "{line}");
+            assert!(line.contains(&format!("grid_x: {ctas}, grid_y: {n}, grid_z: 1")));
+            assert!(local.contains("_select_v3_live_early_v1 "), "{local}");
+            assert!(merge.contains("_select_v3_live_merge_early_v1 "), "{merge}");
+        } else {
+            assert!(line.contains("_mma_fp4_guard_fast_v1 "), "{line}");
+            assert!(line.contains(&format!("grid_x: 192, grid_y: {n}, grid_z: 1")));
+            assert!(
+                local.contains("_select_v3_live_v1 ") || local.contains("_select_v3_cached4_v1 "),
+                "{local}"
+            );
+            assert!(merge.contains("_select_v3_live_merge_v1 "), "{merge}");
+        }
     }
-    (lines, taken)
+    (taken, checked)
 }
 
-/// By default, chunks whose last position reaches 32768 and whose
-/// page-rounded extent is at most 262144 change exactly the full-source
-/// batches the table admits from their launches with the option off,
-/// including a chunk that straddles the short band's end and the 128K
-/// extent's batches, which then select with the cached selector. Earlier
-/// and later chunks keep those launches; an explicit true is the default.
+/// Chunks whose last position reaches 32768 and whose page-rounded extent
+/// is at most 262144 take the band for every full-source batch the table
+/// admits, including a chunk that straddles the short band's end and the
+/// 128K extent's batches, which would otherwise select with the cached
+/// selector; the chunk past 256K keeps the guarded route throughout.
 #[test]
-fn long_band_retargets_only_admitted_full_source_batches() {
+fn long_band_takes_every_admitted_full_source_batch() {
     let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
     let end = 262144 + 8192;
-    let off = prefill(shape, KV_LAYOUTS[0], Some(false), end);
-    let on = prefill(shape, KV_LAYOUTS[0], None, end);
-    assert_eq!(prefill(shape, KV_LAYOUTS[0], Some(true), end), on);
-    assert_eq!(
-        on.keys().collect::<Vec<_>>(),
-        off.keys().collect::<Vec<_>>()
-    );
     let mut previous = 0;
-    for (&first, off) in &off {
+    for (first, lines) in prefill(shape, KV_LAYOUTS[0], end) {
         let last = first
             + if matches!(first, 0 | 36864) {
                 4096
@@ -159,105 +142,98 @@ fn long_band_retargets_only_admitted_full_source_batches() {
                 8192
             }
             - 1;
-        let band = last >= 32768 && (last + 1).next_multiple_of(64) <= 262144;
-        let (lines, taken) = if band {
-            expected(off)
-        } else {
-            (off.clone(), 0)
-        };
-        if [28672, 98304, 122880, 196608, 253952].contains(&first) {
-            assert!(taken > 0, "chunk {first}");
-        }
-        assert_eq!(on[&first].len(), lines.len(), "chunk {first}");
-        for (on, expected) in on[&first].iter().zip(&lines) {
-            assert_eq!(on, expected, "chunk {first}");
-        }
         assert_eq!(first, previous);
         previous = last + 1;
+        if last < 32768 {
+            // The short band (`position_valid`).
+            continue;
+        }
+        let band = (last + 1).next_multiple_of(64) <= 262144;
+        let (taken, checked) = full_source_batches(&lines, band);
+        assert!(checked > 0, "chunk {first}");
+        if [28672, 98304, 122880, 196608, 253952].contains(&first) {
+            // Every batch of these chunks has at least 32 rows.
+            assert_eq!(taken, checked, "chunk {first}");
+        }
+        if !band {
+            assert_eq!(taken, 0);
+        }
     }
     assert_eq!(previous, end);
 }
 
-/// The tiled-route opt-out and BF16 keys launch the same with the option on
-/// (the default) and off.
+/// `text_config.indexer_prefill_tile=false` and BF16 keys take no long band.
 #[test]
-fn long_band_leaves_opted_out_prefill_unchanged() {
-    let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
-    let mut untiled = shape;
+fn opted_out_prefill_takes_no_long_band() {
+    let mut untiled = Shape::new(&FLASH, Ranks::TP4).unwrap();
     untiled.runtime.indexer_prefill_tile = false;
-    for (shape, kv) in [(untiled, KV_LAYOUTS[0]), (shape, KV_LAYOUTS[1])] {
-        let end = 98304 + 8192;
-        assert_eq!(
-            prefill(shape, kv, None, end),
-            prefill(shape, kv, Some(false), end),
-            "{:?}",
-            kv.storage
-        );
+    let native = Shape::new(&FLASH, Ranks::TP4).unwrap();
+    for (shape, kv) in [(untiled, KV_LAYOUTS[0]), (native, KV_LAYOUTS[1])] {
+        for (first, lines) in prefill(shape, kv, 98304 + 8192) {
+            if first + 8192 <= 32768 {
+                continue;
+            }
+            assert!(
+                lines
+                    .iter()
+                    .all(|line| !line.contains("_mma_fp4_tile4_mode0_trace0_v1 ")
+                        && !line.contains("_early_v1 ")),
+                "{:?} chunk {first}",
+                kv.storage
+            );
+            if kv.storage == KvStorage::Native {
+                assert!(full_source_batches(&lines, false).1 > 0);
+            }
+        }
     }
 }
 
 /// A packed phase whose largest position is long takes the band for all of
 /// its batches, including those of a new prompt's short rows; a later
-/// 16-row chunk, below the table's rows, launches as with the option off.
+/// 16-row chunk, below the table's rows, keeps the guarded route.
 #[test]
 fn long_band_takes_a_packed_phase_whole_and_leaves_small_batches() {
     let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
-    let run = |enabled: Option<bool>| {
-        let host = FakeHost::new(shape, KV_LAYOUTS[0]);
-        host.kv_pages.set(8192);
-        let mut record = crate::config::tests::record(&shape, KV_LAYOUTS[0], 2, false);
-        if let Some(enabled) = enabled {
-            record =
-                crate::config::tests::with_option(record, INDEXER_PREFILL_LONG, enabled.into());
-        }
-        let mut instance = api()
-            .create(HostServicesTableV1::new(Rc::clone(&host)), &record)
-            .unwrap();
-        let mut steps = Vec::new();
-        let mut previous = 0;
-        while previous < 36864 {
-            let count = if previous == 0 { 4096 } else { 8192 };
-            step(
-                &mut instance,
-                &chunk(previous, count, false),
-                &mut Views::default(),
-            );
-            previous += count;
-        }
-        for batch in [
-            packed(&[(7, 0, 36864, 4096, false), (8, 1, 0, 4096, true)]),
-            chunk(40960, 16, true),
-        ] {
-            let start = host.device.journal.borrow().len();
-            step(&mut instance, &batch, &mut Views::default());
-            steps.push(
-                host.device.journal.borrow()[start..]
-                    .iter()
-                    .filter(|line| line.starts_with("launch "))
-                    .cloned()
-                    .collect::<Vec<_>>(),
-            );
-        }
-        for request in [7, 8] {
-            instance.retire_request(request).unwrap();
-        }
-        instance.destroy().unwrap();
-        assert_eq!(host.acquired.get(), host.released.get());
-        steps
-    };
-    let (off, on) = (run(Some(false)), run(None));
-    let full = |lines: &[String], symbol: &str| {
-        lines
-            .iter()
-            .filter(|line| line.contains("chop_position_indexer_") && line.contains(symbol))
-            .count()
-    };
-    let (lines, taken) = expected(&off[0]);
-    assert_eq!(on[0], lines);
+    let host = FakeHost::new(shape, KV_LAYOUTS[0]);
+    host.kv_pages.set(8192);
+    let record = crate::config::tests::record(&shape, KV_LAYOUTS[0], 2, false);
+    let mut instance = api()
+        .create(HostServicesTableV1::new(Rc::clone(&host)), &record)
+        .unwrap();
+    let mut previous = 0;
+    while previous < 36864 {
+        let count = if previous == 0 { 4096 } else { 8192 };
+        step(
+            &mut instance,
+            &chunk(previous, count, false),
+            &mut Views::default(),
+        );
+        previous += count;
+    }
+    let mut steps = Vec::new();
+    for batch in [
+        packed(&[(7, 0, 36864, 4096, false), (8, 1, 0, 4096, true)]),
+        chunk(40960, 16, true),
+    ] {
+        let start = host.device.journal.borrow().len();
+        step(&mut instance, &batch, &mut Views::default());
+        steps.push(
+            host.device.journal.borrow()[start..]
+                .iter()
+                .filter(|line| line.starts_with("launch "))
+                .cloned()
+                .collect::<Vec<_>>(),
+        );
+    }
+    for request in [7, 8] {
+        instance.retire_request(request).unwrap();
+    }
+    instance.destroy().unwrap();
+    assert_eq!(host.acquired.get(), host.released.get());
+    let (taken, checked) = full_source_batches(&steps[0], true);
     assert!(taken > 0);
-    assert_eq!(taken, full(&off[0], "_mma_fp4_guard_fast_v1 "));
-    assert_eq!(full(&on[0], "_mma_fp4_guard_fast_v1 "), 0);
-    assert_eq!(expected(&off[1]).1, 0);
-    assert_eq!(on[1], off[1]);
-    assert!(full(&on[1], "_mma_fp4_guard_fast_v1 ") > 0);
+    assert_eq!(taken, checked);
+    let (taken, checked) = full_source_batches(&steps[1], true);
+    assert_eq!(taken, 0);
+    assert!(checked > 0);
 }

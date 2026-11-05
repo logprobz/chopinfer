@@ -1167,10 +1167,34 @@ The `prefix_exact.py` RAM-hit arm and the `kv_offload` prefix-pressure arm
 run the tier ([checks](../tools/qual/README.md#prefix-caching)).
 
 The tier can run for MiMo, Qwen and GLM, whose bundles declare
-`chop.kv-offload.v1`. As of 2026-11-04 its GPU exactness runs for them, and
-stateful replay acceptance against the tier off, have not run. The option
-stays default off, no profile enables it, and it is not a qualified serving
-path until that evidence exists
+`chop.kv-offload.v1`. GPU exactness passed for GLM `tp4-mtp` on 2026-11-04
+and Qwen `tp4-mtp` on 2026-11-05, on four idle GPUs at their 300 W limits,
+through the opt-in `ram-forced` qualification configuration
+(`--kv-offload-gib 16 --kv-offload-prefix on --debug-prefix-ram`) and the
+`kv_offload` prefix-pressure arm:
+
+- every prefix hit of the forced server was a RAM hit: 3,377 hits reusing
+  4,114,560 tokens on GLM, 4,039 hits reusing 4,267,968 tokens on Qwen, the
+  same hit counts as the GPU-hit arm;
+- each RAM hit scored bitwise equal to cold prefill, at interior and prompt
+  end anchors and after media; the 12 greedy continuations after a hit equal
+  cold on each model, and drafter acceptance after a hit stayed within its
+  bound (margins 0.030 and 0.032);
+- the soak canary with the tier forced passed (5,613 requests over 1,200 s on
+  GLM, 26,036 over 1,380 s on Qwen), and so did `spec_verify` and
+  `verify_exact`; on GLM the determinism screen passed too (Qwen declares
+  its determinism screen only for its context-parallel configuration; its
+  forced-RAM determinism records still compared bit-identical);
+- under the prefix-pressure arm, C1 output matched the tier-off arm bitwise
+  (36 requests each), with 12 (GLM) and 19 (Qwen) published promotions, as
+  many RAM hits, and no stalled or pending copy at the end;
+- the same installs passed the tier-off GPU-hit prefix check.
+
+The tier is unqualified for MiMo and on AR profiles (`tp4-ar`): their GPU
+runs were left out of this scope on 2026-11-04, since production serves the
+speculative profiles. Stateful replay acceptance against the tier off has
+not run, so the tier's benefit is unmeasured; the option stays default off
+and no profile enables it
 ([option](serving-profiles.md#kv-offload-and-the-ram-prefix-tier),
 [metrics](operations-observability.md#kv-offload-and-the-ram-prefix-tier)).
 

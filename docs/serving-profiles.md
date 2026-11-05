@@ -406,10 +406,11 @@ hits on those anchors are RAM hits. A capture the tier has no room for stays
 on the GPU, so the RAM-hit exactness arm requires every hit to count as a RAM
 hit. The startup line names the mode.
 
-No profile sets `kv_offload_gib` or `kv_offload_prefix`. The tier has no GPU
-exactness or stateful replay acceptance evidence yet
-([status](numerics.md#kv-offload-and-prefix-state)), and each profile's
-default is set with the operator from that profile's evidence. An explicit
+No profile sets `kv_offload_gib` or `kv_offload_prefix`. The tier has GPU
+exactness evidence for GLM and Qwen `tp4-mtp`, none for MiMo or AR
+profiles, and no stateful replay acceptance yet
+([status](numerics.md#kv-offload-and-prefix-state)); each profile's default
+is set with the operator from that profile's evidence. An explicit
 flag overrides each field. An explicit setting that turns off what a
 profile's field needs drops that field: `--admission reserved` drops the
 profile's arena, and `--kv-offload-gib 0`, `--prefix-cache off` or
@@ -428,8 +429,9 @@ Qwen TP2 needs 51.2 GB of pinned host memory; see [setup](developer-preview.md#p
 Text and image are default inputs. MiMo can also serve video/audio with all
 modalities, but audio is not qualified in-tree: there is no end-to-end audio
 reference input. Preprocessing tests alone do not qualify audio serving.
-Offload and the RAM prefix tier are opt-in, and the tier is not qualified
-yet ([KV offload](#kv-offload-and-the-ram-prefix-tier)). Different batch
+Offload and the RAM prefix tier are opt-in. The tier is exact on GLM and
+Qwen `tp4-mtp`, unqualified for MiMo and on AR profiles, and its benefit is
+not yet accepted ([KV offload](#kv-offload-and-the-ram-prefix-tier)). Different batch
 buckets can change output bits under concurrency; see
 [numerics](numerics.md#batch-shape). Single-request and fixed-batch guarantees
 do not extend to arbitrary concurrent batches.

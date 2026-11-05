@@ -129,6 +129,19 @@ Plan-time overlap or collective-balance audit failures refuse the request before
 enqueue. Preparation fails closed instead of silently selecting synchronous gathers. Its owner-sum tags change route metadata when counters are enabled;
 journal identity does not claim route-tag identity.
 
+Two default-off candidates target the host waits of a DeepSeek DSpark mixed
+step, a DMA prefill beside verify rows. `CHOPINFER_PEER_COPY_BACKPRESSURE=event`,
+read once when the CUDA host backend starts, makes a full peer-copy queue wait
+for its oldest copy's completion event instead of synchronizing that copy's
+stream; `stream`, the default, keeps the stream wait. The DeepSeek model
+option `dspark_mixed_prepared_engram` replaces the synchronous gather of the
+verify rows (`engram/sync/mixed_target`) with prepared gathers
+(`engram/prepared/dspark_mixed_target`) that begin after the prefill's last
+Engram join. It admits only single-request DMA prefills of 512 through 8192
+rows beside graphed verify phases of at most 64 rows; every other mixed step
+keeps the synchronous gather. Both are candidate switches with CPU evidence
+only; GPU exactness and step-time acceptance decide adoption.
+
 Cold-row experiments must keep async read-ahead enabled. The shared defaults
 already enable it; `CHOPINFER_MAPPED_ASYNC_READ_AHEAD=1` makes the setting
 explicit even when another read-ahead control was inherited. The bundle

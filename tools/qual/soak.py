@@ -77,11 +77,12 @@ CACHE_ALLOWANCE_MIB = {"host": 0, "device": 0}
 # large read-only checkpoint files, judges VmRSS less the Rss of the read-only
 # mappings of MAPPED_VIEW_FILES (file names relative to the served checkpoint
 # directory) that the serving tree holds at the first sample, attributed per
-# mapping from /proc/PID/smaps, while each stays present and read-only in
-# every sample. Every other mapping counts: a later mapping, even of the same
-# file or with the same identity, a writable one, and every other file-backed
-# mapping, such as the driver's pinned host buffers mapped through the GPU
-# device nodes.
+# mapping from /proc/PID/smaps, while each stays present, shared, read-only
+# and clean (no Anonymous, Private_Dirty, Shared_Dirty or Swap pages) with
+# its first sample's permissions in every sample. Every other mapping counts:
+# a later mapping, even of the same file or with the same identity, a
+# private, writable or dirty one, and every other file-backed mapping, such
+# as the driver's pinned host buffers mapped through the GPU device nodes.
 HOST_MEMORY_SCOPE = "rss"
 MAPPED_VIEW_FILES = ()
 
@@ -125,8 +126,10 @@ def mapped_view_files(files=None, scope=None):
 def exempt_identity(entry):
     """The identity of an exempt mapping a sample lists (PID, start time,
     address range, device, inode, offset), or None unless the entry is a
-    read-only mapping whose Size is its address range and holds its Rss."""
-    keys = ("pid", "start_time", "range", "device", "inode", "offset", "perms", "size_kib", "rss_kib")
+    shared read-only mapping without Anonymous, Private_Dirty, Shared_Dirty
+    or Swap pages whose Size is its address range and holds its Rss."""
+    keys = ("pid", "start_time", "range", "device", "inode", "offset", "perms", "size_kib", "rss_kib",
+            "anonymous_kib", "private_dirty_kib", "shared_dirty_kib", "swap_kib")
     if not isinstance(entry, dict) or set(entry) != set(keys):
         return None
     natural = lambda value: type(value) is int and value >= 0
@@ -135,7 +138,7 @@ def exempt_identity(entry):
     if not (span and natural(entry["pid"]) and entry["pid"] > 0 and natural(entry["start_time"])
             and natural(entry["inode"]) and natural(entry["size_kib"]) and natural(entry["rss_kib"])
             and text("device", r"[0-9a-f]+:[0-9a-f]+") and text("offset", r"[0-9a-f]+")
-            and text("perms", r"[r-]-[x-][ps]")):
+            and text("perms", r"[r-]-[x-]s") and all(entry[key] == 0 and natural(entry[key]) for key in keys[9:])):
         return None
     if int(span[2], 16) - int(span[1], 16) != entry["size_kib"] * 1024 or entry["rss_kib"] > entry["size_kib"]:
         return None
@@ -145,12 +148,12 @@ def exempt_identity(entry):
 def exempt_problem(samples):
     """Why the rss_less_mapped_views scope cannot judge `samples`, or None.
     Each sample lists its exempt mappings (`host_exempt_mappings`), each a
-    distinct read-only mapping whose Size is its address range and holds its
-    Rss (exempt_identity), and every one listed by the first sample and by
-    each sample since. Its VmRSS, exempt Rss, bound and judged host memory
-    are finite non-negative numbers: the exempt Rss and bound the listed
-    mappings' Rss and Size, in MiB, the exempt Rss within VmRSS, and the
-    judged value VmRSS less it."""
+    distinct clean shared read-only mapping whose Size is its address range
+    and holds its Rss (exempt_identity), and every one listed, with the same
+    permissions, by the first sample and by each sample since. Its VmRSS,
+    exempt Rss, bound and judged host memory are finite non-negative
+    numbers: the exempt Rss and bound the listed mappings' Rss and Size, in
+    MiB, the exempt Rss within VmRSS, and the judged value VmRSS less it."""
     keys = ("host_rss_mib", "host_exempt_rss_mib", "host_exempt_bound_mib", "host_judged_mib")
     held = None
     for row in samples:
@@ -162,10 +165,13 @@ def exempt_problem(samples):
         entries = row.get("host_exempt_mappings")
         identities = [exempt_identity(entry) for entry in entries] if isinstance(entries, list) else [None]
         if None in identities or len(set(identities)) != len(identities):
-            return f"{at} lists no exempt mappings, or one that is not a distinct read-only mapping within its Size"
-        if held is not None and not set(identities) <= held:
-            return f"{at} exempts a mapping that the first sample and every sample since did not hold"
-        held = set(identities)
+            return (f"{at} lists no exempt mappings, or one that is not a distinct clean shared read-only mapping "
+                    "within its Size")
+        listed = {identity: entry["perms"] for identity, entry in zip(identities, entries)}
+        if held is not None and any(held.get(identity) != perms for identity, perms in listed.items()):
+            return (f"{at} exempts a mapping that the first sample and every sample since did not hold with the "
+                    "same permissions")
+        held = listed
         if (row["host_exempt_rss_mib"] != sum(entry["rss_kib"] for entry in entries) / 1024
                 or row["host_exempt_bound_mib"] != sum(entry["size_kib"] for entry in entries) / 1024):
             return f"{at} holds an exempt Rss or bound other than its listed mappings'"
@@ -450,22 +456,25 @@ def device_memory(root_pid):
 
 def smaps(pid):
     """The mappings of /proc/PID/smaps, each with its identity across samples
-    (address range, device, inode and offset), permissions, path, and Size
-    and Rss in kB. Only the header, Size and Rss lines are parsed."""
+    (address range, device, inode and offset), permissions, path, and Size,
+    Rss, Anonymous, Private_Dirty, Shared_Dirty and Swap in kB. Only the
+    header lines and those fields are parsed."""
+    fields = (b"Size:", b"Rss:", b"Anonymous:", b"Private_Dirty:", b"Shared_Dirty:", b"Swap:")
     mappings = []
     for line in Path(f"/proc/{pid}/smaps").read_bytes().split(b"\n"):
         if line and line[0] in b"0123456789abcdef":
-            fields = line.split(None, 5)
-            span, perms, offset, device, inode = (field.decode() for field in fields[:5])
+            header = line.split(None, 5)
+            span, perms, offset, device, inode = (field.decode() for field in header[:5])
             mappings.append({"key": (span, device, inode, offset), "perms": perms,
-                             "path": os.fsdecode(fields[5]) if len(fields) > 5 else ""})
-        elif line.startswith((b"Size:", b"Rss:")):
+                             "path": os.fsdecode(header[5]) if len(header) > 5 else ""})
+        elif line.startswith(fields):
             if not mappings:
                 raise ValueError(f"/proc/{pid}/smaps has a field before its first mapping")
             name, value = line.split()[:2]
             mappings[-1][name[:-1].decode()] = int(value)
-    if any("Size" not in mapping or "Rss" not in mapping for mapping in mappings):
-        raise ValueError(f"/proc/{pid}/smaps has a mapping without Size or Rss")
+    if any(field[:-1].decode() not in mapping for mapping in mappings for field in fields):
+        raise ValueError(f"/proc/{pid}/smaps has a mapping without Size, Rss, Anonymous, Private_Dirty, "
+                         "Shared_Dirty or Swap")
     return mappings
 
 
@@ -551,12 +560,13 @@ class MappedViews:
     process resolves, mapped_view_identities, and whose path smaps does not
     mark deleted) that the serving tree holds at the first sample, each
     identified by its process (PID and start time), address range, device,
-    inode and offset.
-    An exempt mapping must be present, read-only, in every sample from the
-    first on: one a sample lacks or holds writable is retired for the rest
-    of the soak, so a later mapping with the same identity counts. A first
-    sample that cannot identify them leaves every later sample without the
-    evidence."""
+    inode and offset. Only a shared read-only mapping without Anonymous,
+    Private_Dirty, Shared_Dirty or Swap pages, holding no more Rss than its
+    Size, is eligible. An exempt mapping must stay present and eligible, with
+    its first sample's permissions, in every sample: one a sample lacks or
+    holds otherwise is retired for the rest of the soak, so a later mapping
+    with the same identity counts. A first sample that cannot identify them
+    leaves every later sample without the evidence."""
 
     def __init__(self, files):
         self.files = files
@@ -567,24 +577,29 @@ class MappedViews:
 
     @staticmethod
     def eligible(mapping):
-        return "w" not in mapping["perms"] and not mapping["path"].endswith(" (deleted)")
+        perms = mapping["perms"]
+        return (perms[1] == "-" and perms[3] == "s" and not mapping["path"].endswith(" (deleted)")
+                and mapping["Rss"] <= mapping["Size"]
+                and not any(mapping[key] for key in ("Anonymous", "Private_Dirty", "Shared_Dirty", "Swap")))
 
     def establish(self, tree):
         identities = mapped_view_identities([pid for pid, _ in tree], self.files)
         files = {(device_number(device), inode) for _, _, device, inode in identities}
-        exempt = set()
+        # Each exempt identity with its first sample's permissions.
+        exempt = {}
         for (pid, start), mappings in tree.items():
             for mapping in mappings:
                 span, device, inode, offset = mapping["key"]
                 if self.eligible(mapping) and (device_number(device), int(inode)) in files:
-                    exempt.add((pid, start, *mapping["key"]))
+                    exempt[pid, start, *mapping["key"]] = mapping["perms"]
         self.identities, self.exempt = identities, exempt
 
     def judge(self, tree, rss, unread=None):
         """A sample's judged host memory (VmRSS `rss` less the exempt Rss),
         the exempt Rss and their bound (the exempt mappings' Size), in MiB,
-        and the exempt mappings themselves (identity, permissions, Size and
-        Rss in kB), from the tree's mappings ({(pid, start time): smaps}).
+        and the exempt mappings themselves (identity, permissions, and Size,
+        Rss, Anonymous, Private_Dirty, Shared_Dirty and Swap in kB), from the
+        tree's mappings ({(pid, start time): smaps}).
         None beside `host_exempt_error` when a process's mappings were
         `unread`, or the first sample could not identify the exempt ones; an
         unread process's exempt mappings are retired."""
@@ -598,14 +613,17 @@ class MappedViews:
         present = {(pid, start, *mapping["key"]): mapping for (pid, start), mappings in tree.items()
                    for mapping in mappings if self.eligible(mapping)}
         if self.exempt is not None:
-            self.exempt &= present.keys()
+            self.exempt = {identity: perms for identity, perms in self.exempt.items()
+                           if identity in present and present[identity]["perms"] == perms}
         if error := self.error or (unread and f"no mappings of {unread}"):
             return {"host_judged_mib": None, "host_exempt_rss_mib": None, "host_exempt_bound_mib": None,
                     "host_exempt_mappings": None, "host_exempt_error": error}
         listed = [{"pid": pid, "start_time": start, "range": span, "device": device, "inode": int(inode),
-                   "offset": offset, "perms": present[identity]["perms"], "size_kib": present[identity]["Size"],
-                   "rss_kib": present[identity]["Rss"]}
-                  for identity in sorted(self.exempt) for pid, start, span, device, inode, offset in [identity]]
+                   "offset": offset, "perms": mapping["perms"], "size_kib": mapping["Size"], "rss_kib": mapping["Rss"],
+                   "anonymous_kib": mapping["Anonymous"], "private_dirty_kib": mapping["Private_Dirty"],
+                   "shared_dirty_kib": mapping["Shared_Dirty"], "swap_kib": mapping["Swap"]}
+                  for identity in sorted(self.exempt) for mapping in [present[identity]]
+                  for pid, start, span, device, inode, offset in [identity]]
         exempt = sum(entry["rss_kib"] for entry in listed) / 1024
         return {"host_judged_mib": rss - exempt, "host_exempt_rss_mib": exempt,
                 "host_exempt_bound_mib": sum(entry["size_kib"] for entry in listed) / 1024,

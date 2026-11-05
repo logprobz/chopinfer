@@ -9,12 +9,12 @@ def rule(path, value=True, op="eq"):
 
 
 def table_mapping(rss_kib, size_mib=193365, **changed):
-    """An exempt mapping as a soak sample lists it: a read-only shared view
-    of `size_mib` MiB holding `rss_kib` kB."""
+    """An exempt mapping as a soak sample lists it: a clean read-only shared
+    view of `size_mib` MiB holding `rss_kib` kB."""
     start = 0x7428b2600000
     return {"pid": 101, "start_time": 5001, "range": f"{start:x}-{start + size_mib * 2 ** 20:x}", "device": "103:01",
             "inode": 11, "offset": "00000000", "perms": "r--s", "size_kib": size_mib * 1024, "rss_kib": rss_kib,
-            **changed}
+            "anonymous_kib": 0, "private_dirty_kib": 0, "shared_dirty_kib": 0, "swap_kib": 0, **changed}
 
 
 def file_identities(files):
@@ -366,9 +366,52 @@ class DeclaredMappedViews(unittest.TestCase):
                     table_mapping(kib, 1024, perms="rw-s", device="00:05")]}),
                 ("Rss over Size", lambda kib: {"host_exempt_mappings": [table_mapping(kib, 1024, size_kib=1)]}),
                 ("another process later", lambda kib: {"host_exempt_mappings": [
-                    table_mapping(kib, 1024, start_time=5001 if kib == 0 else 9001)]})):
+                    table_mapping(kib, 1024, start_time=5001 if kib == 0 else 9001)]}),
+                ("a private view", lambda kib: {"host_exempt_mappings": [table_mapping(kib, 1024, perms="r--p")]}),
+                ("a private view later", lambda kib: {"host_exempt_mappings": [
+                    table_mapping(kib, 1024, perms="r--s" if kib == 0 else "r--p")]}),
+                ("other permissions later", lambda kib: {"host_exempt_mappings": [
+                    table_mapping(kib, 1024, perms="r--s" if kib == 0 else "r-xs")]}),
+                *((f"{key} later", lambda kib, key=key: {"host_exempt_mappings": [
+                    table_mapping(kib, 1024, **{key: 4 if kib else 0})]})
+                  for key in ("anonymous_kib", "private_dirty_kib", "shared_dirty_kib", "swap_kib")),
+                ("no Swap count", lambda kib: {"host_exempt_mappings": [
+                    {key: value for key, value in table_mapping(kib, 1024).items() if key != "swap_kib"}]})):
             with self.subTest(label):
                 result = score(listed)
+                self.assertEqual(result["status"], "insufficient")
+                self.assertIn("incomplete or inconsistent mapped-view memory evidence", result["error"])
+
+    def test_a_view_turned_private_and_dirty_is_refused(self):
+        # A 1 GiB shared view of the declared file at 0 s, a private one
+        # at the same identity holding 300 and then 600 MiB after.
+        check = {"module": "soak", "args": ["--duration", "60", "--concurrency", "1"],
+                 "constants": {"soak": {"HOST_MEMORY_SCOPE": {"value": "rss_less_mapped_views", "source": "test"},
+                                        "MAPPED_VIEW_FILES": {"value": ["table.bin"], "source": "test"}}},
+                 "rules": [rule(["passed"])]}
+        for label, counters in (("as listed", {}),
+                                ("with its dirty anonymous pages", {"anonymous_kib": 1, "private_dirty_kib": 1}),
+                                ("claiming no dirty pages", {"anonymous_kib": 0, "private_dirty_kib": 0,
+                                                             "shared_dirty_kib": 0, "swap_kib": 0})):
+            def entry(t):
+                listed = {"pid": 123, "start_time": 400, "range": "100000000-140000000", "device": "08:01",
+                          "inode": 101, "offset": "00000000", "perms": "r--s" if t == 0 else "r--p",
+                          "size_kib": 2 ** 20, "rss_kib": 10 * t * 1024}
+                if counters:
+                    listed.update({"anonymous_kib": 0, "private_dirty_kib": 0, "shared_dirty_kib": 0, "swap_kib": 0})
+                    listed.update({key: value * 10 * t * 1024 for key, value in counters.items()})
+                return listed
+            value = {"passed": True, "errors": [], "completed": 3, "concurrency": 1, "duration_seconds": 60,
+                     "measured_duration_seconds": 60, "memory_scope": "serving_process_tree",
+                     "host_memory_scope": "rss_less_mapped_views", "mapped_view_files": ["table.bin"],
+                     "mapped_view_file_identities": [{"file": "table.bin", "path": "/checkpoint/table.bin",
+                                                      "device": "08:01", "inode": 101}],
+                     "memory_samples": [{"elapsed_seconds": t, "mib": 100, "host_rss_mib": 100 + 10 * t,
+                                         "host_judged_mib": 100, "host_exempt_rss_mib": 10 * t,
+                                         "host_exempt_bound_mib": 1024, "host_exempt_mappings": [entry(t)]}
+                                        for t in (0, 30, 60)]}
+            with self.subTest(label):
+                result = kinds.rescore(kinds.of("soak"), value, None, check)
                 self.assertEqual(result["status"], "insufficient")
                 self.assertIn("incomplete or inconsistent mapped-view memory evidence", result["error"])
 

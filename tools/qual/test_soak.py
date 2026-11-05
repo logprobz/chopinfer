@@ -508,21 +508,23 @@ TABLES = ["tables/table-a.bin", "tables/table-b.bin"]
 REAL = {"read_text": Path.read_text, "read_bytes": Path.read_bytes, "readlink": os.readlink}
 
 
-def server_mappings(store, exempt=0, driver=0, anon=0, other=0, writable=0, later=None, protected=False, gone=False):
+def server_mappings(store, exempt=0, driver=0, anon=0, other=0, writable=0, later=None, protected=False, gone=False,
+                    first_perms=None):
     """The server's mappings as (range, perms, offset, path, Size kB, Rss
     kB): the four table views under `store` (the first grown by `exempt`
     kB), the driver's control node (pinned host buffers, grown by `driver`),
     anonymous memory (`anon`), an undeclared checkpoint file (`other`), a
     writable mapping of a declared file (`writable`) and, when `later` is
     not None, a mapping of a declared file the first sample did not see.
-    `protected` makes the first table view writable, as mprotect would, and
-    `gone` leaves it out, as munmap would. The
+    `protected` makes the first table view writable, as mprotect would,
+    `first_perms` gives it other permissions, as a replacement mmap at its
+    address could, and `gone` leaves it out, as munmap would. The
     table views, libc and their Size and Rss are a 2026-11-05 GPU soak's;
     each other mapping spans 1 GiB (the anonymous one 8 GiB), room for the
     tests' growth."""
     table_a, table_b = (f"{store}/{name}" for name in TABLES)
-    rows = [("74404d400000-745730b82000", "rw-s" if protected else "r--s", "00000000", table_a, 96001544,
-             3905472 + exempt),
+    rows = [("74404d400000-745730b82000", "rw-s" if protected else first_perms or "r--s", "00000000",
+             table_a, 96001544, 3905472 + exempt),
             ("745730d81000-7457e7f3e000", "r--s", "16e3781000", table_a, 3000052, 2672428),
             ("7428b2600000-743f96013000", "r--s", "00000000", table_b, 96004172, 3904596),
             ("743f96212000-74404d3e4000", "r--s", "16e3a12000", table_b, 3000136, 2612208),
@@ -536,19 +538,30 @@ def server_mappings(store, exempt=0, driver=0, anon=0, other=0, writable=0, late
     return rows[1:] if gone else rows
 
 
+def write_clean(path, data):
+    """Write a file and flush it to disk, so that its page cache, as a
+    checkpoint's long after it was written, is clean."""
+    with open(path, "wb") as stream:
+        stream.write(data)
+        stream.flush()
+        os.fsync(stream.fileno())
+
+
 class FakeProc:
     """/proc of a serving tree: a wrapper (pid 100) whose command line holds
     the server's, and the server (pid 101), started in `cwd`. `mappings(n)`
     gives the server's mappings at the nth sample (the nth listing of the
     tree), `start(n)` its start time; `unreadable(n)` the pids whose smaps
-    cannot be read then. A mapped file that exists here has its device and
-    inode, unless it is in `foreign` (another file object under its path);
-    the processes' root is this one's."""
+    cannot be read then; `counters(n, range)` a mapping's Anonymous,
+    Private_Dirty, Shared_Dirty or Swap kB then, where they are not those
+    of its kind. A mapped file that exists here has its device and inode,
+    unless it is in `foreign` (another file object under its path); the
+    processes' root is this one's."""
 
     def __init__(self, cwd, mappings, argv=("chopinfer", "serve", "--model", "checkpoint"),
-                 unreadable=lambda n: (), start=lambda n: 5001, foreign=()):
+                 unreadable=lambda n: (), start=lambda n: 5001, foreign=(), counters=lambda n, span: {}):
         self.cwd, self.mappings, self.argv, self.unreadable = cwd, mappings, list(argv), unreadable
-        self.start, self.foreign = start, set(foreign)
+        self.start, self.foreign, self.counters = start, set(foreign), counters
         self.samples = -1
         self.smaps_reads = 0
 
@@ -579,10 +592,18 @@ class FakeProc:
             elif path and os.path.isfile(path):
                 status = os.stat(path)
                 device, inode = f"{os.major(status.st_dev):02x}:{os.minor(status.st_dev):02x}", status.st_ino
+            # Anonymous and writable mappings hold dirty pages; read-only file
+            # mappings clean page cache, unless the sample says otherwise.
+            dirty = rss if not path or "w" in perms else 0
+            counters = {"Shared_Dirty": 0, "Private_Dirty": dirty, "Anonymous": rss if not path else 0, "Swap": 0,
+                        **self.counters(self.samples, span)}
             lines += [f"{span} {perms} {offset} {device} {inode}" + (f"                 {path}" if path else ""),
-                      f"Size:           {size:8} kB", "KernelPageSize:        4 kB",
+                      f"Size:           {size:8} kB", "KernelPageSize:        4 kB", "MMUPageSize:           4 kB",
                       f"Rss:            {rss:8} kB", f"Pss:            {rss:8} kB",
-                      f"Private_Dirty:  {rss:8} kB", "Anonymous:             0 kB", "VmFlags: rd mr me sd"]
+                      f"Shared_Clean:   {0:8} kB", f"Shared_Dirty:   {counters['Shared_Dirty']:8} kB",
+                      f"Private_Clean:  {rss - dirty:8} kB", f"Private_Dirty:  {counters['Private_Dirty']:8} kB",
+                      f"Anonymous:      {counters['Anonymous']:8} kB", f"Swap:           {counters['Swap']:8} kB",
+                      f"SwapPss:        {counters['Swap'] + 7:8} kB", "VmFlags: rd mr me sd"]
         return ("\n".join(lines) + "\n").encode()
 
     def stat(self, pid):
@@ -751,6 +772,90 @@ class MappedViewScope(unittest.TestCase):
                 self.assertEqual(rows[-1]["host_exempt_rss_mib"], (2672428 + 3904596 + 2612208) / 1024)
                 self.assertFalse(self.rule(rows)["passed"])
 
+    def test_a_view_that_turns_private_dirty_or_otherwise_permitted_is_retired(self):
+        view = "74404d400000-745730b82000"
+        views = (3905472 + 2672428 + 3904596 + 2612208) / 1024
+        # Replaced at 600 s by a private mapping with 600 MiB of dirty
+        # anonymous pages, then read-only again: it counts from then on.
+        rows, _ = self.sampled(lambda t: {"first_perms": "r--p" if t >= 600 else None,
+                                          "exempt": 600 * 1024 if t >= 600 else 0},
+                               counters=lambda n, span: {"Anonymous": 600 * 1024, "Private_Dirty": 600 * 1024}
+                               if span == view and n >= 20 else {})
+        self.assertEqual(rows[-1]["host_judged_mib"] - rows[0]["host_judged_mib"], (3905472 + 600 * 1024) / 1024)
+        self.assertEqual(rows[-1]["host_exempt_rss_mib"], views - 3905472 / 1024)
+        self.assertFalse(self.rule(rows)["passed"])
+        # Dirty, anonymous or swapped pages in it, or other permissions, at
+        # 600 s alone retire it as well.
+        for label, options in [*((counter, {"counters": lambda n, span, counter=counter: {counter: 4}
+                                            if span == view and n == 20 else {}})
+                                 for counter in ("Anonymous", "Private_Dirty", "Shared_Dirty", "Swap")),
+                               ("r-xs", {"grow": lambda t: {"first_perms": "r-xs" if t == 600 else None}})]:
+            with self.subTest(label):
+                rows, _ = self.sampled(options.pop("grow", lambda t: {}), **options)
+                self.assertEqual([row["host_exempt_rss_mib"] for row in rows[19:22]],
+                                 [views, views - 3905472 / 1024, views - 3905472 / 1024])
+                self.assertEqual(rows[-1]["host_judged_mib"] - rows[0]["host_judged_mib"], 3905472 / 1024)
+
+    def test_a_first_sample_view_that_is_private_or_dirty_is_never_exempt(self):
+        view = "74404d400000-745730b82000"
+        for label, options in (("private", {"grow": lambda t: {"first_perms": "r--p"}}),
+                               ("dirty", {"counters": lambda n, span: {"Shared_Dirty": 4} if span == view and n == 0
+                                          else {}})):
+            with self.subTest(label):
+                rows, _ = self.sampled(options.pop("grow", lambda t: {}), **options)
+                self.assertTrue(all(view not in {entry["range"] for entry in row["host_exempt_mappings"]}
+                                    for row in rows))
+                self.assertEqual(len(rows[-1]["host_exempt_mappings"]), 3)
+        # Each listed view records the counters the rule requires to be 0.
+        rows, _ = self.sampled()
+        self.assertTrue(all((entry["anonymous_kib"], entry["private_dirty_kib"], entry["shared_dirty_kib"],
+                             entry["swap_kib"]) == (0, 0, 0, 0) for row in rows for entry in row["host_exempt_mappings"]))
+
+    def test_a_real_view_replaced_by_a_private_dirty_one_counts(self):
+        # This process maps 8 MiB of a declared file shared and read-only,
+        # then, between two samples, maps it again at the same address,
+        # offset and file, privately, fills it and makes it read-only again:
+        # the same identity in smaps, now 8 MiB of anonymous dirty pages.
+        # A clean shared read-only replacement is the case no sample can
+        # tell apart: the same file's clean page cache at the same address.
+        import ctypes
+        import mmap
+        size = 8 * 2 ** 20
+        libc = ctypes.CDLL(None, use_errno=True)
+        libc.mmap.argtypes = (ctypes.c_void_p, ctypes.c_size_t, ctypes.c_int, ctypes.c_int, ctypes.c_int,
+                              ctypes.c_long)
+        libc.mmap.restype = ctypes.c_void_p
+        libc.munmap.argtypes = (ctypes.c_void_p, ctypes.c_size_t)
+        libc.mprotect.argtypes = (ctypes.c_void_p, ctypes.c_size_t, ctypes.c_int)
+        path = Path(self.store) / "table.bin"
+        write_clean(path, b"x" * size)
+        descriptor = os.open(path, os.O_RDONLY)
+        self.addCleanup(os.close, descriptor)
+        for label, protection, flags, exempt in (("private dirty", mmap.PROT_READ | mmap.PROT_WRITE,
+                                                  mmap.MAP_PRIVATE, 0),
+                                                 ("clean shared", mmap.PROT_READ, mmap.MAP_SHARED, size)):
+            with self.subTest(label):
+                views = soak.MappedViews(["table.bin"])
+                pointer = libc.mmap(None, size, mmap.PROT_READ, mmap.MAP_SHARED, descriptor, 0)
+                self.assertNotEqual(pointer, ctypes.c_void_p(-1).value)
+                ctypes.string_at(pointer, size)
+                with self.serving_this_process() as pid:
+                    first = soak.host_memory(pid, views)
+                self.assertEqual(libc.munmap(pointer, size), 0)
+                # MAP_FIXED_NOREPLACE: the same address, or a failure.
+                again = libc.mmap(pointer, size, protection, flags | 0x100000, descriptor, 0)
+                self.assertEqual(again, pointer, os.strerror(ctypes.get_errno()))
+                if protection & mmap.PROT_WRITE:
+                    ctypes.memset(again, 7, size)
+                    self.assertEqual(libc.mprotect(again, size, mmap.PROT_READ), 0)
+                else:
+                    ctypes.string_at(again, size)
+                with self.serving_this_process() as pid:
+                    later = soak.host_memory(pid, views)
+                self.assertEqual(libc.munmap(again, size), 0)
+                self.assertEqual((first["host_exempt_rss_mib"], later["host_exempt_rss_mib"]),
+                                 (size / 2 ** 20, exempt / 2 ** 20))
+
     def test_a_restarted_server_or_a_recycled_pid_counts(self):
         # The same PID and mappings, but another process from 600 s on.
         rows, _ = self.sampled(start=lambda n: 5001 if n < 20 else 9001)
@@ -770,7 +875,7 @@ class MappedViewScope(unittest.TestCase):
         libc.mmap.restype = ctypes.c_void_p
         libc.munmap.argtypes = (ctypes.c_void_p, ctypes.c_size_t)
         path = Path(self.store) / "table.bin"
-        path.write_bytes(b"x" * mmap.PAGESIZE)
+        write_clean(path, b"x" * mmap.PAGESIZE)
         descriptor = os.open(path, os.O_RDONLY)
         self.addCleanup(os.close, descriptor)
 
@@ -879,7 +984,7 @@ class MappedViewScope(unittest.TestCase):
                                                    "another.bin (deleted)")):
             with self.subTest(label):
                 path = Path(self.store) / mapped
-                path.write_bytes(b"x" * mmap.PAGESIZE)
+                write_clean(path, b"x" * mmap.PAGESIZE)
                 with path.open("rb") as stream:
                     view = mmap.mmap(stream.fileno(), mmap.PAGESIZE, mmap.MAP_SHARED, mmap.PROT_READ)
                 self.addCleanup(view.close)
@@ -959,11 +1064,11 @@ class MappedViewScope(unittest.TestCase):
                 ("no list", unlisted, "lists no exempt mappings"),
                 ("an empty list", emptied, "listed mappings'"),
                 ("one listed mapping", one_kept, "listed mappings'"),
-                ("Rss over Size", changed("rss_kib", 96004172 + 1), "not a distinct read-only mapping"),
-                ("Size other than the range", changed("size_kib", 96004172 + 1), "not a distinct read-only mapping"),
-                ("a writable mapping", changed("perms", "rw-s"), "not a distinct read-only mapping"),
-                ("an unknown field", changed("path", "/x"), "not a distinct read-only mapping"),
-                ("a duplicate", duplicated, "not a distinct read-only mapping"),
+                ("Rss over Size", changed("rss_kib", 96004172 + 1), "not a distinct clean shared read-only mapping"),
+                ("Size other than the range", changed("size_kib", 96004172 + 1), "not a distinct clean shared read-only mapping"),
+                ("a writable mapping", changed("perms", "rw-s"), "not a distinct clean shared read-only mapping"),
+                ("an unknown field", changed("path", "/x"), "not a distinct clean shared read-only mapping"),
+                ("a duplicate", duplicated, "not a distinct clean shared read-only mapping"),
                 ("a mapping absent from a sample", gone_then_back, "at 180 s exempts a mapping"),
                 ("another process", recycled, "at 150 s exempts a mapping"),
                 ("another range", remapped, "at 150 s exempts a mapping")):

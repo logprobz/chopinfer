@@ -111,13 +111,14 @@ def spec_receipt(name, arm, run_id):
 
 def exempt(row, mib):
     """Make `mib` MiB of a soak sample's VmRSS the Rss of its one exempt
-    mapping, a 1024 MiB read-only view."""
+    mapping, a clean 1024 MiB read-only shared view."""
     start, kib = 0x7428b2600000, round(mib * 1024)
     row.update(host_exempt_rss_mib=kib / 1024, host_exempt_bound_mib=1024,
                host_judged_mib=row['host_rss_mib'] - kib / 1024,
                host_exempt_mappings=[{'pid': 101, 'start_time': 5001, 'range': f'{start:x}-{start + 2 ** 30:x}',
                                       'device': '103:01', 'inode': 11, 'offset': '00000000', 'perms': 'r--s',
-                                      'size_kib': 2 ** 20, 'rss_kib': kib}])
+                                      'size_kib': 2 ** 20, 'rss_kib': kib, 'anonymous_kib': 0,
+                                      'private_dirty_kib': 0, 'shared_dirty_kib': 0, 'swap_kib': 0}])
 
 
 def soak_receipt(facts, duration, scope=None, files=None):

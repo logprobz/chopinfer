@@ -50,6 +50,10 @@ def warmed(facts):
     return bool(facts['soak_warmup'])
 
 
+def scoped(facts):
+    return facts['soak_scope'] != 'rss'
+
+
 def determinism_receipt(name, arm, run_id, image):
     from determinism import (COLD_REPEAT, HIT_ANCHORS, HITS, PREFIX_HIT, PRIMERS, SAMPLING, hit_requests,
                              ids_digest, request_digest, request_names, request_set)
@@ -96,15 +100,23 @@ def spec_receipt(name, arm, run_id):
                                              for _ in range(16)]} for set_name in ('copy', 'natural')}}
 
 
-def soak_receipt(facts, duration):
+def soak_receipt(facts, duration, scope=None):
+    """A soak receipt judged under `scope` (default: the model's declared
+    host memory scope); one other than rss records the parts it judges and
+    the mapped-view bytes."""
+    scope = facts['soak_scope'] if scope is None else scope
     value = {'passed': True, 'mechanics_only': False, 'errors': [], 'duration_seconds': duration,
              'measured_duration_seconds': duration, 'completed': 10, 'concurrency': facts['max_sequences'],
              'memory_samples': [{'elapsed_seconds': float(at), 'mib': 100, 'host_rss_mib': 100}
                                 for at in range(0, duration + 1, 30)],
              'memory_scope': 'serving_process_tree', 'memory_growth_mib': 0,
              'mixed_requests': {'structured': 1, 'structured_truncated': 0}}
-    if runner.soak_rule_arguments(facts):
+    if facts['soak_warmup'] or any(facts['soak_allowance'].values()):
         value.update(warmup_seconds=facts['soak_warmup'], cache_allowance_mib=facts['soak_allowance'])
+    if scope != 'rss':
+        for row in value['memory_samples']:
+            row.update(host_rss_anon_mib=60, host_rss_shmem_mib=20, host_rss_file_mib=20, mapped_view_bytes=2 ** 30)
+        value['host_memory_scope'] = scope
     return value
 
 
@@ -685,7 +697,7 @@ class RuleTests(unittest.TestCase):
             runner.judge_gsm8k(value, self.facts)
 
     def test_soak_is_judged_by_the_soak_kind_with_the_stage_arguments(self):
-        plain = runner.model_facts(model(lambda facts: not warmed(facts)))
+        plain = runner.model_facts(model(lambda facts: not warmed(facts) and not scoped(facts)))
         rule = runner.soak_arguments(plain, 1200)
         values, _ = runner.judge_soak(soak_receipt(plain, 1200), plain, rule)
         self.assertEqual({value['metric']: value['value'] for value in values},
@@ -745,6 +757,43 @@ class RuleTests(unittest.TestCase):
             row['host_rss_mib'] += max(row['elapsed_seconds'] - warm['soak_warmup'], 0)
         with self.assertRaisesRegex(ValueError, 'grew more than'):
             runner.judge_soak(value, warm, rule)
+
+    def test_a_declared_host_memory_scope_reaches_the_soak_stage(self):
+        plain = runner.model_facts(model(lambda facts: not warmed(facts) and not scoped(facts)))
+        self.assertNotIn('--host-memory-scope', runner.soak_arguments(plain, 1200))
+        if not any(scoped(runner.model_facts(name)) for name in MODELS):
+            return
+        facts = runner.model_facts(model(scoped))
+        rule = runner.soak_arguments(facts, 1200)
+        self.assertEqual(rule[rule.index('--host-memory-scope') + 1], facts['soak_scope'])
+        values, _ = runner.judge_soak(soak_receipt(facts, 1200), facts, rule)
+        self.assertIn({'metric': 'host_rss_file_growth_mib', 'value': 0, 'op': 'le', 'limit': 1024}, values)
+        # File-backed pages within the mapped views pass however VmRSS
+        # grows; the same VmRSS growth fails a model without the scope.
+        files, vmrss = soak_receipt(facts, 1200), soak_receipt(plain, 1200)
+        for row, other in zip(files['memory_samples'], vmrss['memory_samples']):
+            row['host_rss_file_mib'] += row['elapsed_seconds'] * 2 // 3
+            row['host_rss_mib'] += row['elapsed_seconds'] * 2 // 3
+            other['host_rss_mib'] = row['host_rss_mib']
+        values, _ = runner.judge_soak(files, facts, rule)
+        self.assertIn({'metric': 'host_rss_file_growth_mib', 'value': 800, 'op': 'le', 'limit': 1024}, values)
+        with self.assertRaisesRegex(ValueError, 'grew more than'):
+            runner.judge_soak(vmrss, plain, runner.soak_arguments(plain, 1200))
+        for part in ('host_rss_anon_mib', 'host_rss_shmem_mib', 'host_rss_file_mib'):
+            leak = soak_receipt(facts, 1200)
+            for row in leak['memory_samples']:
+                row[part] += row['elapsed_seconds']
+            with self.subTest(part), self.assertRaisesRegex(
+                    ValueError, 'grew more than .*file-backed pages beyond the mapped-view bytes'):
+                runner.judge_soak(leak, facts, rule)
+        # A stage receipt judged under another scope, or a sample without the
+        # parts the scope reads, fails the stage.
+        with self.assertRaisesRegex(ValueError, 'another host memory scope'):
+            runner.judge_soak(soak_receipt(facts, 1200, 'rss'), facts, rule)
+        incomplete = soak_receipt(facts, 1200)
+        del incomplete['memory_samples'][3]['mapped_view_bytes']
+        with self.assertRaisesRegex(ValueError, 'incomplete anonymous'):
+            runner.judge_soak(incomplete, facts, rule)
 
     def test_queue_needle_and_greedy_rules(self):
         clients = runner.queue_clients(self.facts)
@@ -2256,7 +2305,9 @@ class FakeRun:
         elif script == 'needle.py':
             value = {'passed': True, 'mechanics_only': False, 'rows': [{'context': self.facts['context'], 'passed': True}]}
         elif script == 'soak.py':
-            value = soak_receipt(self.facts, runner.AR_SOAK_SECONDS)
+            # Judged under the scope the stage passes, as soak.py judges it.
+            scope = command[command.index('--host-memory-scope') + 1] if '--host-memory-scope' in command else 'rss'
+            value = soak_receipt(self.facts, runner.AR_SOAK_SECONDS, scope)
         elif script == 'gsm8k_branches.py':
             from gsm8k_branches import TOP_LOGPROBS
             from limits import NEAR_TIE_NATS

@@ -96,16 +96,23 @@ bound): the growth from the first sample at or after the warm-up must stay
 within the limit, and the growth over the whole soak within the limit plus
 the allowance (`soak.memory_rule`; the warm-up is capped at a quarter of the
 duration). Undeclared, the rule is the plain one. Host memory is VmRSS
-unless the constants declare `HOST_MEMORY_SCOPE` `anonymous_shmem`, for a
-server that maps large read-only files: the limit then applies to RssAnon +
-RssShmem, and RssFile is reported and its growth over the whole soak must
-stay within the smallest `mapped_view_bytes` sampled. RssFile also holds
-driver-pinned host buffers mapped through the GPU device nodes and library
-pages, so that bound is a coarse ceiling, not a leak check. Every sample must then carry RssAnon,
-RssShmem, RssFile and `mapped_view_bytes`; one without them fails the soak
-and is insufficient evidence on rescore, as is a receipt judged under
-another scope. The release preview passes the declared warm-up, allowance and
-scope to its AR soak stage. A shorter saved soak is diagnostic only. A
+unless the constants declare `HOST_MEMORY_SCOPE` `rss_less_mapped_views`
+and `MAPPED_VIEW_FILES` (file names relative to the served checkpoint
+directory), for a server that maps large read-only checkpoint files: the
+limit then applies to VmRSS less the Rss of those files' read-only mappings
+that the serving tree holds at the first sample. At each sample the soak
+reads every tree process's `/proc/PID/smaps` and attributes Rss per
+mapping. It takes the checkpoint directory from the serve process's
+`--model` (or `--checkpoint` beside `--bundle`) and identifies an exempt
+mapping by process, address range, device, inode and offset. A later
+mapping, even of the same file, a writable one, and every other mapping
+count, including the driver's pinned host buffers mapped through the GPU
+device nodes. Each sample records the judged host memory, the exempt Rss
+and its bound (the exempt mappings' Size); a sample whose smaps could not be
+read lacks them, which fails the soak and is insufficient evidence on
+rescore, as is a receipt judged under another scope or other files. The
+release preview passes the declared warm-up, allowance, scope and files to
+its AR soak stage. A shorter saved soak is diagnostic only. A
 capability the server does not serve is `not_applicable`, never a silently
 skipped check. Capability coverage is a declaration check; the gate run must
 still prove every predicate and input.

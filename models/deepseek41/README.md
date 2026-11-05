@@ -1093,17 +1093,24 @@ The bundle declares no KV offload: the server keeps no KV in host memory,
 and a preempted request recomputes its KV. `qual.json` declares offload not
 served, so the release preview reports it as not applicable.
 
-The soak judges host memory as RssAnon + RssShmem against the 512 MiB
-limit (`HOST_MEMORY_SCOPE` in `qual.json`); RssFile is reported and its
-growth must stay within the mapped-view bytes. RssFile holds the pages of
-the authenticated read-only checkpoint mappings but also the CUDA driver's
-pinned host buffers, mapped through the GPU device nodes (218 MiB through
-`/dev/nvidiactl` in these soaks, flat throughout), so that bound is a coarse
-ceiling, not a leak check. In the 1200-second C32 GPU
-soaks of 2026-11-05, VmRSS grew 5,555 MiB on the DSpark server (RssFile
-+5,425 MiB, all in the two Engram checkpoint tables of 188.8 GiB of mapped
-views; RssAnon +130 MiB; RssShmem 0) and 113 MiB, all RssAnon, on the AR
-server.
+The soak judges host memory as VmRSS less the Rss of the Engram tables'
+read-only checkpoint mappings, against the 512 MiB limit
+(`HOST_MEMORY_SCOPE` `rss_less_mapped_views` in `qual.json`, with
+`MAPPED_VIEW_FILES` naming `model-00047-of-00048.safetensors` and
+`model-00048-of-00048.safetensors`, the shards that hold the tables of
+Engram layers 1 and 14). Only the mappings the server holds at the first
+sample are exempt; every other mapping counts, including the CUDA driver's
+pinned host buffers mapped through the GPU device nodes. In the
+1200-second C32 GPU soaks of 2026-11-05, VmRSS grew 5,555 MiB on the
+DSpark server (RssFile +5,425 MiB, all in the two Engram checkpoint tables
+of 188.8 GiB of mapped views; RssAnon +130 MiB; RssShmem 0) and 113 MiB,
+all RssAnon, on the AR server; the 218 MiB mapped through `/dev/nvidiactl`
+stayed flat. Rescored under this rule from per-mapping smaps snapshots at
+0, 30, 60 and 300 seconds and at the end, both soaks pass: the judged host
+memory grew at most 98.3 MiB on the DSpark server, where the exempt Rss
+grew 5,425 MiB within its 193,365 MiB bound, and 108.5 MiB on the AR
+server. The other file-backed Rss stayed between 260 and 267 MiB in every
+snapshot, so the judged growth tracks RssAnon.
 
 The [numerical gates](../../docs/numerics.md#serving-qualification-gates)
 and [serving profiles](../../docs/serving-profiles.md) describe the shared

@@ -30,20 +30,23 @@ recovery of a failed run.
 ## Soak receipts
 
 The Python `soak` kind re-scores a soak's memory samples with
-`soak.memory_rule` under the check's declared warm-up, cache allowance and
-host memory scope. The receipt must record the same ones: a receipt
-without `warmup_seconds`, `cache_allowance_mib` or `host_memory_scope`
-counts as the defaults (no warm-up, no allowance, `rss`), and one judged
-under others is insufficient. The `rss` scope judges VmRSS
-(`host_rss_mib`). The `anonymous_shmem` scope judges RssAnon + RssShmem
-against the same limits and requires the RssFile growth over the whole soak
-to stay within the smallest `mapped_view_bytes` sampled, in MiB; a sample
-without a finite non-negative RssAnon, RssShmem, RssFile or
-`mapped_view_bytes` is insufficient. Under that scope the metrics add the
-scope, the RssFile growth and its bound. RssFile holds the mapped files'
-pages but also driver-pinned host buffers mapped through the GPU device
-nodes and library pages, so the bound is a coarse ceiling, not a leak
-check: a pinned host buffer that leaks grows RssFile, not RssAnon.
+`soak.memory_rule` under the check's declared warm-up, cache allowance,
+host memory scope and mapped-view files. The receipt must record the same
+ones: a receipt without `warmup_seconds`, `cache_allowance_mib`,
+`host_memory_scope` or `mapped_view_files` counts as the defaults (no
+warm-up, no allowance, `rss`, no files), and one judged under others is
+insufficient. The `rss` scope judges VmRSS (`host_rss_mib`). The
+`rss_less_mapped_views` scope judges VmRSS less the exempt Rss
+(`host_exempt_rss_mib`): the Rss of the read-only mappings of the declared
+`MAPPED_VIEW_FILES` under the served checkpoint directory that the serving
+tree held at the first sample, attributed per mapping from
+`/proc/PID/smaps`. The kind recomputes that judged series from each
+sample's VmRSS and exempt Rss. A sample is insufficient when its VmRSS,
+exempt Rss, bound (`host_exempt_bound_mib`, the exempt mappings' Size) or
+judged value (`host_judged_mib`) is missing or not a finite non-negative
+number, its exempt Rss exceeds the bound or VmRSS, or its judged value is
+not VmRSS less the exempt Rss. Under that scope the metrics add the scope,
+the files, and the largest exempt Rss and bound sampled.
 
 ## Common rules
 

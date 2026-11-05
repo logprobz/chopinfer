@@ -515,20 +515,23 @@ def server_mappings(store, exempt=0, driver=0, anon=0, other=0, writable=0, late
     anonymous memory (`anon`), an undeclared checkpoint file (`other`), a
     writable mapping of a declared file (`writable`) and, when `later` is
     not None, a mapping of a declared file the first sample did not see.
-    `protected` makes the first table view writable, as mprotect would."""
+    `protected` makes the first table view writable, as mprotect would. The
+    table views, libc and their Size and Rss are a 2026-11-05 GPU soak's;
+    each other mapping spans 1 GiB (the anonymous one 8 GiB), room for the
+    tests' growth."""
     table_a, table_b = (f"{store}/{name}" for name in TABLES)
     rows = [("74404d400000-745730b82000", "rw-s" if protected else "r--s", "00000000", table_a, 96001544,
              3905472 + exempt),
             ("745730d81000-7457e7f3e000", "r--s", "16e3781000", table_a, 3000052, 2672428),
             ("7428b2600000-743f96013000", "r--s", "00000000", table_b, 96004172, 3904596),
             ("743f96212000-74404d3e4000", "r--s", "16e3a12000", table_b, 3000136, 2612208),
-            ("7458e0000000-7458f0000000", "rw-s", "00000000", "/dev/nvidiactl", 4194304, 223232 + driver),
-            ("7427b904f000-742808000000", "rw-p", "00000000", "", 8388608, 1294020 + anon),
+            ("700000000000-700040000000", "rw-s", "00000000", "/dev/nvidiactl", 1048576, 223232 + driver),
+            ("700100000000-700300000000", "rw-p", "00000000", "", 8388608, 1294020 + anon),
             ("767c89028000-767c891b1000", "r-xp", "00028000", "/usr/lib/libc.so.6", 1572, 1120),
-            ("7459e0000000-7459f0000000", "r--p", "00000000", f"{store}/weights.bin", 4194304, 1000 + other),
-            ("745ae0000000-745af0000000", "rw-s", "00000000", table_b, 4194304, 1000 + writable)]
+            ("700400000000-700440000000", "r--p", "00000000", f"{store}/weights.bin", 1048576, 1000 + other),
+            ("700500000000-700540000000", "rw-s", "00000000", table_b, 1048576, 1000 + writable)]
     if later is not None:
-        rows.append(("745be0000000-745bf0000000", "r--s", "00000000", table_a, 4194304, later))
+        rows.append(("700600000000-700640000000", "r--s", "00000000", table_a, 1048576, later))
     return rows
 
 
@@ -634,6 +637,20 @@ class MappedViewScope(unittest.TestCase):
 
     def rule(self, rows, scope=SCOPE):
         return soak.memory_rule(rows, 1200, LIMITS, 0, None, scope)
+
+    def test_the_fake_mappings_are_realizable(self):
+        # At the largest growth any test applies, each mapping's Size is its
+        # address range and holds its Rss, and no two mappings overlap.
+        grown = {"exempt": self.RESIDENT, **dict.fromkeys(("driver", "anon", "other", "writable", "later"), 600 * 1024)}
+        for options in ({}, grown, {"protected": True}):
+            with self.subTest(options=options):
+                spans = []
+                for span, perms, offset, path, size, rss in server_mappings(self.store, **options):
+                    low, high = (int(edge, 16) for edge in span.split("-"))
+                    self.assertEqual((high - low, rss <= size), (size * 1024, True), span)
+                    spans.append((low, high))
+                spans.sort()
+                self.assertTrue(all(left[1] <= right[0] for left, right in zip(spans, spans[1:])), spans)
 
     def test_growth_of_the_exempt_mappings_passes(self):
         rows, views = self.sampled(lambda t: {"exempt": t * self.RESIDENT // 1200})

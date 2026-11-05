@@ -958,13 +958,11 @@ class Soak(Kind):
     metrics = ("passed", "completed", "duration_seconds", "measured_duration_seconds", "concurrency",
                "memory_samples", "memory_scope", "memory_growth_mib", "host_memory_growth_mib",
                "steady_memory_growth_mib", "steady_host_memory_growth_mib", "host_memory_scope",
-               "host_rss_file_growth_mib", "host_rss_file_growth_limit_mib", "mapped_view_files",
-               "host_exempt_rss_mib", "host_exempt_bound_mib", "mixed_requests", "prefix_mix")
+               "mapped_view_files", "host_exempt_rss_mib", "host_exempt_bound_mib", "mixed_requests", "prefix_mix")
     verdict = ("complete measured interval, bounded host and device memory growth (after any declared warm-up, "
-               "and over the whole soak within any declared cache allowance; host memory is VmRSS, under a "
-               "declared anonymous_shmem scope RssAnon + RssShmem with RssFile growth within the mapped-view "
-               "bytes, or under a declared rss_less_mapped_views scope VmRSS less the Rss of the declared "
-               "read-only mapped views held at the first sample), and exercised mixes")
+               "and over the whole soak within any declared cache allowance; host memory is VmRSS, or under a "
+               "declared rss_less_mapped_views scope VmRSS less the Rss of the declared read-only mapped views "
+               "held at the first sample), and exercised mixes")
 
     def verify(self, value, reference=None, check=None):
         self.score(value, reference, check)
@@ -1013,9 +1011,6 @@ class Soak(Kind):
                 "soak: the receipt was judged under another warm-up or cache allowance")
         require(value.get("host_memory_scope", "rss") == scope and value.get("mapped_view_files", []) == files,
                 "soak: the receipt was judged under another host memory scope or other mapped-view files")
-        if scope == "anonymous_shmem":
-            require(not any(soak.missing_parts(row) for row in samples),
-                    "soak: incomplete anonymous, shared, file-backed or mapped-view memory samples")
         if scope == "rss_less_mapped_views":
             require(not any(soak.exempt_problem(row) for row in samples),
                     "soak: incomplete or inconsistent judged, exempt mapped-view or bound memory samples")
@@ -1024,8 +1019,7 @@ class Soak(Kind):
             "host": min(512, argument_number(args, "--host-memory-growth-mib", 512))}, warmup, allowance, scope)
         growth = {key: rule[key] for key in ("memory_growth_mib", "host_memory_growth_mib",
                                               "steady_memory_growth_mib", "steady_host_memory_growth_mib",
-                                              "host_memory_scope", "host_rss_file_growth_mib",
-                                              "host_rss_file_growth_limit_mib", "host_exempt_rss_mib",
+                                              "host_memory_scope", "host_exempt_rss_mib",
                                               "host_exempt_bound_mib") if key in rule}
         passed = rule["passed"]
         mixed = value.get("mixed_requests") or {}

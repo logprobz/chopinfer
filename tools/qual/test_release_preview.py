@@ -111,9 +111,8 @@ def spec_receipt(name, arm, run_id):
 
 def soak_receipt(facts, duration, scope=None, files=None):
     """A soak receipt judged under `scope` and the mapped-view `files`
-    (default: the model's declared ones): anonymous_shmem records the parts
-    it judges and the mapped-view bytes, rss_less_mapped_views the exempt
-    mappings' Rss and Size and the judged host memory."""
+    (default: the model's declared ones); rss_less_mapped_views records the
+    exempt mappings' Rss and Size and the judged host memory."""
     scope = facts['soak_scope'] if scope is None else scope
     files = facts['soak_files'] if files is None else files
     value = {'passed': True, 'mechanics_only': False, 'errors': [], 'duration_seconds': duration,
@@ -124,9 +123,6 @@ def soak_receipt(facts, duration, scope=None, files=None):
              'mixed_requests': {'structured': 1, 'structured_truncated': 0}}
     if facts['soak_warmup'] or any(facts['soak_allowance'].values()):
         value.update(warmup_seconds=facts['soak_warmup'], cache_allowance_mib=facts['soak_allowance'])
-    if scope == 'anonymous_shmem':
-        for row in value['memory_samples']:
-            row.update(host_rss_anon_mib=60, host_rss_shmem_mib=20, host_rss_file_mib=20, mapped_view_bytes=2 ** 30)
     if scope == 'rss_less_mapped_views':
         for row in value['memory_samples']:
             row.update(host_exempt_rss_mib=20, host_exempt_bound_mib=1024, host_judged_mib=80)
@@ -784,44 +780,9 @@ class RuleTests(unittest.TestCase):
                 self.assertEqual((scope, files), (facts['soak_scope'], facts['soak_files']))
                 runner.judge_soak(soak_receipt(facts, 1200), facts, rule)
 
-    def test_a_declared_host_memory_scope_reaches_the_soak_stage(self):
-        plain = runner.model_facts(model(lambda facts: not warmed(facts) and not scoped(facts)))
-        self.assertNotIn('--host-memory-scope', runner.soak_arguments(plain, 1200))
-        facts = scope_declared(plain, 'anonymous_shmem')
-        rule = runner.soak_arguments(facts, 1200)
-        self.assertEqual(rule[rule.index('--host-memory-scope') + 1], facts['soak_scope'])
-        values, _ = runner.judge_soak(soak_receipt(facts, 1200), facts, rule)
-        self.assertIn({'metric': 'host_rss_file_growth_mib', 'value': 0, 'op': 'le', 'limit': 1024}, values)
-        # File-backed pages within the mapped views pass however VmRSS
-        # grows; the same VmRSS growth fails a model without the scope.
-        files, vmrss = soak_receipt(facts, 1200), soak_receipt(plain, 1200)
-        for row, other in zip(files['memory_samples'], vmrss['memory_samples']):
-            row['host_rss_file_mib'] += row['elapsed_seconds'] * 2 // 3
-            row['host_rss_mib'] += row['elapsed_seconds'] * 2 // 3
-            other['host_rss_mib'] = row['host_rss_mib']
-        values, _ = runner.judge_soak(files, facts, rule)
-        self.assertIn({'metric': 'host_rss_file_growth_mib', 'value': 800, 'op': 'le', 'limit': 1024}, values)
-        with self.assertRaisesRegex(ValueError, 'grew more than'):
-            runner.judge_soak(vmrss, plain, runner.soak_arguments(plain, 1200))
-        for part in ('host_rss_anon_mib', 'host_rss_shmem_mib', 'host_rss_file_mib'):
-            leak = soak_receipt(facts, 1200)
-            for row in leak['memory_samples']:
-                row[part] += row['elapsed_seconds']
-            with self.subTest(part), self.assertRaisesRegex(
-                    ValueError, 'grew more than .*file-backed pages beyond the mapped-view bytes'):
-                runner.judge_soak(leak, facts, rule)
-        # A stage receipt judged under another scope, or a sample without the
-        # parts the scope reads, fails the stage.
-        with self.assertRaisesRegex(ValueError, 'another host memory scope'):
-            runner.judge_soak(soak_receipt(facts, 1200, 'rss'), facts, rule)
-        incomplete = soak_receipt(facts, 1200)
-        del incomplete['memory_samples'][3]['mapped_view_bytes']
-        with self.assertRaisesRegex(ValueError, 'incomplete anonymous'):
-            runner.judge_soak(incomplete, facts, rule)
-
     def test_a_declared_mapped_view_scope_reaches_the_soak_stage(self):
         plain = runner.model_facts(model(lambda facts: not warmed(facts) and not scoped(facts)))
-        self.assertNotIn('--mapped-view-file', runner.soak_arguments(plain, 1200))
+        self.assertFalse({'--host-memory-scope', '--mapped-view-file'} & set(runner.soak_arguments(plain, 1200)))
         files = ['tables/table-a.bin', 'tables/table-b.bin']
         facts = scope_declared(plain, 'rss_less_mapped_views', files)
         rule = runner.soak_arguments(facts, 1200)

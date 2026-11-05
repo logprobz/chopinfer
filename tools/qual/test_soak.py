@@ -455,24 +455,23 @@ class MemoryRule(unittest.TestCase):
 LIMITS = {"device": 512, "host": 512}
 
 
-def parts(anon=lambda t: 0, shmem=lambda t: 0, files=lambda t: 0, views=lambda t: 200 * 2 ** 30, end=1200):
-    """Memory samples whose VmRSS is the sum of its parts, mapping
-    `views(t)` bytes."""
-    rows = [{"elapsed_seconds": t, "mib": 1000, "host_rss_anon_mib": 9600 + anon(t),
-             "host_rss_shmem_mib": 2100 + shmem(t), "host_rss_file_mib": 13000 + files(t),
-             "mapped_view_bytes": views(t)} for t in range(0, end + 1, 30)]
+def parts(files=lambda t: 0, end=1200):
+    """Memory samples whose VmRSS is the sum of its recorded parts, RssFile
+    grown by `files(t)`, beside a recorded mapped-view gauge."""
+    rows = [{"elapsed_seconds": t, "mib": 1000, "host_rss_anon_mib": 9600, "host_rss_shmem_mib": 2100,
+             "host_rss_file_mib": 13000 + files(t), "mapped_view_bytes": 200 * 2 ** 30}
+            for t in range(0, end + 1, 30)]
     for row in rows:
         row["host_rss_mib"] = row["host_rss_anon_mib"] + row["host_rss_shmem_mib"] + row["host_rss_file_mib"]
     return rows
 
 
 class HostMemoryScope(unittest.TestCase):
-    """The declared HOST_MEMORY_SCOPE: VmRSS by default; anonymous_shmem
-    judges RssAnon + RssShmem and bounds the RssFile growth by the smallest
-    mapped_view_bytes sampled."""
+    """The declared HOST_MEMORY_SCOPE: VmRSS by default, whatever else a
+    sample records; an unknown scope is refused."""
 
-    def rule(self, rows, scope="anonymous_shmem", **declared):
-        return soak.memory_rule(rows, 1200, LIMITS, declared.get("warmup", 0), declared.get("allowance"), scope)
+    def rule(self, rows, scope="rss"):
+        return soak.memory_rule(rows, 1200, LIMITS, 0, None, scope)
 
     def test_the_default_scope_is_vmrss_and_adds_no_fields(self):
         fields = {"warmup_seconds", "effective_warmup_seconds", "steady_baseline_seconds", "cache_allowance_mib",
@@ -481,117 +480,26 @@ class HostMemoryScope(unittest.TestCase):
         vmrss = [{"elapsed_seconds": t, "mib": 1000, "host_rss_mib": 4000 + t // 4} for t in range(0, 1201, 30)]
         for label, rows in (("VmRSS only", vmrss), ("with parts", parts(files=lambda t: t * 4))):
             with self.subTest(label):
-                rule = self.rule(rows, "rss")
+                rule = self.rule(rows)
                 self.assertEqual(rule, soak.memory_rule(rows, 1200, LIMITS))
                 self.assertEqual(set(rule), fields)
         # A file-backed growth over the limit fails under VmRSS.
-        self.assertFalse(self.rule(parts(files=lambda t: t * 4), "rss")["passed"])
-
-    def test_file_backed_growth_within_the_mapped_views_passes(self):
-        # The shape of a soak whose server maps a 189 GiB checkpoint table:
-        # RssFile +5,425 MiB, RssAnon +130 MiB, RssShmem flat.
-        rows = parts(anon=lambda t: t * 130 // 1200, files=lambda t: t * 5425 // 1200,
-                     views=lambda t: 202758045696)
-        rule = self.rule(rows)
-        self.assertEqual((rule["passed"], rule["host_memory_scope"], rule["host_memory_growth_mib"],
-                          rule["steady_host_memory_growth_mib"], rule["host_rss_file_growth_mib"],
-                          rule["host_rss_file_growth_limit_mib"]),
-                         (True, "anonymous_shmem", 130, 130, 5425, 202758045696 / 2 ** 20))
-        self.assertFalse(self.rule(rows, "rss")["passed"])
-
-    def test_anonymous_and_shared_growth_over_the_limit_fails(self):
-        # Each part alone is within the limit; their sum is not.
-        rule = self.rule(parts(anon=lambda t: t // 4, shmem=lambda t: t // 4))
-        self.assertEqual((rule["host_memory_growth_mib"], rule["passed"]), (600, False))
-        self.assertTrue(self.rule(parts(anon=lambda t: t // 4))["passed"])
-        # The steady rule after a declared warm-up reads the same sum.
-        rule = self.rule(parts(shmem=lambda t: max(0, t - 180)), warmup=180, allowance={"host": 2560, "device": 0})
-        self.assertEqual((rule["steady_host_memory_growth_mib"], rule["passed"]), (1020, False))
-
-    def test_file_backed_growth_beyond_the_mapped_views_fails(self):
-        mib = 2 ** 20
-        rows = parts(files=lambda t: t * 4, views=lambda t: 8192 * mib)
-        self.assertTrue(self.rule(rows)["passed"])
-        # The bound is the smallest mapped_view_bytes any sample reports.
-        rows = parts(files=lambda t: t * 4, views=lambda t: 4000 * mib if t == 600 else 8192 * mib)
-        rule = self.rule(rows)
-        self.assertEqual((rule["host_rss_file_growth_mib"], rule["host_rss_file_growth_limit_mib"], rule["passed"]),
-                         (4800, 4000, False))
-
-    def test_a_sample_without_a_part_or_the_mapped_views_is_insufficient(self):
-        for key in ("host_rss_anon_mib", "host_rss_shmem_mib", "host_rss_file_mib", "mapped_view_bytes"):
-            for value in (None, float("nan"), float("inf"), -1, True, "1"):
-                rows = parts()
-                rows[7][key] = value
-                with self.subTest(key=key, value=value), self.assertRaisesRegex(ValueError, key):
-                    self.rule(rows)
-            rows = parts()
-            del rows[-1][key]
-            with self.subTest(key=key, value="absent"), self.assertRaisesRegex(ValueError, key):
-                self.rule(rows)
-            # VmRSS needs none of them.
-            self.assertTrue(self.rule(rows, "rss")["passed"])
+        self.assertFalse(self.rule(parts(files=lambda t: t * 4))["passed"])
 
     def test_an_unknown_scope_is_refused(self):
-        for scope in ("vmrss", "anonymous", "", 1, ["rss"]):
+        # The removed anonymous_shmem scope is unknown too.
+        for scope in ("vmrss", "anonymous", "anonymous_shmem", "", 1, ["rss"]):
             with self.subTest(scope=scope), self.assertRaisesRegex(ValueError, "host memory scope"):
                 self.rule(parts(), scope)
             with self.subTest(declared=scope), patch.object(soak, "HOST_MEMORY_SCOPE", scope), \
                     self.assertRaisesRegex(ValueError, "host memory scope"):
                 soak.memory_rule(parts(), 1200, LIMITS)
-        with patch("sys.argv", ["soak", "--host-memory-scope", "vmrss", "--server-pid", "123"]), \
-                patch("sys.stderr"), self.assertRaises(SystemExit) as exited:
-            soak.main()
-        self.assertEqual(exited.exception.code, 2)
-
-    def soak(self, metrics="chop_mapped_view_bytes 8192000000\n", argv=(), host=None):
-        """A short soak's receipt and exit status, its parts sampled from
-        `host` (RssFile growing by 1 MiB a sample)."""
-        sampled = iter(range(100))
-
-        def host_memory(pid, views=None):
-            files = next(sampled)
-            return host or {"host_rss_mib": 3 + files, "host_rss_anon_mib": 1.5, "host_rss_file_mib": 1 + files,
-                            "host_rss_shmem_mib": 0.5}
-
-        with patch("sys.argv", ["soak", "--duration", "0.3", "--concurrency", "2", "--server-pid", "123", *argv]), \
-                patch.object(soak, "Client", FakeClient), patch.object(soak, "device_memory", return_value=350), \
-                patch.object(soak, "host_memory", host_memory), \
-                patch.object(soak, "metrics_text", return_value=metrics), \
-                patch.object(soak, "receipt") as receipt, self.assertRaises(SystemExit) as exited:
-            soak.main()
-        return exited.exception.code, receipt.call_args.args[2]
-
-    def test_the_receipt_records_the_scope_only_when_declared(self):
-        added = ("host_memory_scope", "host_rss_file_growth_mib", "host_rss_file_growth_limit_mib")
-        code, report = self.soak()
-        self.assertEqual((code, report["passed"]), (0, True))
-        self.assertFalse(set(added) & set(report))
-        for declared in ({"argv": ["--host-memory-scope", "anonymous_shmem"]}, {}):
-            with self.subTest(declared=declared), patch.object(
-                    soak, "HOST_MEMORY_SCOPE", "rss" if declared else "anonymous_shmem"):
-                code, report = self.soak(**declared)
-                self.assertEqual((code, report["passed"], report["errors"]), (0, True, []))
-                growth = len(report["memory_samples"]) - 1
-                self.assertEqual({key: report[key] for key in (*added, "host_memory_growth_mib")},
-                                 {"host_memory_scope": "anonymous_shmem", "host_rss_file_growth_mib": growth,
-                                  "host_rss_file_growth_limit_mib": 8192000000 / 2 ** 20,
-                                  "host_memory_growth_mib": 0})
-
-    def test_under_the_scope_a_sample_without_evidence_fails_the_soak_and_keeps_its_receipt(self):
-        argv = ["--host-memory-scope", "anonymous_shmem"]
-        missing = {"host_rss_mib": 3, "host_rss_anon_mib": 1.5, "host_rss_file_mib": 1, "host_rss_shmem_mib": None}
-        for label, declared in (("failed scrape", {"metrics": "chop_mapped_view_bytes NaN\n"}),
-                                ("no gauge", {"metrics": "chop_batches_total 3\n"}),
-                                ("unreported part", {"host": missing})):
-            with self.subTest(label):
-                code, report = self.soak(argv=argv, **declared)
-                self.assertEqual((code, report["passed"]), (1, False))
-                self.assertGreaterEqual(len(report["memory_samples"]), 2)
-                self.assertEqual([list(error) for error in report["errors"]], [["memory"]])
-                self.assertIn("has no", report["errors"][0]["memory"])
-                # The default scope judges VmRSS alone.
-                self.assertEqual(self.soak(**declared)[0], 0)
+        for scope in ("vmrss", "anonymous_shmem"):
+            with self.subTest(argv=scope), patch("sys.argv", ["soak", "--host-memory-scope", scope, "--server-pid",
+                                                              "123"]), \
+                    patch("sys.stderr"), self.assertRaises(SystemExit) as exited:
+                soak.main()
+            self.assertEqual(exited.exception.code, 2)
 
 
 # The declared files of a server that maps two read-only tables, each as a
@@ -837,7 +745,7 @@ class MappedViewScope(unittest.TestCase):
     def test_the_declared_files_belong_to_the_scope(self):
         self.assertEqual(soak.mapped_view_files(TABLES, self.SCOPE), TABLES)
         self.assertEqual(soak.mapped_view_files(), [])
-        for files, scope in (([], self.SCOPE), (TABLES, "rss"), (TABLES, "anonymous_shmem"), (["/abs.bin"], self.SCOPE),
+        for files, scope in (([], self.SCOPE), (TABLES, "rss"), (["/abs.bin"], self.SCOPE),
                              (["../up.bin"], self.SCOPE), (["a//b.bin"], self.SCOPE), (["a/./b.bin"], self.SCOPE),
                              (["a/"], self.SCOPE), ([""], self.SCOPE), (["a.bin", "a.bin"], self.SCOPE),
                              ([1], self.SCOPE), ("a.bin", self.SCOPE), ([["a.bin"]], self.SCOPE)):

@@ -230,79 +230,6 @@ class DeclaredSoakWarmup(unittest.TestCase):
         self.assertNotEqual(self.score(self.receipt(lambda t: 0), declared=False), "pass")
 
 
-class DeclaredHostMemoryScope(unittest.TestCase):
-    """A model whose server maps large read-only files declares the soak's
-    HOST_MEMORY_SCOPE anonymous_shmem: the rescore judges RssAnon + RssShmem,
-    bounds the RssFile growth by the mapped-view bytes, and refuses a receipt
-    judged under another scope or a sample without the parts it reads."""
-    DECLARED = {"soak": {"HOST_MEMORY_SCOPE": {"value": "anonymous_shmem", "source": "test"}}}
-
-    def receipt(self, anon=lambda t: 0, files=lambda t: t * 4, views=8192 * 2 ** 20, scope="anonymous_shmem"):
-        value = soak_receipt()
-        value["memory_samples"] = [{"elapsed_seconds": t, "mib": 100, "host_rss_anon_mib": 150 + anon(t),
-                                    "host_rss_shmem_mib": 50, "host_rss_file_mib": 300 + files(t),
-                                    "host_rss_mib": 500 + anon(t) + files(t), "mapped_view_bytes": views}
-                                   for t in range(0, 1381, 30)]
-        if scope is not None:
-            value["host_memory_scope"] = scope
-        return value
-
-    def rescore(self, value, scope="anonymous_shmem"):
-        check = {"module": "soak", "args": ["--duration", "1380", "--concurrency", "32", "--prefix-mix",
-                                            "--media-mix", "--structured-mix"], "rules": [rule(["passed"])],
-                 **({"constants": {"soak": {"HOST_MEMORY_SCOPE": {"value": scope, "source": "test"}}}}
-                    if scope is not None else {})}
-        return kinds.rescore(kinds.of("soak"), value, None, check)
-
-    def test_file_backed_growth_within_the_mapped_views_passes_only_under_the_scope(self):
-        result = self.rescore(self.receipt())
-        self.assertEqual(result["status"], "pass")
-        self.assertEqual({key: result["metrics"][key] for key in (
-            "host_memory_scope", "host_memory_growth_mib", "host_rss_file_growth_mib",
-            "host_rss_file_growth_limit_mib")},
-            {"host_memory_scope": "anonymous_shmem", "host_memory_growth_mib": 0,
-             "host_rss_file_growth_mib": 5520, "host_rss_file_growth_limit_mib": 8192})
-        # Judged by VmRSS the same growth fails.
-        self.assertEqual(self.rescore(self.receipt(scope=None), scope=None)["status"], "fail")
-
-    def test_anonymous_growth_or_file_growth_beyond_the_views_fails(self):
-        self.assertEqual(self.rescore(self.receipt(anon=lambda t: t // 2))["status"], "fail")
-        result = self.rescore(self.receipt(views=4096 * 2 ** 20))
-        self.assertEqual((result["status"], result["metrics"]["host_rss_file_growth_limit_mib"]), ("fail", 4096))
-
-    def test_a_receipt_judged_under_another_scope_is_refused(self):
-        for value, scope in ((self.receipt(scope=None), "anonymous_shmem"),
-                             (self.receipt(scope="rss"), "anonymous_shmem"),
-                             (self.receipt(files=lambda t: 0), None),
-                             (self.receipt(files=lambda t: 0), "rss")):
-            with self.subTest(recorded=value.get("host_memory_scope"), declared=scope):
-                result = self.rescore(value, scope)
-                self.assertEqual(result["status"], "insufficient")
-                self.assertIn("another host memory scope", result["error"])
-        # A VmRSS receipt that records the default scope is the default.
-        self.assertEqual(self.rescore(self.receipt(files=lambda t: 0, scope="rss"), "rss")["status"], "pass")
-
-    def test_a_sample_without_a_part_or_the_mapped_views_is_insufficient(self):
-        for key in ("host_rss_anon_mib", "host_rss_shmem_mib", "host_rss_file_mib", "mapped_view_bytes"):
-            for missing in (None, float("nan"), -1, "absent"):
-                value = self.receipt()
-                if missing == "absent":
-                    del value["memory_samples"][5][key]
-                else:
-                    value["memory_samples"][5][key] = missing
-                with self.subTest(key=key, value=missing):
-                    result = self.rescore(value)
-                    self.assertEqual(result["status"], "insufficient")
-                    self.assertIn("incomplete", result["error"])
-
-    def test_an_unknown_declared_scope_is_refused(self):
-        for scope in ("vmrss", "", 1):
-            with self.subTest(scope=scope):
-                result = self.rescore(self.receipt(scope=scope), scope)
-                self.assertEqual(result["status"], "insufficient")
-                self.assertIn("host memory scope", result["error"])
-
-
 class DeclaredMappedViews(unittest.TestCase):
     """A model whose server maps large read-only checkpoint files declares
     the soak's HOST_MEMORY_SCOPE rss_less_mapped_views and the files: the
@@ -399,6 +326,13 @@ class DeclaredMappedViews(unittest.TestCase):
                 result = self.rescore(self.receipt(scope=scope, files=files), scope, files)
                 self.assertEqual(result["status"], "insufficient")
                 self.assertIn("mapped-view files", result["error"])
+
+    def test_an_unknown_declared_scope_is_refused(self):
+        for scope in ("vmrss", "", 1, "anonymous_shmem"):
+            with self.subTest(scope=scope):
+                result = self.rescore(self.receipt(scope=scope), scope)
+                self.assertEqual(result["status"], "insufficient")
+                self.assertIn("host memory scope", result["error"])
 
 
 if __name__ == "__main__":

@@ -33,8 +33,7 @@ tokens and the server's response id) and their total.
 Each memory sample also records the serving tree's RssAnon, RssFile and
 RssShmem and, when /metrics serves them, the host's mapped-view gauges. The
 memory rule judges device memory and the host memory of the declared
-HOST_MEMORY_SCOPE: VmRSS by default, RssAnon + RssShmem with RssFile
-bounded by the mapped-view bytes, or VmRSS less the Rss of the declared
+HOST_MEMORY_SCOPE: VmRSS by default, or VmRSS less the Rss of the declared
 read-only mapped views the serving tree holds at the first sample, read per
 mapping from /proc/PID/smaps.
 """
@@ -72,14 +71,8 @@ from structured import PERSON, PERSON_PROMPT, schema_errors
 WARMUP_SECONDS = 0
 CACHE_ALLOWANCE_MIB = {"host": 0, "device": 0}
 # The host memory the rule judges, declared in the same constants: "rss",
-# the default, judges VmRSS. "anonymous_shmem", for a server that maps large
-# read-only files, judges RssAnon + RssShmem; RssFile is reported, and its
-# growth over the whole soak must stay within the bytes the host's mapped
-# views cover (the smallest mapped_view_bytes sampled). RssFile holds the
-# mapped files' pages but also driver-pinned host buffers mapped through the
-# GPU device nodes and library pages, so that bound is a coarse ceiling, not
-# a leak check. "rss_less_mapped_views", for a server that maps large
-# read-only checkpoint files, judges VmRSS less the Rss of the read-only
+# the default, judges VmRSS. "rss_less_mapped_views", for a server that maps
+# large read-only checkpoint files, judges VmRSS less the Rss of the read-only
 # mappings of MAPPED_VIEW_FILES (file names relative to the served checkpoint
 # directory) that the serving tree holds at the first sample, attributed per
 # mapping from /proc/PID/smaps. Every other mapping counts: a later mapping,
@@ -105,16 +98,15 @@ def memory_policy(warmup=None, allowance=None):
 def host_memory_scope(scope=None):
     """The declared host memory scope, validated."""
     scope = HOST_MEMORY_SCOPE if scope is None else scope
-    if scope not in ("rss", "anonymous_shmem", "rss_less_mapped_views"):
-        raise ValueError(f"soak host memory scope must be rss, anonymous_shmem or rss_less_mapped_views, "
-                         f"not {scope!r}")
+    if scope not in ("rss", "rss_less_mapped_views"):
+        raise ValueError(f"soak host memory scope must be rss or rss_less_mapped_views, not {scope!r}")
     return scope
 
 
 def mapped_view_files(files=None, scope=None):
     """The declared mapped-view files, validated for the host memory scope:
     distinct file names relative to the checkpoint directory, at least one
-    under rss_less_mapped_views and none under any other scope."""
+    under rss_less_mapped_views and none under rss."""
     files = MAPPED_VIEW_FILES if files is None else files
     scope = host_memory_scope(scope)
     if not isinstance(files, (list, tuple)) or not all(
@@ -124,13 +116,6 @@ def mapped_view_files(files=None, scope=None):
     if bool(files) != (scope == "rss_less_mapped_views"):
         raise ValueError("soak mapped-view files are declared with, and only with, the rss_less_mapped_views scope")
     return list(files)
-
-
-def missing_parts(row):
-    """The fields the anonymous_shmem scope reads that a memory sample lacks
-    or holds as other than a finite non-negative number."""
-    return [key for key in ("host_rss_anon_mib", "host_rss_shmem_mib", "host_rss_file_mib", "mapped_view_bytes")
-            if type(row.get(key)) not in (int, float) or not math.isfinite(row[key]) or row[key] < 0]
 
 
 def exempt_problem(row):
@@ -150,24 +135,16 @@ def exempt_problem(row):
 
 
 def memory_rule(samples, duration, limits, warmup=None, allowance=None, scope=None):
-    """Growth of device (`mib`) and host memory (`host_rss_mib`; under the
-    anonymous_shmem scope RssAnon + RssShmem; under rss_less_mapped_views
-    VmRSS less the exempt mappings' Rss, `host_judged_mib`) over the whole
-    soak and after the warm-up, judged against `limits` ({"device", "host"}
-    MiB) and the declared allowance. Under anonymous_shmem every sample must
-    carry RssAnon, RssShmem, RssFile and mapped_view_bytes, and the RssFile
-    growth over the whole soak must stay within the smallest
-    mapped_view_bytes, in MiB. Under rss_less_mapped_views every sample must
-    carry consistent judged, exempt and bound values (exempt_problem), and
-    the judged series is recomputed from VmRSS and the exempt Rss."""
+    """Growth of device (`mib`) and host memory (`host_rss_mib`, or under the
+    rss_less_mapped_views scope VmRSS less the exempt mappings' Rss,
+    `host_judged_mib`) over the whole soak and after the warm-up, judged
+    against `limits` ({"device", "host"} MiB) and the declared allowance.
+    Under that scope every sample must carry consistent judged, exempt and
+    bound values (exempt_problem), and the judged series is recomputed from
+    VmRSS and the exempt Rss."""
     warmup, allowance = memory_policy(warmup, allowance)
     scope = host_memory_scope(scope)
-    if scope == "anonymous_shmem":
-        for row in samples:
-            if missing := missing_parts(row):
-                raise ValueError(f"memory sample at {row['elapsed_seconds']} s has no {', '.join(missing)}")
-        host = lambda row: row["host_rss_anon_mib"] + row["host_rss_shmem_mib"]
-    elif scope == "rss_less_mapped_views":
+    if scope == "rss_less_mapped_views":
         for row in samples:
             if problem := exempt_problem(row):
                 raise ValueError(f"memory sample at {row['elapsed_seconds']} s {problem}")
@@ -187,12 +164,6 @@ def memory_rule(samples, duration, limits, warmup=None, allowance=None, scope=No
         result[prefix + "_growth_mib"] = whole
         result["steady_" + prefix + "_growth_mib"] = after
         passed = passed and after <= limits[kind] and whole <= limits[kind] + allowance[kind]
-    if scope == "anonymous_shmem":
-        files = max(row["host_rss_file_mib"] for row in samples) - samples[0]["host_rss_file_mib"]
-        bound = min(row["mapped_view_bytes"] for row in samples) / 2 ** 20
-        result.update(host_memory_scope=scope, host_rss_file_growth_mib=files,
-                      host_rss_file_growth_limit_mib=bound)
-        passed = passed and files <= bound
     if scope == "rss_less_mapped_views":
         result.update(host_memory_scope=scope,
                       host_exempt_rss_mib=max(row["host_exempt_rss_mib"] for row in samples),
@@ -528,10 +499,10 @@ def process_memory(pid, mapped):
 
 def host_memory(root_pid, views=None):
     """Resident memory of the serving process and its current children, in
-    MiB: VmRSS (`host_rss_mib`), which the memory rule judges by default,
-    and its anonymous, file-backed and shared-memory parts (RssAnon,
-    RssFile, RssShmem), which the anonymous_shmem scope judges instead. A
-    part some process does not report is None. Under the
+    MiB: VmRSS (`host_rss_mib`), which the memory rule judges, and its
+    anonymous, file-backed and shared-memory parts (RssAnon, RssFile,
+    RssShmem), which are recorded only. A part some process does not report
+    is None. Under the
     rss_less_mapped_views scope (`views`, the soak's MappedViews) every
     process's smaps is read too, and the sample adds what that scope judges
     (MappedViews.judge); a process whose smaps cannot be read leaves those
@@ -563,12 +534,10 @@ def host_memory(root_pid, views=None):
 def mapped_views(client):
     """The host's mapped-view gauges when its /metrics serves them: the bytes
     its mapped views cover and, while residency is visible, the bytes of them
-    resident. A scrape that fails in transport, decoding or parsing, or a
-    gauge that is not a finite whole number of bytes, records
-    `mapped_view_error` beside the memory sample. By default the gauges are
-    recorded only; the anonymous_shmem scope needs mapped_view_bytes in
-    every sample, so there a failed scrape leaves the memory rule without
-    evidence."""
+    resident. They are recorded only: a scrape that fails in transport,
+    decoding or parsing, or a gauge that is not a finite whole number of
+    bytes, records `mapped_view_error` beside the memory sample and never
+    fails the soak."""
     try:
         text = metrics_text(client)
         views = {}
@@ -613,8 +582,8 @@ def main():
     parser.add_argument("--cache-allowance-mib", type=lambda value: dict(zip(("host", "device"), map(int, value.split(",")))),
                         help="HOST,DEVICE MiB of declared bounded cache growth (default: CACHE_ALLOWANCE_MIB)")
     parser.add_argument("--host-memory-scope",
-                        help="rss, anonymous_shmem or rss_less_mapped_views: the host memory judged (default: the "
-                             "declared HOST_MEMORY_SCOPE)")
+                        help="rss or rss_less_mapped_views: the host memory judged (default: the declared "
+                             "HOST_MEMORY_SCOPE)")
     parser.add_argument("--mapped-view-file", action="append", dest="mapped_view_files", metavar="NAME",
                         help="a checkpoint-relative file whose read-only mappings at the first sample "
                              "rss_less_mapped_views exempts; repeatable (default: the declared MAPPED_VIEW_FILES)")
@@ -807,9 +776,8 @@ def main():
                             **({"host_memory_scope": scope} if scope != "rss" else {}),
                             **({"mapped_view_files": files, "host_exempt_mappings": views.mappings}
                                if views is not None else {}),
-                            **({key: rule[key] for key in ("host_memory_scope", "host_rss_file_growth_mib",
-                                                           "host_rss_file_growth_limit_mib", "host_exempt_rss_mib",
-                                                           "host_exempt_bound_mib") if key in rule}),
+                            **({key: rule[key] for key in ("host_exempt_rss_mib", "host_exempt_bound_mib")
+                                if key in rule}),
                             "prefix_mix": prefix,
                             "mixed_requests": mixed if media or args.structured_mix else None,
                             "structured_kept": kept if args.structured_mix else None,

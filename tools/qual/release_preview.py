@@ -1429,9 +1429,8 @@ def judge_soak(value, facts, arguments):
     """A soak stage, judged by the soak kind with the stage's own arguments
     and the model's declared warm-up, cache allowance and host memory scope:
     the measured interval and its samples, the concurrency, device and host
-    memory growth (under anonymous_shmem also the file-backed growth within
-    the mapped-view bytes, under rss_less_mapped_views the exempt Rss within
-    the exempt mappings' Size) and the mixes."""
+    memory growth (and under rss_less_mapped_views the exempt Rss within the
+    exempt mappings' Size) and the mixes."""
     clean_receipt(value)
     check = {'module': 'soak', 'args': list(map(str, arguments)), 'constants': {'soak': facts['soak_constants']}}
     metrics = kinds.KINDS['soak'].score(value, None, check)
@@ -1444,9 +1443,6 @@ def judge_soak(value, facts, arguments):
               'steady_memory_growth_mib': SOAK_GROWTH_MIB, 'steady_host_memory_growth_mib': SOAK_GROWTH_MIB}
     values = [metric(name, metrics[name], 'le', limit) for name, limit in limits.items()
               if metrics.get(name) is not None]
-    if metrics.get('host_rss_file_growth_mib') is not None:
-        values.append(metric('host_rss_file_growth_mib', metrics['host_rss_file_growth_mib'], 'le',
-                             metrics['host_rss_file_growth_limit_mib']))
     if metrics.get('host_exempt_rss_mib') is not None:
         values.append(metric('host_exempt_rss_mib', metrics['host_exempt_rss_mib'], 'le',
                              metrics['host_exempt_bound_mib']))
@@ -1459,9 +1455,7 @@ def judge_soak(value, facts, arguments):
         require((value.get('mixed_requests') or {}).get('structured_truncated') == 0, 'truncated structured requests')
         raise ValueError(f'memory grew more than {SOAK_GROWTH_MIB} MiB after the declared warm-up, or beyond the '
                          'declared cache allowance over the soak'
-                         + ('' if facts['soak_scope'] == 'rss' else f" (host memory scope {facts['soak_scope']})")
-                         + (', or its file-backed pages beyond the mapped-view bytes'
-                            if facts['soak_scope'] == 'anonymous_shmem' else ''))
+                         + ('' if facts['soak_scope'] == 'rss' else f" (host memory scope {facts['soak_scope']})"))
     return values, {}
 
 

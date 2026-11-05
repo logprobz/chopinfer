@@ -3,8 +3,10 @@
 DeepSeek V4.1 Flash, from the official checkpoint
 `deepseek-ai/DeepSeek-V4.1-Flash-1017` at revision
 `1bae0e1088993b9b82de08f59de5be5a34e42170`, served as bundle
-`deepseek41.v1` at topology `deepseek41-flash-tp4`. It is not released:
-`model.toml` declares `[release] enabled = false` until it qualifies.
+`deepseek41.v1` at topology `deepseek41-flash-tp4`. It is released:
+`tp4-dspark` is qualified through 32 sequences by the release preview's full
+suite at d3d580aa02 ([qualification](#qualification)), and `tp4-ar` is the
+experimental baseline.
 
 Supports images in tool results through Chat Completions and Responses, in the official encoder's prompt order,
 and in system and developer messages through Chat Completions, as deepseek-recipe 0.2.0 reads them.
@@ -1042,11 +1044,12 @@ follows, and the served behavior is kept:
 
 ## Qualification
 
-`model.toml` still disables release and both profiles remain experimental.
-The refactor's CPU journals, kernel twins and bounded served comparisons do
-not replace the release preview's full suite at the release revision.
-`qual.json`, `validation.toml` and the pinned reference locks are authoritative
-for the checks and their inputs.
+`tp4-dspark` is qualified through 32 sequences, its default, by the release
+preview's full suite at d3d580aa02 on 2026-11-05
+([release run](#release-run-of-2026-11-05)). `tp4-ar` stays the experimental
+baseline that speculative output is checked against. `qual.json`,
+`validation.toml` and the pinned reference locks are authoritative for the
+checks and their inputs.
 
 The reference is the checkpoint's pinned vendor code in F32 with
 BF16-rounded trained-quantizer inputs (F32-TQ), with BF16 and F64-TQ spread
@@ -1114,12 +1117,78 @@ memory grew at most 98.3 MiB on the DSpark server (the exempt Rss grew
 the GPU device nodes held 226 MiB throughout (218 MiB through
 `/dev/nvidiactl`, 8 MiB through `/dev/nvidia-uvm`), and the other
 file-backed Rss stayed between 260 and 267 MiB. The qualifying soak rows
-come from a fresh soak under this rule.
+come from the [release run](#release-run-of-2026-11-05) under this rule.
 
 The [numerical gates](../../docs/numerics.md#serving-qualification-gates)
 and [serving profiles](../../docs/serving-profiles.md) describe the shared
 acceptance rules. Store captures, qualification receipts and timings outside
 the repository under `CHOPINFER_DATA`.
+
+### Release run of 2026-11-05
+
+The release preview's full suite (`release_preview.py run --suite full`,
+every configuration `qual.json` declares) ran at d3d580aa02 on 2026-11-05
+from 18:25 to 21:54 UTC. The four GPUs enforced their default 300 W limit,
+recorded before and after and never set. The job's recorded `/proc/cmdline`
+boots with `iommu=pt` and ACS redirection disabled on four PCIe root
+ports. The suite ran in the GPU runner's systemd scope on its eight-CPU set.
+71 rows passed, 6 were informational (`paired_teacher` in both arms and
+`gsm8k_regression`, which had no stored baseline before this run) and KV
+offload was not applicable; the run is the stored last-good result. Every
+row that the earlier full runs of 2026-11-05 also produced matched them
+except the speculative soak, which they failed under the earlier VmRSS
+rule. A bitwise smoke between those runs' build and d3d580aa02 gave
+identical determinism records and decodes on `tp4-dspark` and `tp4-ar`,
+with the same DSpark acceptance.
+
+GSM8K scored 196 of 200 in each arm against the floor of 193. The teacher
+check scored 3,974 positions at a mean absolute logprob difference of 0.115
+nats (limit 0.150) with 4.0% top-one disagreement (limit 10%), the same in
+both arms. Chat scored 5,270 positions at 0.291 nats (limit 0.300) with
+7.5% disagreement, and long_context 1,024 positions at 0.002 nats. Greedy
+AR and DSpark answers were identical on all 35 requests. `verify_exact`
+matched AR at every forced position in the default configuration and in
+each verify-row configuration from 2 to 32 rows, and `kv_layout_equality`
+found native and BF16 KV storage equal bit for bit.
+
+Under the soak rule above, the DSpark server's judged host memory grew
+154.6 MiB over its 1,200-second C32 soak and the AR server's 136.9 MiB,
+against 512 MiB; device memory did not grow. The DSpark server's exempt
+Engram mappings held 51,194 MiB at the end, within their 193,365 MiB bound. Each
+soak followed the suite's earlier checks on the same server. A screening
+soak that ran alone on a fresh server earlier that day failed at 2,011.5
+MiB: its judged memory rose 1,820 MiB in the first 60 seconds and 192 MiB
+in the remaining 19 minutes. That rise is first-load state: glibc heaps for
+the prefill plan template cache (at most 64 templates of 23 to 32 MiB,
+`bundle/src/instance/execute/plan_templates.rs`), DSpark graph host objects
+and the grammar cache, and four 64 MiB pinned upload rings, one per rank
+stream, that the first synchronous Engram gather creates; image prefills
+take that path. The warm DSpark soak grew 33 MiB in its last 600 seconds.
+Whether that tail flattens over hours is not measured.
+
+The served benchmark ran the same day from 12:51 to 13:08 UTC in a quiet
+window, on CPUs 0-47 with the heavy-build launcher paused, after two Engram
+warm passes that left the tables 93.0% and 93.3% resident (below the warm
+tool's 98% gate, as recorded). Medians of three trials of 2048 output tokens
+gave 281, 974, 1,148 and 1,283 tok/s at one, eight, 16 and 32 streams,
+within 1.1% of 0c620f1a66's 281, 976, 1,140 and 1,269 at 300 W and 93.4%
+residency (above). Cold prompts reached their first token in 0.66, 5.15 and
+10.67 seconds at 8k, 64k and 128k chat tokens and in 22.7 and 56.4 seconds
+for 250k and 500k raw tokens, against 0.85, 6.39, 13.11, 28.70 and 65.85
+seconds on 2026-10-31 at 250 W. The power limit and the long-band prefill
+indexer both changed in between, so that comparison is indicative only.
+A P2P recheck after the host's reboot (2026-11-05, 300 W) found 42.6 GB/s
+pair writes with all four ACS ports cleared and about 2 GB/s in total when
+one GPU writes to three peers, the fan-out collapse seen before; it is not
+an ACS effect, so no difference from the earlier runs is attributed to P2P.
+Prefill cost 467 system core-seconds of the server's process tree per
+million computed tokens at 8k and 580 to 591 from 64k to 500k (the
+runner's scope: 482 to 596; host-wide: 506 to 611). Earlier host-wide
+figures of 470 to 530 came from live runs before the runner moved into its
+own scope. On 2026-10-31 at 250 W on this host, FLARE's post-fix
+export decoded 276, 646, 920 and 1,021 tok/s, and its published package
+prefilled 8,417 to 10,108 tok/s at 8k to 128k and 7,665 and 7,149 tok/s at
+250k and 500k, against 12,281 to 12,735, 11,008 and 8,871 tok/s here.
 
 ### Diagnostic taps
 

@@ -38,15 +38,23 @@ warm-up, no allowance, `rss`, no files), and one judged under others is
 insufficient. The `rss` scope judges VmRSS (`host_rss_mib`). The
 `rss_less_mapped_views` scope judges VmRSS less the exempt Rss
 (`host_exempt_rss_mib`): the Rss of the read-only mappings of the declared
-`MAPPED_VIEW_FILES` under the served checkpoint directory that the serving
-tree held at the first sample, attributed per mapping from
-`/proc/PID/smaps`. The kind recomputes that judged series from each
-sample's VmRSS and exempt Rss. A sample is insufficient when its VmRSS,
-exempt Rss, bound (`host_exempt_bound_mib`, the exempt mappings' Size) or
-judged value (`host_judged_mib`) is missing or not a finite non-negative
-number, its exempt Rss exceeds the bound or VmRSS, or its judged value is
-not VmRSS less the exempt Rss. Under that scope the metrics add the scope,
-the files, and the largest exempt Rss and bound sampled.
+`MAPPED_VIEW_FILES` that the serving tree held at the first sample and in
+every sample since, attributed per mapping from `/proc/PID/smaps`. Each
+sample lists those mappings (`host_exempt_mappings`: PID, process start
+time, address range, device, inode, offset, permissions, and Size and Rss
+in kB), and the receipt names each declared file's path, device and inode
+in the serving process's namespace (`mapped_view_file_identities`). The
+kind recomputes the judged series from each sample's VmRSS and exempt Rss.
+A receipt is insufficient when it lacks the file identities; when a sample
+lacks its list or a finite non-negative VmRSS, exempt Rss, bound
+(`host_exempt_bound_mib`) or judged value (`host_judged_mib`); when a
+listed mapping is writable, duplicated, of no declared file, of a Size
+other than its address range or with Rss beyond its Size, or was not
+listed by the first sample and every sample since; or when the exempt Rss
+and bound are not the listed mappings' Rss and Size summed, the exempt Rss
+exceeds VmRSS, or the judged value is not VmRSS less the exempt Rss. Under
+that scope the metrics add the scope, the files, and the largest exempt Rss
+and bound sampled.
 
 ## Common rules
 

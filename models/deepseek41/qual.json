@@ -554,7 +554,14 @@
       "constants": {
         "soak": {
           "HOST_MEMORY_SCOPE": {
-            "value": "anonymous_shmem",
+            "value": "rss_less_mapped_views",
+            "source": "models/deepseek41/README.md#qualification"
+          },
+          "MAPPED_VIEW_FILES": {
+            "value": [
+              "model-00047-of-00048.safetensors",
+              "model-00048-of-00048.safetensors"
+            ],
             "source": "models/deepseek41/README.md#qualification"
           }
         }

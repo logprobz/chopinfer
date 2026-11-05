@@ -408,9 +408,13 @@ reports cached tokens must raise `chop_prefix_cache_ram_hits_total` once,
 as it raises the all-hit counter. Report the two arms' records separately.
 The runner records the RAM-hit arm for a configuration whose serve words
 force the tier. A model whose bundle runs the tier may declare the opt-in
-`ram-forced` configuration, which serves every arm that way and also runs
-determinism, soak, spec_verify and verify_exact (`release_preview.sh run
---model MODEL --config ram-forced --suite full`). Its prefix_exact input
+`ram-forced` configuration, which serves every arm that way
+(`release_preview.sh run --model MODEL --config ram-forced --suite full`).
+It runs prefix_exact, soak, spec_verify and verify_exact, and determinism
+where the default full cohort runs it: a configuration's checks keep their
+declared input rules, and a check only another configuration runs may pin
+that configuration's serving profile. Its quick cohort holds a check that
+reads only what a quick run records. Its prefix_exact input
 predicates require RAM-hit records (`hit_tier` "ram", `checks.ram_hits`
 true), so a GPU-hit record given with `--input` is refused.
 

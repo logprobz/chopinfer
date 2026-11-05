@@ -431,6 +431,24 @@ class PlanTests(unittest.TestCase):
                                     if arm.get('server', True)))
                 self.assertEqual({arm['arm'] for arm in arms}, {'verify-ar', 'verify-spec', 'prefix', 'ar', 'spec'})
 
+    def test_a_ram_forced_configuration_runs_only_checks_its_default_runs(self):
+        # A configuration's checks keep their declared input rules, written
+        # for the default's servers: a check only another configuration runs
+        # may pin that configuration's profile. A quick check reads only what
+        # a quick run records (no record steps; the determinism stages).
+        for name, config in sorted(OPT_IN):
+            with self.subTest(model=name, config=config):
+                facts = runner.model_facts(name)
+                forced = runner.configuration_facts(facts, config)
+                self.assertEqual(set(forced['full']) - set(facts['full']), set())
+                self.assertTrue(forced['quick'])
+                self.assertEqual(set(forced['quick']) - set(forced['full']), set())
+                known = {runner.LOG_INPUT, *runner.STAGE_INPUTS, *forced['checks'], 'url', 'model', 'raw', 'run',
+                         'run_id'}
+                self.assertEqual({key for check in forced['quick']
+                                  for key in runner.placeholders(forced['checks'][check], 'quick')
+                                  if key not in known and not key.startswith(runner.STORED)}, set())
+
     def test_supplied_gpu_prefix_records_are_refused_under_ram_forced(self):
         # A prefix record given with --input is not recorded, so the runner
         # adds no --ram-hit. The configuration's input predicates refuse a

@@ -3166,13 +3166,12 @@
       ],
       "checks": [
         "prefix_exact",
-        "determinism",
         "soak",
         "spec_verify",
         "verify_exact"
       ],
       "quick": [
-        "determinism"
+        "soak"
       ],
       "append": {
         "prefix_exact": {

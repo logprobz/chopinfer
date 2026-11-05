@@ -115,8 +115,8 @@ def exempt(row, mib):
     start, kib = 0x7428b2600000, round(mib * 1024)
     row.update(host_exempt_rss_mib=kib / 1024, host_exempt_bound_mib=1024,
                host_judged_mib=row['host_rss_mib'] - kib / 1024,
-               host_exempt_mappings=[{'pid': 101, 'start_time': 5001, 'range': f'{start:x}-{start + 2 ** 30:x}',
-                                      'device': '103:01', 'inode': 11, 'offset': '00000000', 'perms': 'r--s',
+               host_exempt_mappings=[{'pid': 101, 'start_time': 5001, 'range': [start, start + 2 ** 30],
+                                      'device': [0x103, 1], 'inode': 11, 'offset': 0, 'perms': 'r--s',
                                       'size_kib': 2 ** 20, 'rss_kib': kib, 'anonymous_kib': 0,
                                       'private_dirty_kib': 0, 'shared_dirty_kib': 0, 'swap_kib': 0}])
 
@@ -140,7 +140,7 @@ def soak_receipt(facts, duration, scope=None, files=None):
             exempt(row, 20)
         value['mapped_view_files'] = files
         # The first file holds the inode of the samples' exempt mapping.
-        value['mapped_view_file_identities'] = [{'file': name, 'path': f'/checkpoint/{name}', 'device': '103:01',
+        value['mapped_view_file_identities'] = [{'file': name, 'path': f'/checkpoint/{name}', 'device': [0x103, 1],
                                                  'inode': 11 + index} for index, name in enumerate(files)]
     if scope != 'rss':
         value['host_memory_scope'] = scope

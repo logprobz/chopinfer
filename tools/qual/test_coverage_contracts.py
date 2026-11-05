@@ -12,15 +12,15 @@ def table_mapping(rss_kib, size_mib=193365, **changed):
     """An exempt mapping as a soak sample lists it: a clean read-only shared
     view of `size_mib` MiB holding `rss_kib` kB."""
     start = 0x7428b2600000
-    return {"pid": 101, "start_time": 5001, "range": f"{start:x}-{start + size_mib * 2 ** 20:x}", "device": "103:01",
-            "inode": 11, "offset": "00000000", "perms": "r--s", "size_kib": size_mib * 1024, "rss_kib": rss_kib,
+    return {"pid": 101, "start_time": 5001, "range": [start, start + size_mib * 2 ** 20], "device": [0x103, 1],
+            "inode": 11, "offset": 0, "perms": "r--s", "size_kib": size_mib * 1024, "rss_kib": rss_kib,
             "anonymous_kib": 0, "private_dirty_kib": 0, "shared_dirty_kib": 0, "swap_kib": 0, **changed}
 
 
 def file_identities(files):
     """The declared files as a soak receipt names them; the first holds the
     table_mapping inode."""
-    return [{"file": name, "path": f"/checkpoint/{name}", "device": "103:01", "inode": 11 + index}
+    return [{"file": name, "path": f"/checkpoint/{name}", "device": [0x103, 1], "inode": 11 + index}
             for index, name in enumerate(files)]
 
 
@@ -363,7 +363,7 @@ class DeclaredMappedViews(unittest.TestCase):
                 ("an empty list", lambda kib: {"host_exempt_mappings": []}),
                 ("a 1 MiB mapping", lambda kib: {"host_exempt_mappings": [table_mapping(min(kib, 1024), 1)]}),
                 ("a writable device mapping", lambda kib: {"host_exempt_mappings": [
-                    table_mapping(kib, 1024, perms="rw-s", device="00:05")]}),
+                    table_mapping(kib, 1024, perms="rw-s", device=[0, 5])]}),
                 ("Rss over Size", lambda kib: {"host_exempt_mappings": [table_mapping(kib, 1024, size_kib=1)]}),
                 ("another process later", lambda kib: {"host_exempt_mappings": [
                     table_mapping(kib, 1024, start_time=5001 if kib == 0 else 9001)]}),
@@ -394,18 +394,21 @@ class DeclaredMappedViews(unittest.TestCase):
                                 ("claiming no dirty pages", {"anonymous_kib": 0, "private_dirty_kib": 0,
                                                              "shared_dirty_kib": 0, "swap_kib": 0})):
             def entry(t):
-                listed = {"pid": 123, "start_time": 400, "range": "100000000-140000000", "device": "08:01",
-                          "inode": 101, "offset": "00000000", "perms": "r--s" if t == 0 else "r--p",
-                          "size_kib": 2 ** 20, "rss_kib": 10 * t * 1024}
-                if counters:
-                    listed.update({"anonymous_kib": 0, "private_dirty_kib": 0, "shared_dirty_kib": 0, "swap_kib": 0})
-                    listed.update({key: value * 10 * t * 1024 for key, value in counters.items()})
+                perms = "r--s" if t == 0 else "r--p"
+                if not counters:
+                    return {"pid": 123, "start_time": 400, "range": "100000000-140000000", "device": "08:01",
+                            "inode": 101, "offset": "00000000", "perms": perms, "size_kib": 2 ** 20,
+                            "rss_kib": 10 * t * 1024}
+                listed = {"pid": 123, "start_time": 400, "range": [0x100000000, 0x140000000], "device": [8, 1],
+                          "inode": 101, "offset": 0, "perms": perms, "size_kib": 2 ** 20, "rss_kib": 10 * t * 1024,
+                          "anonymous_kib": 0, "private_dirty_kib": 0, "shared_dirty_kib": 0, "swap_kib": 0}
+                listed.update({key: value * 10 * t * 1024 for key, value in counters.items()})
                 return listed
             value = {"passed": True, "errors": [], "completed": 3, "concurrency": 1, "duration_seconds": 60,
                      "measured_duration_seconds": 60, "memory_scope": "serving_process_tree",
                      "host_memory_scope": "rss_less_mapped_views", "mapped_view_files": ["table.bin"],
                      "mapped_view_file_identities": [{"file": "table.bin", "path": "/checkpoint/table.bin",
-                                                      "device": "08:01", "inode": 101}],
+                                                      "device": "08:01" if not counters else [8, 1], "inode": 101}],
                      "memory_samples": [{"elapsed_seconds": t, "mib": 100, "host_rss_mib": 100 + 10 * t,
                                          "host_judged_mib": 100, "host_exempt_rss_mib": 10 * t,
                                          "host_exempt_bound_mib": 1024, "host_exempt_mappings": [entry(t)]}
@@ -415,6 +418,50 @@ class DeclaredMappedViews(unittest.TestCase):
                 self.assertEqual(result["status"], "insufficient")
                 self.assertIn("incomplete or inconsistent mapped-view memory evidence", result["error"])
 
+    def test_equivalent_or_overlapping_identities_are_refused(self):
+        # VmRSS 100, 550 and 1000 MiB, two listed 1 GiB views of the
+        # declared file holding 0, 150 and 300 MiB each: judged 100, 250
+        # and 400 MiB, but the two are one mapping, or share addresses.
+        check = {"module": "soak", "args": ["--duration", "60", "--concurrency", "1"],
+                 "constants": {"soak": {"HOST_MEMORY_SCOPE": {"value": "rss_less_mapped_views", "source": "test"},
+                                        "MAPPED_VIEW_FILES": {"value": ["table.bin"], "source": "test"}}},
+                 "rules": [rule(["passed"])]}
+
+        def receipt(first, second, device):
+            def listed(kib):
+                return [dict(first, rss_kib=kib), dict(first, rss_kib=kib, **second)]
+            return {"passed": True, "errors": [], "completed": 3, "concurrency": 1, "duration_seconds": 60,
+                    "measured_duration_seconds": 60, "memory_scope": "serving_process_tree",
+                    "host_memory_scope": "rss_less_mapped_views", "mapped_view_files": ["table.bin"],
+                    "mapped_view_file_identities": [{"file": "table.bin", "path": "/checkpoint/table.bin",
+                                                     "device": device, "inode": 101}],
+                    "memory_samples": [{"elapsed_seconds": t, "mib": 100, "host_rss_mib": 100 + 15 * t,
+                                        "host_exempt_mappings": listed(5 * t * 1024), "host_exempt_rss_mib": 10 * t,
+                                        "host_exempt_bound_mib": 2048, "host_judged_mib": 100 + 5 * t}
+                                       for t in (0, 30, 60)]}
+
+        # As smaps spells them, and as the soak lists them, in integers.
+        clean = {"anonymous_kib": 0, "private_dirty_kib": 0, "shared_dirty_kib": 0, "swap_kib": 0}
+        spelled = {"pid": 123, "start_time": 400, "range": "100000000-140000000", "device": "08:01", "inode": 101,
+                   "offset": "00000000", "perms": "r--s", "size_kib": 2 ** 20, "rss_kib": 0, **clean}
+        numbers = {"pid": 123, "start_time": 400, "range": [0x100000000, 0x140000000], "device": [8, 1], "inode": 101,
+                   "offset": 0, "perms": "r--s", "size_kib": 2 ** 20, "rss_kib": 0, **clean}
+        for label, value in (
+                ("a device alias", receipt(spelled, {"device": "8:1"}, "08:01")),
+                ("an offset alias", receipt(spelled, {"offset": "0"}, "08:01")),
+                ("a range alias", receipt(spelled, {"range": "0100000000-0140000000"}, "08:01")),
+                ("an overlapping range at another offset", receipt(spelled, {"offset": "00001000"}, "08:01")),
+                ("the same identity twice", receipt(numbers, {}, [8, 1])),
+                ("an overlapping range at another offset, as numbers", receipt(numbers, {"offset": 4096}, [8, 1])),
+                ("a range overlapping by a page", receipt(numbers, {"range": [0x13ffff000, 0x17ffff000]}, [8, 1]))):
+            with self.subTest(label):
+                result = kinds.rescore(kinds.of("soak"), value, None, check)
+                self.assertEqual(result["status"], "insufficient")
+                self.assertIn("incomplete or inconsistent mapped-view memory evidence", result["error"])
+        # Two disjoint views of the file are consistent evidence.
+        value = receipt(numbers, {"range": [0x140000000, 0x180000000], "offset": 2 ** 30}, [8, 1])
+        self.assertEqual(kinds.rescore(kinds.of("soak"), value, None, check)["status"], "pass")
+
     def test_exempt_mappings_must_be_of_the_declared_files(self):
         self.assertEqual(self.rescore(self.receipt())["status"], "pass")
         identities = file_identities(self.FILES)
@@ -422,13 +469,13 @@ class DeclaredMappedViews(unittest.TestCase):
                 ("no identities", lambda value: value.pop("mapped_view_file_identities"), "names no device and inode"),
                 ("another file's", lambda value: value.update(mapped_view_file_identities=identities[1:]),
                  "names no device and inode"),
-                ("a malformed device", lambda value: value["mapped_view_file_identities"][0].update(device="0x67"),
-                 "names no device and inode"),
+                *((f"a device {device!r}", lambda value, device=device: value["mapped_view_file_identities"][0].update(
+                    device=device), "names no device and inode") for device in ("103:01", "103:1", [0x103], [-1, 1])),
                 ("a mapping of another inode",
                  lambda value: [row["host_exempt_mappings"][0].update(inode=99) for row in value["memory_samples"]],
                  "at 0 s exempts a mapping of no declared file"),
                 ("a mapping of another device",
-                 lambda value: [row["host_exempt_mappings"][0].update(device="00:05")
+                 lambda value: [row["host_exempt_mappings"][0].update(device=[0, 5])
                                 for row in value["memory_samples"]],
                  "at 0 s exempts a mapping of no declared file")):
             value = self.receipt()
@@ -437,10 +484,6 @@ class DeclaredMappedViews(unittest.TestCase):
                 result = self.rescore(value)
                 self.assertEqual(result["status"], "insufficient")
                 self.assertIn(message, result["error"])
-        # Device numbers compare as numbers, however smaps pads them.
-        value = self.receipt()
-        value["mapped_view_file_identities"][0]["device"] = "103:1"
-        self.assertEqual(self.rescore(value)["status"], "pass")
 
     def test_invalid_declared_files_are_refused(self):
         for scope, files in (("rss_less_mapped_views", []), ("rss_less_mapped_views", ["/abs.bin"]),

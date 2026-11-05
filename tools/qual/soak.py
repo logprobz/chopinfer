@@ -74,15 +74,23 @@ WARMUP_SECONDS = 0
 CACHE_ALLOWANCE_MIB = {"host": 0, "device": 0}
 # The host memory the rule judges, declared in the same constants: "rss",
 # the default, judges VmRSS. "rss_less_mapped_views", for a server that maps
-# large read-only checkpoint files, judges VmRSS less the Rss of the read-only
-# mappings of MAPPED_VIEW_FILES (file names relative to the served checkpoint
-# directory) that the serving tree holds at the first sample, attributed per
-# mapping from /proc/PID/smaps, while each stays present, shared, read-only
-# and clean (no Anonymous, Private_Dirty, Shared_Dirty or Swap pages) with
-# its first sample's permissions in every sample. Every other mapping counts:
-# a later mapping, even of the same file or with the same identity, a
-# private, writable or dirty one, and every other file-backed mapping, such
-# as the driver's pinned host buffers mapped through the GPU device nodes.
+# large read-only checkpoint files, judges VmRSS less the Rss of the shared
+# read-only mappings of MAPPED_VIEW_FILES (file names relative to the served
+# checkpoint directory) that the serving tree holds at the first sample,
+# attributed per mapping from /proc/PID/smaps, while each stays present,
+# shared, read-only and clean (no Anonymous, Private_Dirty, Shared_Dirty or
+# Swap pages) with its first sample's permissions in every sample. A mapping
+# is identified by its process (PID and start time), address range, device,
+# inode and offset, compared as integers; a sample with two mappings that
+# share an address within a process has no evidence. Every other mapping
+# counts: one a sample saw absent or otherwise, from then on, even under the
+# same identity, one first seen later, a private, writable or dirty one, and
+# every other file-backed mapping, such as the driver's pinned host buffers
+# mapped through the GPU device nodes. One case goes unseen: a mapping
+# unmapped and replaced within one sampling interval (30 seconds) by one with
+# the identical identity that is also shared, read-only with the same
+# permissions, and clean. That is the same file's clean shared page cache at
+# the same address, so it cannot hide anonymous or dirty memory.
 HOST_MEMORY_SCOPE = "rss"
 MAPPED_VIEW_FILES = ()
 
@@ -123,33 +131,46 @@ def mapped_view_files(files=None, scope=None):
     return list(files)
 
 
+def natural(value):
+    """Whether `value` is a non-negative integer (and not a boolean)."""
+    return type(value) is int and value >= 0
+
+
 def exempt_identity(entry):
     """The identity of an exempt mapping a sample lists (PID, start time,
-    address range, device, inode, offset), or None unless the entry is a
-    shared read-only mapping without Anonymous, Private_Dirty, Shared_Dirty
-    or Swap pages whose Size is its address range and holds its Rss."""
+    start and end address, device major and minor, inode, offset, each an
+    integer), or None unless the entry is a shared read-only mapping without
+    Anonymous, Private_Dirty, Shared_Dirty or Swap pages whose Size, more
+    than 0, is its address range and holds its Rss."""
     keys = ("pid", "start_time", "range", "device", "inode", "offset", "perms", "size_kib", "rss_kib",
             "anonymous_kib", "private_dirty_kib", "shared_dirty_kib", "swap_kib")
     if not isinstance(entry, dict) or set(entry) != set(keys):
         return None
-    natural = lambda value: type(value) is int and value >= 0
-    text = lambda key, pattern: isinstance(entry[key], str) and re.fullmatch(pattern, entry[key])
-    span = text("range", r"([0-9a-f]+)-([0-9a-f]+)")
-    if not (span and natural(entry["pid"]) and entry["pid"] > 0 and natural(entry["start_time"])
-            and natural(entry["inode"]) and natural(entry["size_kib"]) and natural(entry["rss_kib"])
-            and text("device", r"[0-9a-f]+:[0-9a-f]+") and text("offset", r"[0-9a-f]+")
-            and text("perms", r"[r-]-[x-]s") and all(entry[key] == 0 and natural(entry[key]) for key in keys[9:])):
+    pair = lambda key: type(entry[key]) is list and len(entry[key]) == 2 and all(map(natural, entry[key]))
+    if not (pair("range") and pair("device") and natural(entry["pid"]) and entry["pid"] > 0
+            and all(natural(entry[key]) for key in ("start_time", "inode", "offset", "size_kib", "rss_kib"))
+            and isinstance(entry["perms"], str) and re.fullmatch(r"[r-]-[x-]s", entry["perms"])
+            and all(entry[key] == 0 and natural(entry[key]) for key in keys[9:])):
         return None
-    if int(span[2], 16) - int(span[1], 16) != entry["size_kib"] * 1024 or entry["rss_kib"] > entry["size_kib"]:
+    (start, end), size = entry["range"], entry["size_kib"]
+    if size == 0 or size * 1024 != end - start or entry["rss_kib"] > size:
         return None
-    return tuple(entry[key] for key in keys[:6])
+    return entry["pid"], entry["start_time"], start, end, *entry["device"], entry["inode"], entry["offset"]
+
+
+def overlapping(spans):
+    """Whether any two of the address ranges `spans` ([start, end)) share an
+    address."""
+    spans = sorted(spans)
+    return any(start < end for (_, end), (start, _) in zip(spans, spans[1:]))
 
 
 def exempt_problem(samples):
     """Why the rss_less_mapped_views scope cannot judge `samples`, or None.
     Each sample lists its exempt mappings (`host_exempt_mappings`), each a
     distinct clean shared read-only mapping whose Size is its address range
-    and holds its Rss (exempt_identity), and every one listed, with the same
+    and holds its Rss (exempt_identity), none overlapping another of its
+    process, which has one start time, and every one listed, with the same
     permissions, by the first sample and by each sample since. Its VmRSS,
     exempt Rss, bound and judged host memory are finite non-negative
     numbers: the exempt Rss and bound the listed mappings' Rss and Size, in
@@ -167,6 +188,12 @@ def exempt_problem(samples):
         if None in identities or len(set(identities)) != len(identities):
             return (f"{at} lists no exempt mappings, or one that is not a distinct clean shared read-only mapping "
                     "within its Size")
+        processes = {}
+        for entry in entries:
+            processes.setdefault(entry["pid"], []).append((entry["start_time"], entry["range"]))
+        if any(len({born for born, _ in listed}) > 1 or overlapping(span for _, span in listed)
+               for listed in processes.values()):
+            return f"{at} lists exempt mappings that overlap within a process, or a process with two start times"
         listed = {identity: entry["perms"] for identity, entry in zip(identities, entries)}
         if held is not None and any(held.get(identity) != perms for identity, perms in listed.items()):
             return (f"{at} exempts a mapping that the first sample and every sample since did not hold with the "
@@ -191,16 +218,15 @@ def exempt_receipt_problem(value, files):
     identities = value.get("mapped_view_file_identities")
     if not (isinstance(identities, list) and all(
             isinstance(entry, dict) and set(entry) == {"file", "path", "device", "inode"}
-            and isinstance(entry["path"], str) and isinstance(entry["device"], str)
-            and re.fullmatch(r"[0-9a-f]+:[0-9a-f]+", entry["device"]) and type(entry["inode"]) is int
-            and entry["inode"] >= 0 for entry in identities) and [entry["file"] for entry in identities] == files):
+            and isinstance(entry["path"], str) and type(entry["device"]) is list and len(entry["device"]) == 2
+            and all(map(natural, entry["device"])) and natural(entry["inode"]) for entry in identities)
+            and [entry["file"] for entry in identities] == files):
         return "the receipt names no device and inode of each declared mapped-view file"
     if problem := exempt_problem(value.get("memory_samples") or []):
         return problem
-    declared = {(device_number(entry["device"]), entry["inode"]) for entry in identities}
+    declared = {(*entry["device"], entry["inode"]) for entry in identities}
     for row in value["memory_samples"]:
-        if any((device_number(entry["device"]), entry["inode"]) not in declared
-               for entry in row["host_exempt_mappings"]):
+        if any((*entry["device"], entry["inode"]) not in declared for entry in row["host_exempt_mappings"]):
             return f"memory sample at {row['elapsed_seconds']} s exempts a mapping of no declared file"
     return None
 
@@ -456,17 +482,23 @@ def device_memory(root_pid):
 
 def smaps(pid):
     """The mappings of /proc/PID/smaps, each with its identity across samples
-    (address range, device, inode and offset), permissions, path, and Size,
-    Rss, Anonymous, Private_Dirty, Shared_Dirty and Swap in kB. Only the
-    header lines and those fields are parsed."""
+    (start and end address, device major and minor, inode and offset, as
+    integers), permissions, path, and Size, Rss, Anonymous, Private_Dirty,
+    Shared_Dirty and Swap in kB. Only the header lines and those fields are
+    parsed. Raises ValueError unless the address ranges are non-empty and
+    disjoint, so no two mappings share an identity or an address."""
     fields = (b"Size:", b"Rss:", b"Anonymous:", b"Private_Dirty:", b"Shared_Dirty:", b"Swap:")
     mappings = []
     for line in Path(f"/proc/{pid}/smaps").read_bytes().split(b"\n"):
         if line and line[0] in b"0123456789abcdef":
-            header = line.split(None, 5)
-            span, perms, offset, device, inode = (field.decode() for field in header[:5])
-            mappings.append({"key": (span, device, inode, offset), "perms": perms,
-                             "path": os.fsdecode(header[5]) if len(header) > 5 else ""})
+            header = re.fullmatch(rb"([0-9a-f]+)-([0-9a-f]+) +(\S{4}) +([0-9a-f]+) +([0-9a-f]+):([0-9a-f]+) +([0-9]+)"
+                                  rb"(?: +(.*))?", line)
+            if not header:
+                raise ValueError(f"/proc/{pid}/smaps has a malformed mapping line")
+            start, end, perms, offset, major, minor, inode, path = header.groups()
+            mappings.append({"key": (int(start, 16), int(end, 16), int(major, 16), int(minor, 16), int(inode),
+                                     int(offset, 16)),
+                             "perms": perms.decode(), "path": os.fsdecode(path or b"")})
         elif line.startswith(fields):
             if not mappings:
                 raise ValueError(f"/proc/{pid}/smaps has a field before its first mapping")
@@ -475,6 +507,9 @@ def smaps(pid):
     if any(field[:-1].decode() not in mapping for mapping in mappings for field in fields):
         raise ValueError(f"/proc/{pid}/smaps has a mapping without Size, Rss, Anonymous, Private_Dirty, "
                          "Shared_Dirty or Swap")
+    spans = [mapping["key"][:2] for mapping in mappings]
+    if any(start >= end for start, end in spans) or overlapping(spans):
+        raise ValueError(f"/proc/{pid}/smaps has an empty or overlapping address range")
     return mappings
 
 
@@ -507,19 +542,13 @@ def resolve_within(root, path):
     return "/" + "/".join(resolved)
 
 
-def device_number(text):
-    """(major, minor) of a device as smaps writes it, "MAJ:MIN" in hex."""
-    major, minor = text.split(":")
-    return int(major, 16), int(minor, 16)
-
-
 def mapped_view_identities(pids, files):
     """The declared files as the serving tree's `serve` process sees them,
-    each as (name, path, device, inode): its checkpoint directory is the
-    value of --model (or, beside --bundle, --checkpoint) against its working
-    directory, each file's path has every symbolic link resolved within the
-    process's root, and the file there must be a regular one. Every `serve`
-    process of the tree must see the same files."""
+    each as (name, path, (device major, minor), inode): its checkpoint
+    directory is the value of --model (or, beside --bundle, --checkpoint)
+    against its working directory, each file's path has every symbolic link
+    resolved within the process's root, and the file there must be a regular
+    one. Every `serve` process of the tree must see the same files."""
     found = set()
     for pid in pids:
         try:
@@ -538,8 +567,7 @@ def mapped_view_identities(pids, files):
             status = os.stat(os.path.join(root, path.lstrip("/")), follow_symlinks=False)
             if not stat.S_ISREG(status.st_mode):
                 raise ValueError(f"mapped-view file {name} of serving process {pid} is not a regular file ({path})")
-            identities.append((name, path, f"{os.major(status.st_dev):02x}:{os.minor(status.st_dev):02x}",
-                               status.st_ino))
+            identities.append((name, path, (os.major(status.st_dev), os.minor(status.st_dev)), status.st_ino))
         found.add(tuple(identities))
     if len(found) != 1:
         raise ValueError(f"the serving tree names no single checkpoint directory and its files ({len(found)} found)")
@@ -584,13 +612,12 @@ class MappedViews:
 
     def establish(self, tree):
         identities = mapped_view_identities([pid for pid, _ in tree], self.files)
-        files = {(device_number(device), inode) for _, _, device, inode in identities}
+        files = {(*device, inode) for _, _, device, inode in identities}
         # Each exempt identity with its first sample's permissions.
         exempt = {}
         for (pid, start), mappings in tree.items():
             for mapping in mappings:
-                span, device, inode, offset = mapping["key"]
-                if self.eligible(mapping) and (device_number(device), int(inode)) in files:
+                if self.eligible(mapping) and mapping["key"][2:5] in files:
                     exempt[pid, start, *mapping["key"]] = mapping["perms"]
         self.identities, self.exempt = identities, exempt
 
@@ -618,12 +645,12 @@ class MappedViews:
         if error := self.error or (unread and f"no mappings of {unread}"):
             return {"host_judged_mib": None, "host_exempt_rss_mib": None, "host_exempt_bound_mib": None,
                     "host_exempt_mappings": None, "host_exempt_error": error}
-        listed = [{"pid": pid, "start_time": start, "range": span, "device": device, "inode": int(inode),
+        listed = [{"pid": pid, "start_time": born, "range": [start, end], "device": [major, minor], "inode": inode,
                    "offset": offset, "perms": mapping["perms"], "size_kib": mapping["Size"], "rss_kib": mapping["Rss"],
                    "anonymous_kib": mapping["Anonymous"], "private_dirty_kib": mapping["Private_Dirty"],
                    "shared_dirty_kib": mapping["Shared_Dirty"], "swap_kib": mapping["Swap"]}
                   for identity in sorted(self.exempt) for mapping in [present[identity]]
-                  for pid, start, span, device, inode, offset in [identity]]
+                  for pid, born, start, end, major, minor, inode, offset in [identity]]
         exempt = sum(entry["rss_kib"] for entry in listed) / 1024
         return {"host_judged_mib": rss - exempt, "host_exempt_rss_mib": exempt,
                 "host_exempt_bound_mib": sum(entry["size_kib"] for entry in listed) / 1024,
@@ -925,7 +952,7 @@ def main():
                             **({"host_memory_scope": scope} if scope != "rss" else {}),
                             **({"mapped_view_files": files,
                                 "mapped_view_file_identities": None if views.identities is None else [
-                                    {"file": name, "path": path, "device": device, "inode": inode}
+                                    {"file": name, "path": path, "device": list(device), "inode": inode}
                                     for name, path, device, inode in views.identities]}
                                if views is not None else {}),
                             **({key: rule[key] for key in ("host_exempt_rss_mib", "host_exempt_bound_mib")

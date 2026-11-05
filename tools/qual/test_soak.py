@@ -693,7 +693,10 @@ class MappedViewScope(unittest.TestCase):
 
     @staticmethod
     def listed(row):
-        return [(entry["pid"], entry["range"], entry["perms"], entry["offset"]) for entry in row["host_exempt_mappings"]]
+        """A sample's exempt mappings as (PID, range, permissions, offset),
+        the integers spelled as smaps writes them."""
+        return [(entry["pid"], "%x-%x" % tuple(entry["range"]), entry["perms"], "%08x" % entry["offset"])
+                for entry in row["host_exempt_mappings"]]
 
     def test_the_fake_mappings_are_realizable(self):
         # At the largest growth any test applies, each mapping's Size is its
@@ -803,8 +806,7 @@ class MappedViewScope(unittest.TestCase):
                                           else {}})):
             with self.subTest(label):
                 rows, _ = self.sampled(options.pop("grow", lambda t: {}), **options)
-                self.assertTrue(all(view not in {entry["range"] for entry in row["host_exempt_mappings"]}
-                                    for row in rows))
+                self.assertTrue(all(view not in {span for _, span, _, _ in self.listed(row)} for row in rows))
                 self.assertEqual(len(rows[-1]["host_exempt_mappings"]), 3)
         # Each listed view records the counters the rule requires to be 0.
         rows, _ = self.sampled()
@@ -855,6 +857,52 @@ class MappedViewScope(unittest.TestCase):
                 self.assertEqual(libc.munmap(again, size), 0)
                 self.assertEqual((first["host_exempt_rss_mib"], later["host_exempt_rss_mib"]),
                                  (size / 2 ** 20, exempt / 2 ** 20))
+
+    def test_smaps_identities_are_integers_and_never_overlap(self):
+        def parsed(text):
+            with patch.object(soak.Path, "read_bytes", return_value=text.encode()):
+                return soak.smaps(7)
+        counters = "".join(f"{name}: 0 kB\n" for name in ("Anonymous", "Private_Dirty", "Shared_Dirty", "Swap"))
+        mapping = lambda header, size=1024: f"{header}\nSize: {size} kB\nRss: 4 kB\n{counters}"
+        view = "7428b2600000-7428b2700000 r--s 16e3a12000 103:01 11"
+        self.assertEqual([(entry["key"], entry["perms"], entry["path"])
+                          for entry in parsed(mapping(f"{view}                 /checkpoint/table a.bin")
+                                              + mapping("7428b2700000-7428b2701000 rw-p 00000000 00:00 0 ", 4))],
+                         [((0x7428b2600000, 0x7428b2700000, 0x103, 1, 11, 0x16e3a12000), "r--s",
+                           "/checkpoint/table a.bin"),
+                          ((0x7428b2700000, 0x7428b2701000, 0, 0, 0, 0), "rw-p", "")])
+        for label, second in (("the same identity", view),
+                              ("a padded spelling of it", "007428b2600000-007428b2700000 r--s 0016e3a12000 0103:001 11"),
+                              ("an overlapping range at another offset", "7428b26ff000-7428b27ff000 r--s 00000000 103:01 11"),
+                              ("an empty range", "7428b2800000-7428b2800000 r--s 00000000 103:01 11")):
+            with self.subTest(label), self.assertRaisesRegex(ValueError, "empty or overlapping address range"):
+                parsed(mapping(view) + mapping(second))
+        for header in ("7428b2600000 r--s 00000000 103:01 11", "7428b2600000-7428b2700000 r--s 0x0 103:01 11",
+                       "7428b2600000-7428b2700000 r--s 00000000 103 11", "7428b2600000-7428b2700000 r--s 0 1:1 -1"):
+            with self.subTest(header), self.assertRaisesRegex(ValueError, "malformed mapping line"):
+                parsed(mapping(header))
+
+    def test_an_alias_of_an_exempt_view_leaves_the_sample_without_evidence(self):
+        # From 600 s smaps also holds a table view at the same address,
+        # offset and file, spelled with leading zeros, or a view of that
+        # file overlapping it at another offset; the soak does not exempt
+        # either twice, nor exempt the process's views again.
+        for label, row in (("padded", ("0074404d400000-00745730b82000", "r--s", "0000000000")),
+                           ("overlapping", ("74404d401000-74404d501000", "r--s", "00001000"))):
+            with self.subTest(label):
+                def extra(n, row=row):
+                    return [(*row, f"{self.store}/{TABLES[1]}", 1024, 1024)] if n >= 20 else []
+                proc = FakeProc(self.cwd, lambda n: [*server_mappings(self.store), *extra(n)])
+                views = soak.MappedViews(list(TABLES))
+                with proc.mounted():
+                    rows = [{"elapsed_seconds": t, "mib": 1000, **soak.host_memory(100, views)}
+                            for t in range(0, 1201, 30)]
+                self.assertEqual(rows[19]["host_exempt_rss_mib"], (3905472 + 2672428 + 3904596 + 2612208) / 1024)
+                self.assertTrue(all(row["host_judged_mib"] is None for row in rows[20:]))
+                self.assertIn("process 101 (ValueError: /proc/101/smaps has an empty or overlapping address range)",
+                              rows[20]["host_exempt_error"])
+                with self.assertRaisesRegex(ValueError, "at 600 s has no"):
+                    self.rule(rows)
 
     def test_a_restarted_server_or_a_recycled_pid_counts(self):
         # The same PID and mappings, but another process from 600 s on.
@@ -1053,11 +1101,28 @@ class MappedViewScope(unittest.TestCase):
 
         def recycled(rows):
             for row in rows[5:]:
-                row["host_exempt_mappings"][0]["start_time"] = 9001
+                for entry in row["host_exempt_mappings"]:
+                    entry["start_time"] = 9001
+
+        def overlapped(rows):
+            # The second view moved onto the first's last page, at its own
+            # offset.
+            entries = rows[5]["host_exempt_mappings"]
+            for row in rows:
+                second = row["host_exempt_mappings"][1]
+                second["range"] = [entries[0]["range"][1] - 4096, entries[0]["range"][1] - 4096 + 4096 * 1024]
+                second["size_kib"], second["rss_kib"] = 4096, min(second["rss_kib"], 4096)
+                row["host_exempt_rss_mib"] = sum(entry["rss_kib"] for entry in row["host_exempt_mappings"]) / 1024
+                row["host_exempt_bound_mib"] = sum(entry["size_kib"] for entry in row["host_exempt_mappings"]) / 1024
+                row["host_judged_mib"] = row["host_rss_mib"] - row["host_exempt_rss_mib"]
+
+        def two_start_times(rows):
+            for row in rows:
+                row["host_exempt_mappings"][1]["start_time"] = 9001
 
         def remapped(rows):
             for row in rows[5:]:
-                row["host_exempt_mappings"][0]["range"] = "100000000000-101000000000"
+                row["host_exempt_mappings"][0]["range"] = [0x100000000000, 0x101000000000]
                 row["host_exempt_mappings"][0]["size_kib"] = 0x1000000000 // 1024
 
         for label, change, message in (
@@ -1069,6 +1134,12 @@ class MappedViewScope(unittest.TestCase):
                 ("a writable mapping", changed("perms", "rw-s"), "not a distinct clean shared read-only mapping"),
                 ("an unknown field", changed("path", "/x"), "not a distinct clean shared read-only mapping"),
                 ("a duplicate", duplicated, "not a distinct clean shared read-only mapping"),
+                *((f"{key} spelled as smaps writes it", changed(key, spelled), "not a distinct clean shared read-only")
+                  for key, spelled in (("range", "7428b2600000-743f96013000"), ("device", "103:01"),
+                                       ("offset", "00000000"), ("range", [0x7428b2600000]),
+                                       ("device", [True, 1]))),
+                ("an overlapping mapping", overlapped, "at 0 s lists exempt mappings that overlap within a process"),
+                ("a process with two start times", two_start_times, "at 0 s .* a process with two start times"),
                 ("a mapping absent from a sample", gone_then_back, "at 180 s exempts a mapping"),
                 ("another process", recycled, "at 150 s exempts a mapping"),
                 ("another range", remapped, "at 150 s exempts a mapping")):
@@ -1129,7 +1200,7 @@ class MappedViewScope(unittest.TestCase):
                 identities = [(Path(self.store) / name).stat() for name in TABLES]
                 self.assertEqual(report["mapped_view_file_identities"],
                                  [{"file": name, "path": f"{self.store}/{name}",
-                                   "device": f"{os.major(status.st_dev):02x}:{os.minor(status.st_dev):02x}",
+                                   "device": [os.major(status.st_dev), os.minor(status.st_dev)],
                                    "inode": status.st_ino} for name, status in zip(TABLES, identities)])
                 self.assertGreaterEqual(len(samples), 2)
                 self.assertEqual(report["host_exempt_rss_mib"], max(row["host_exempt_rss_mib"] for row in samples))

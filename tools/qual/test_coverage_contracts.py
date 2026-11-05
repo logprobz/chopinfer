@@ -303,5 +303,103 @@ class DeclaredHostMemoryScope(unittest.TestCase):
                 self.assertIn("host memory scope", result["error"])
 
 
+class DeclaredMappedViews(unittest.TestCase):
+    """A model whose server maps large read-only checkpoint files declares
+    the soak's HOST_MEMORY_SCOPE rss_less_mapped_views and the files: the
+    rescore recomputes the judged host memory, VmRSS less the exempt
+    mappings' Rss, from each sample, and refuses a receipt judged under
+    another scope or other files, or a sample without consistent values."""
+    FILES = ["tables/table-a.bin", "tables/table-b.bin"]
+
+    def receipt(self, exempt=lambda t: t * 4, other=lambda t: 0, scope="rss_less_mapped_views", files=None):
+        value = soak_receipt()
+        value["memory_samples"] = []
+        for t in range(0, 1381, 30):
+            rss = 25000 + exempt(t) + other(t)
+            value["memory_samples"].append({"elapsed_seconds": t, "mib": 100, "host_rss_mib": rss,
+                                            "host_exempt_rss_mib": 12000 + exempt(t),
+                                            "host_exempt_bound_mib": 193365,
+                                            "host_judged_mib": rss - 12000 - exempt(t)})
+        if scope is not None:
+            value["host_memory_scope"] = scope
+        if scope == "rss_less_mapped_views" or files is not None:
+            value["mapped_view_files"] = self.FILES if files is None else files
+        return value
+
+    def rescore(self, value, scope="rss_less_mapped_views", files=None):
+        constants = {}
+        if scope is not None:
+            constants["HOST_MEMORY_SCOPE"] = {"value": scope, "source": "test"}
+        if scope == "rss_less_mapped_views" or files is not None:
+            constants["MAPPED_VIEW_FILES"] = {"value": self.FILES if files is None else files, "source": "test"}
+        check = {"module": "soak", "args": ["--duration", "1380", "--concurrency", "32", "--prefix-mix",
+                                            "--media-mix", "--structured-mix"], "rules": [rule(["passed"])],
+                 **({"constants": {"soak": constants}} if constants else {})}
+        return kinds.rescore(kinds.of("soak"), value, None, check)
+
+    def test_exempt_growth_passes_only_under_the_scope(self):
+        result = self.rescore(self.receipt())
+        self.assertEqual(result["status"], "pass")
+        self.assertEqual({key: result["metrics"][key] for key in (
+            "host_memory_scope", "mapped_view_files", "host_memory_growth_mib", "host_exempt_rss_mib",
+            "host_exempt_bound_mib")},
+            {"host_memory_scope": "rss_less_mapped_views", "mapped_view_files": self.FILES,
+             "host_memory_growth_mib": 0, "host_exempt_rss_mib": 12000 + 5520, "host_exempt_bound_mib": 193365})
+        # Judged by VmRSS the same growth fails.
+        self.assertEqual(self.rescore(self.receipt(scope=None), scope=None)["status"], "fail")
+
+    def test_growth_outside_the_exempt_mappings_fails(self):
+        result = self.rescore(self.receipt(other=lambda t: t // 2))
+        self.assertEqual((result["status"], result["metrics"]["host_memory_growth_mib"]), ("fail", 690))
+        # The judged series is recomputed from VmRSS and the exempt Rss, not
+        # read from the receipt's summary.
+        value = self.receipt(other=lambda t: t // 2)
+        value.update(host_memory_growth_mib=0, steady_host_memory_growth_mib=0, passed=True)
+        self.assertEqual(self.rescore(value)["status"], "fail")
+
+    def test_a_receipt_judged_under_another_scope_or_other_files_is_refused(self):
+        for value, scope, files in ((self.receipt(scope=None), "rss_less_mapped_views", None),
+                                    (self.receipt(scope="rss"), "rss_less_mapped_views", None),
+                                    (self.receipt(scope="anonymous_shmem"), "rss_less_mapped_views", None),
+                                    (self.receipt(files=self.FILES[:1]), "rss_less_mapped_views", None),
+                                    (self.receipt(), "rss_less_mapped_views", self.FILES[::-1]),
+                                    (self.receipt(exempt=lambda t: 0), None, None),
+                                    (self.receipt(exempt=lambda t: 0), "rss", None)):
+            with self.subTest(recorded=(value.get("host_memory_scope"), value.get("mapped_view_files")),
+                              declared=(scope, files)):
+                result = self.rescore(value, scope, files)
+                self.assertEqual(result["status"], "insufficient")
+                self.assertIn("another host memory scope or other mapped-view files", result["error"])
+
+    def test_a_sample_without_consistent_values_is_insufficient(self):
+        for key in ("host_exempt_rss_mib", "host_exempt_bound_mib", "host_judged_mib"):
+            for missing in (None, float("nan"), -1, "absent"):
+                value = self.receipt()
+                if missing == "absent":
+                    del value["memory_samples"][5][key]
+                else:
+                    value["memory_samples"][5][key] = missing
+                with self.subTest(key=key, value=missing):
+                    result = self.rescore(value)
+                    self.assertEqual(result["status"], "insufficient")
+                    self.assertIn("incomplete or inconsistent", result["error"])
+        for key, change in (("host_judged_mib", -600), ("host_exempt_rss_mib", 200000),
+                            ("host_exempt_bound_mib", -190000)):
+            value = self.receipt()
+            value["memory_samples"][5][key] += change
+            with self.subTest(key=key, change=change):
+                result = self.rescore(value)
+                self.assertEqual(result["status"], "insufficient")
+                self.assertIn("incomplete or inconsistent", result["error"])
+
+    def test_invalid_declared_files_are_refused(self):
+        for scope, files in (("rss_less_mapped_views", []), ("rss_less_mapped_views", ["/abs.bin"]),
+                             ("rss_less_mapped_views", ["../up.bin"]), ("rss", self.FILES)):
+            with self.subTest(scope=scope, files=files):
+                result = self.rescore(self.receipt(scope=scope, files=files), scope, files)
+                self.assertEqual(result["status"], "insufficient")
+                self.assertIn("mapped-view files", result["error"])
+
+
 if __name__ == "__main__":
     unittest.main()

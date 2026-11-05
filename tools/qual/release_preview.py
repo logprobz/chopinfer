@@ -315,6 +315,7 @@ def model_facts(model):
             'soak_warmup': declared.get('WARMUP_SECONDS', {}).get('value', 0),
             'soak_allowance': declared.get('CACHE_ALLOWANCE_MIB', {}).get('value', {'host': 0, 'device': 0}),
             'soak_scope': declared.get('HOST_MEMORY_SCOPE', {}).get('value', 'rss'),
+            'soak_files': declared.get('MAPPED_VIEW_FILES', {}).get('value', []),
             'checks': value['checks'], 'kv_offload': value.get('kv_offload'),
             'capabilities': value.get('capabilities')}
 
@@ -1428,8 +1429,9 @@ def judge_soak(value, facts, arguments):
     """A soak stage, judged by the soak kind with the stage's own arguments
     and the model's declared warm-up, cache allowance and host memory scope:
     the measured interval and its samples, the concurrency, device and host
-    memory growth (and under a scope other than rss the file-backed growth
-    within the mapped-view bytes) and the mixes."""
+    memory growth (under anonymous_shmem also the file-backed growth within
+    the mapped-view bytes, under rss_less_mapped_views the exempt Rss within
+    the exempt mappings' Size) and the mixes."""
     clean_receipt(value)
     check = {'module': 'soak', 'args': list(map(str, arguments)), 'constants': {'soak': facts['soak_constants']}}
     metrics = kinds.KINDS['soak'].score(value, None, check)
@@ -1445,6 +1447,9 @@ def judge_soak(value, facts, arguments):
     if metrics.get('host_rss_file_growth_mib') is not None:
         values.append(metric('host_rss_file_growth_mib', metrics['host_rss_file_growth_mib'], 'le',
                              metrics['host_rss_file_growth_limit_mib']))
+    if metrics.get('host_exempt_rss_mib') is not None:
+        values.append(metric('host_exempt_rss_mib', metrics['host_exempt_rss_mib'], 'le',
+                             metrics['host_exempt_bound_mib']))
     if metrics['passed'] is not True:
         prefix = value.get('prefix_mix') or {}
         if '--prefix-mix' in arguments and not (prefix.get('canary_passed') is True and prefix.get('hits_total', 0) > 0
@@ -1454,9 +1459,9 @@ def judge_soak(value, facts, arguments):
         require((value.get('mixed_requests') or {}).get('structured_truncated') == 0, 'truncated structured requests')
         raise ValueError(f'memory grew more than {SOAK_GROWTH_MIB} MiB after the declared warm-up, or beyond the '
                          'declared cache allowance over the soak'
-                         + ('' if facts['soak_scope'] == 'rss' else
-                            f" (host memory scope {facts['soak_scope']}), or its file-backed pages beyond the "
-                            'mapped-view bytes'))
+                         + ('' if facts['soak_scope'] == 'rss' else f" (host memory scope {facts['soak_scope']})")
+                         + (', or its file-backed pages beyond the mapped-view bytes'
+                            if facts['soak_scope'] == 'anonymous_shmem' else ''))
     return values, {}
 
 
@@ -1857,14 +1862,17 @@ def queue(url, facts):
 
 def soak_rule_arguments(facts):
     """The model's declared soak warm-up and cache allowance, and its host
-    memory scope, each passed only when declared. The scope goes to soak.py
-    as declared, so one the stage cannot record fails the stage."""
+    memory scope with its mapped-view files, each passed only when declared.
+    The scope goes to soak.py as declared, so one the stage cannot record
+    fails the stage."""
     arguments = []
     if facts['soak_warmup'] or any(facts['soak_allowance'].values()):
         arguments += ['--warmup-seconds', str(facts['soak_warmup']), '--cache-allowance-mib',
                       f"{facts['soak_allowance']['host']},{facts['soak_allowance']['device']}"]
     if facts['soak_scope'] != 'rss':
         arguments += ['--host-memory-scope', facts['soak_scope']]
+    for name in facts['soak_files']:
+        arguments += ['--mapped-view-file', name]
     return arguments
 
 

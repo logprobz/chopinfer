@@ -2,8 +2,11 @@
 
 from qual_test_config import setUpModule
 
+from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import os
 from pathlib import Path
+import shutil
 import tempfile
 import subprocess
 import threading
@@ -546,7 +549,7 @@ class HostMemoryScope(unittest.TestCase):
         `host` (RssFile growing by 1 MiB a sample)."""
         sampled = iter(range(100))
 
-        def host_memory(pid):
+        def host_memory(pid, views=None):
             files = next(sampled)
             return host or {"host_rss_mib": 3 + files, "host_rss_anon_mib": 1.5, "host_rss_file_mib": 1 + files,
                             "host_rss_shmem_mib": 0.5}
@@ -589,6 +592,309 @@ class HostMemoryScope(unittest.TestCase):
                 self.assertIn("has no", report["errors"][0]["memory"])
                 # The default scope judges VmRSS alone.
                 self.assertEqual(self.soak(**declared)[0], 0)
+
+
+# The declared files of a server that maps two read-only tables, each as a
+# large view and a small one, in the shape of a 2026-11-05 C32 GPU soak.
+TABLES = ["tables/table-a.bin", "tables/table-b.bin"]
+REAL = {"read_text": Path.read_text, "read_bytes": Path.read_bytes, "readlink": os.readlink}
+
+
+def server_mappings(store, exempt=0, driver=0, anon=0, other=0, writable=0, later=None, protected=False):
+    """The server's mappings as (range, perms, offset, path, Size kB, Rss
+    kB): the four table views under `store` (the first grown by `exempt`
+    kB), the driver's control node (pinned host buffers, grown by `driver`),
+    anonymous memory (`anon`), an undeclared checkpoint file (`other`), a
+    writable mapping of a declared file (`writable`) and, when `later` is
+    not None, a mapping of a declared file the first sample did not see.
+    `protected` makes the first table view writable, as mprotect would."""
+    table_a, table_b = (f"{store}/{name}" for name in TABLES)
+    rows = [("74404d400000-745730b82000", "rw-s" if protected else "r--s", "00000000", table_a, 96001544,
+             3905472 + exempt),
+            ("745730d81000-7457e7f3e000", "r--s", "16e3781000", table_a, 3000052, 2672428),
+            ("7428b2600000-743f96013000", "r--s", "00000000", table_b, 96004172, 3904596),
+            ("743f96212000-74404d3e4000", "r--s", "16e3a12000", table_b, 3000136, 2612208),
+            ("7458e0000000-7458f0000000", "rw-s", "00000000", "/dev/nvidiactl", 4194304, 223232 + driver),
+            ("7427b904f000-742808000000", "rw-p", "00000000", "", 8388608, 1294020 + anon),
+            ("767c89028000-767c891b1000", "r-xp", "00028000", "/usr/lib/libc.so.6", 1572, 1120),
+            ("7459e0000000-7459f0000000", "r--p", "00000000", f"{store}/weights.bin", 4194304, 1000 + other),
+            ("745ae0000000-745af0000000", "rw-s", "00000000", table_b, 4194304, 1000 + writable)]
+    if later is not None:
+        rows.append(("745be0000000-745bf0000000", "r--s", "00000000", table_a, 4194304, later))
+    return rows
+
+
+class FakeProc:
+    """/proc of a serving tree: a wrapper (pid 100) whose command line holds
+    the server's, and the server (pid 101), started in `cwd`. `mappings(n)`
+    gives the server's mappings at the nth sample (the nth listing of the
+    tree); `unreadable(n)` the pids whose smaps cannot be read then."""
+
+    def __init__(self, cwd, mappings, argv=("chopinfer", "serve", "--model", "checkpoint"),
+                 unreadable=lambda n: ()):
+        self.cwd, self.mappings, self.argv, self.unreadable = cwd, mappings, list(argv), unreadable
+        self.samples = -1
+        self.smaps_reads = 0
+
+    def rows(self, pid):
+        if pid == 100:
+            return [("55bc8aed4000-55bc8aed9000", "r-xp", "00002000", "/usr/bin/timeout", 20, 20)]
+        return self.mappings(self.samples)
+
+    def tree(self, root_pid):
+        self.samples += 1
+        return {100, 101}
+
+    def status(self, pid):
+        rows = self.rows(pid)
+        anon = sum(rss for *_, path, size, rss in rows if not path)
+        total = sum(rss for *_, rss in rows)
+        return f"VmRSS:\t{total} kB\nRssAnon:\t{anon} kB\nRssFile:\t{total - anon} kB\nRssShmem:\t0 kB\n"
+
+    def smaps(self, pid):
+        self.smaps_reads += 1
+        if pid in self.unreadable(self.samples):
+            raise PermissionError(13, "Permission denied", f"/proc/{pid}/smaps")
+        lines = []
+        for span, perms, offset, path, size, rss in self.rows(pid):
+            device, inode = ("00:00", 0) if not path else ("103:01", sum(map(ord, path)))
+            lines += [f"{span} {perms} {offset} {device} {inode}" + (f"                 {path}" if path else ""),
+                      f"Size:           {size:8} kB", "KernelPageSize:        4 kB",
+                      f"Rss:            {rss:8} kB", f"Pss:            {rss:8} kB",
+                      f"Private_Dirty:  {rss:8} kB", "Anonymous:             0 kB", "VmFlags: rd mr me sd"]
+        return ("\n".join(lines) + "\n").encode()
+
+    def read_text(self, path, *args, **kwargs):
+        parts = str(path).split("/")
+        if parts[:2] == ["", "proc"] and parts[2] in ("100", "101") and parts[3] == "status":
+            return self.status(int(parts[2]))
+        return REAL["read_text"](path, *args, **kwargs)
+
+    def read_bytes(self, path):
+        parts = str(path).split("/")
+        if parts[:2] == ["", "proc"] and parts[2] in ("100", "101"):
+            if parts[3] == "smaps":
+                return self.smaps(int(parts[2]))
+            if parts[3] == "cmdline":
+                argv = ["/usr/bin/timeout", "0s", *self.argv] if parts[2] == "100" else self.argv
+                return "".join(word + "\0" for word in argv).encode()
+        return REAL["read_bytes"](path)
+
+    def readlink(self, path, *args, **kwargs):
+        if str(path) in ("/proc/100/cwd", "/proc/101/cwd"):
+            return self.cwd
+        return REAL["readlink"](path, *args, **kwargs)
+
+    @contextmanager
+    def mounted(self):
+        with patch.object(soak, "process_tree", side_effect=self.tree), \
+                patch.object(soak.Path, "read_text", autospec=True, side_effect=self.read_text), \
+                patch.object(soak.Path, "read_bytes", autospec=True, side_effect=self.read_bytes), \
+                patch.object(soak.os, "readlink", side_effect=self.readlink):
+            yield self
+
+
+class MappedViewScope(unittest.TestCase):
+    """The rss_less_mapped_views scope judges VmRSS less the Rss of the
+    declared files' read-only mappings that the serving tree holds at the
+    first sample, attributed per mapping from smaps; every other mapping
+    counts."""
+    SCOPE = "rss_less_mapped_views"
+    # 5,425 MiB of the tables' pages becoming resident over the soak.
+    RESIDENT = 5425 * 1024
+
+    def setUp(self):
+        base = Path(os.path.realpath(tempfile.mkdtemp()))
+        self.addCleanup(shutil.rmtree, base)
+        # The server names its checkpoint relative to its working directory,
+        # through a symbolic link; smaps names the files it resolves to.
+        (base / "store").mkdir()
+        (base / "work").mkdir()
+        (base / "work" / "checkpoint").symlink_to(base / "store")
+        self.store, self.cwd = str(base / "store"), str(base / "work")
+
+    def proc(self, grow=lambda t: {}, **options):
+        return FakeProc(self.cwd, lambda n: server_mappings(self.store, **grow(30 * n)), **options)
+
+    def sampled(self, grow=lambda t: {}, files=TABLES, **options):
+        """Samples every 30 s over 1200 s of a server whose mappings grow by
+        `grow(t)` (server_mappings options), with the soak's MappedViews."""
+        proc, views = self.proc(grow, **options), soak.MappedViews(list(files))
+        with proc.mounted():
+            rows = [{"elapsed_seconds": t, "mib": 1000, **soak.host_memory(100, views)} for t in range(0, 1201, 30)]
+        return rows, views
+
+    def rule(self, rows, scope=SCOPE):
+        return soak.memory_rule(rows, 1200, LIMITS, 0, None, scope)
+
+    def test_growth_of_the_exempt_mappings_passes(self):
+        rows, views = self.sampled(lambda t: {"exempt": t * self.RESIDENT // 1200})
+        rule = self.rule(rows)
+        bound = (96001544 + 3000052 + 96004172 + 3000136) / 1024
+        self.assertEqual((rule["passed"], rule["host_memory_scope"], rule["host_memory_growth_mib"],
+                          rule["steady_host_memory_growth_mib"], rule["host_exempt_rss_mib"],
+                          rule["host_exempt_bound_mib"]),
+                         (True, self.SCOPE, 0, 0, (3905472 + 2672428 + 3904596 + 2612208 + self.RESIDENT) / 1024,
+                          bound))
+        for row in rows:
+            self.assertEqual(row["host_judged_mib"], row["host_rss_mib"] - row["host_exempt_rss_mib"])
+            self.assertEqual(row["host_exempt_bound_mib"], bound)
+        # The server's four read-only table views, not the wrapper whose
+        # command line names the same checkpoint, nor an undeclared file.
+        self.assertEqual([(row["pid"], row["path"], row["perms"], row["offset"]) for row in views.mappings],
+                         [(101, f"{self.store}/{TABLES[0]}", "r--s", "00000000"),
+                          (101, f"{self.store}/{TABLES[0]}", "r--s", "16e3781000"),
+                          (101, f"{self.store}/{TABLES[1]}", "r--s", "00000000"),
+                          (101, f"{self.store}/{TABLES[1]}", "r--s", "16e3a12000")])
+        # Judged by VmRSS the same soak fails.
+        self.assertEqual((self.rule(rows, "rss")["passed"], self.rule(rows, "rss")["host_memory_growth_mib"]),
+                         (False, 5425))
+
+    def test_growth_in_the_driver_node_or_another_file_mapping_counts(self):
+        for part in ("driver", "other", "anon"):
+            with self.subTest(part):
+                rule = self.rule(self.sampled(lambda t: {part: t * 600 * 1024 // 1200})[0])
+                self.assertEqual((rule["host_memory_growth_mib"], rule["passed"]), (600, False))
+                rule = self.rule(self.sampled(lambda t: {part: t * 500 * 1024 // 1200,
+                                                          "exempt": t * self.RESIDENT // 1200})[0])
+                self.assertEqual((rule["host_memory_growth_mib"], rule["passed"]), (500, True))
+
+    def test_a_mapping_of_a_declared_file_after_the_first_sample_counts(self):
+        rows, views = self.sampled(lambda t: {"later": t * 600 * 1024 // 1200} if t else {})
+        rule = self.rule(rows)
+        self.assertEqual((rule["host_memory_growth_mib"], rule["passed"]), (600, False))
+        self.assertEqual(len(views.mappings), 4)
+
+    def test_a_writable_mapping_of_a_declared_file_is_not_exempt(self):
+        rows, views = self.sampled(lambda t: {"writable": t * 600 * 1024 // 1200})
+        self.assertEqual((self.rule(rows)["host_memory_growth_mib"], self.rule(rows)["passed"]), (600, False))
+        self.assertNotIn("rw-s", {row["perms"] for row in views.mappings})
+        # An exempt mapping made writable after the first sample counts from then on.
+        rows, _ = self.sampled(lambda t: {"protected": t >= 600})
+        rule = self.rule(rows)
+        self.assertEqual((rule["host_memory_growth_mib"], rule["passed"]), (3905472 / 1024, False))
+
+    def test_an_unreadable_smaps_leaves_its_sample_without_evidence(self):
+        rows, _ = self.sampled(unreadable=lambda n: (100,) if n == 7 else ())
+        self.assertEqual([index for index, row in enumerate(rows) if row["host_judged_mib"] is None], [7])
+        self.assertEqual((rows[7]["host_exempt_rss_mib"], rows[7]["host_exempt_bound_mib"]), (None, None))
+        self.assertIn("process 100 (PermissionError", rows[7]["host_exempt_error"])
+        self.assertEqual(rows[7]["host_rss_mib"], rows[6]["host_rss_mib"])
+        with self.assertRaisesRegex(ValueError, "at 210 s has no host_exempt_rss_mib, host_exempt_bound_mib, "
+                                                "host_judged_mib .*PermissionError"):
+            self.rule(rows)
+        # Unread at the first sample, the exempt mappings are unknown for
+        # the whole soak.
+        rows, views = self.sampled(unreadable=lambda n: (101,) if n == 0 else ())
+        self.assertTrue(all(row["host_judged_mib"] is None for row in rows))
+        self.assertTrue(all(row["host_exempt_error"].startswith("the first sample identified no exempt mappings")
+                            for row in rows))
+        self.assertEqual(views.mappings, [])
+        with self.assertRaisesRegex(ValueError, "at 0 s has no"):
+            self.rule(rows)
+
+    def test_the_served_checkpoint_directory_must_be_named_once(self):
+        for argv, exempt in ((("chopinfer", "serve", "--bundle", "package", "--checkpoint", "checkpoint"), 4),
+                             (("chopinfer", "serve", "--model", self.store), 4),
+                             (("chopinfer", "serve", "--model", f"{self.cwd}/elsewhere"), 0),
+                             (("chopinfer", "serve", "--listen", "127.0.0.1:1"), None),
+                             (("chopinfer", "serve", "--model", "checkpoint", "--checkpoint", "checkpoint"), None),
+                             (("chopinfer", "serve", "--model"), None),
+                             (("chopinfer", "verify", "--model", "checkpoint"), None)):
+            with self.subTest(argv=argv):
+                rows, views = self.sampled(argv=argv)
+                if exempt is None:
+                    self.assertIn("checkpoint director", rows[0]["host_exempt_error"])
+                    self.assertTrue(all(row["host_judged_mib"] is None for row in rows))
+                else:
+                    self.assertEqual(len(views.mappings), exempt)
+                    self.assertNotIn("host_exempt_error", rows[0])
+
+    def test_a_sample_without_consistent_values_is_insufficient(self):
+        keys = ("host_rss_mib", "host_exempt_rss_mib", "host_exempt_bound_mib", "host_judged_mib")
+        for key in keys:
+            for value in (None, float("nan"), float("inf"), -1, True, "1", "absent"):
+                rows, _ = self.sampled()
+                if value == "absent":
+                    del rows[5][key]
+                else:
+                    rows[5][key] = value
+                with self.subTest(key=key, value=value), self.assertRaisesRegex(ValueError, f"has no .*{key}"):
+                    self.rule(rows)
+        rows, _ = self.sampled()
+        for key, value in (("host_judged_mib", rows[5]["host_judged_mib"] - 600),
+                           ("host_exempt_rss_mib", rows[5]["host_exempt_bound_mib"] + 1),
+                           ("host_exempt_bound_mib", rows[5]["host_exempt_rss_mib"] - 1)):
+            changed = [dict(row) for row in rows]
+            changed[5][key] = value
+            with self.subTest(key=key), self.assertRaisesRegex(ValueError, "beyond its bound"):
+                self.rule(changed)
+        # The judged series is VmRSS less the exempt Rss: a lower recorded
+        # judged value cannot hide growth from the rule.
+        rows, _ = self.sampled(lambda t: {"anon": t * 600 * 1024 // 1200})
+        self.assertFalse(self.rule(rows)["passed"])
+
+    def test_the_declared_files_belong_to_the_scope(self):
+        self.assertEqual(soak.mapped_view_files(TABLES, self.SCOPE), TABLES)
+        self.assertEqual(soak.mapped_view_files(), [])
+        for files, scope in (([], self.SCOPE), (TABLES, "rss"), (TABLES, "anonymous_shmem"), (["/abs.bin"], self.SCOPE),
+                             (["../up.bin"], self.SCOPE), (["a//b.bin"], self.SCOPE), (["a/./b.bin"], self.SCOPE),
+                             (["a/"], self.SCOPE), ([""], self.SCOPE), (["a.bin", "a.bin"], self.SCOPE),
+                             ([1], self.SCOPE), ("a.bin", self.SCOPE), ([["a.bin"]], self.SCOPE)):
+            with self.subTest(files=files, scope=scope), self.assertRaises(ValueError):
+                soak.mapped_view_files(files, scope)
+        for argv in (["--host-memory-scope", self.SCOPE], ["--mapped-view-file", TABLES[0]],
+                     ["--host-memory-scope", self.SCOPE, "--mapped-view-file", "/abs.bin"]):
+            with self.subTest(argv=argv), patch("sys.argv", ["soak", "--server-pid", "100", *argv]), \
+                    patch("sys.stderr"), self.assertRaises(SystemExit) as exited:
+                soak.main()
+            self.assertEqual(exited.exception.code, 2)
+
+    def soak(self, proc, argv=()):
+        with patch("sys.argv", ["soak", "--duration", "0.3", "--concurrency", "2", "--server-pid", "100", *argv]), \
+                proc.mounted(), patch.object(soak, "Client", FakeClient), \
+                patch.object(soak, "device_memory", return_value=350), \
+                patch.object(soak, "metrics_text", return_value="chop_mapped_view_bytes 202758045696\n"), \
+                patch.object(soak, "receipt") as receipt, self.assertRaises(SystemExit) as exited:
+            soak.main()
+        return exited.exception.code, receipt.call_args.args[2]
+
+    def test_the_soak_records_the_scope_and_its_exempt_mappings(self):
+        argv = ["--host-memory-scope", self.SCOPE, *[word for name in TABLES for word in ("--mapped-view-file", name)]]
+        # The tables' resident pages grow 600 MiB a sample.
+        grow = lambda t: {"exempt": t // 30 * 600 * 1024}
+        for declared in ({"argv": argv}, {}):
+            with self.subTest(declared=bool(declared)), \
+                    patch.object(soak, "HOST_MEMORY_SCOPE", "rss" if declared else self.SCOPE), \
+                    patch.object(soak, "MAPPED_VIEW_FILES", () if declared else tuple(TABLES)):
+                code, report = self.soak(self.proc(grow), **declared)
+                self.assertEqual((code, report["passed"], report["errors"]), (0, True, []))
+                self.assertEqual((report["host_memory_scope"], report["mapped_view_files"],
+                                  report["host_memory_growth_mib"], len(report["host_exempt_mappings"])),
+                                 (self.SCOPE, TABLES, 0, 4))
+                samples = report["memory_samples"]
+                self.assertGreaterEqual(len(samples), 2)
+                self.assertEqual(report["host_exempt_rss_mib"], max(row["host_exempt_rss_mib"] for row in samples))
+                self.assertGreater(samples[-1]["host_exempt_rss_mib"], samples[0]["host_exempt_rss_mib"])
+                self.assertTrue(all(row["host_judged_mib"] == samples[0]["host_judged_mib"] for row in samples))
+        # The default scope reads no smaps, records none of it, and fails the
+        # same soak on its VmRSS growth.
+        proc = self.proc(grow)
+        code, report = self.soak(proc)
+        self.assertEqual((code, proc.smaps_reads), (1, 0))
+        self.assertFalse({"host_memory_scope", "mapped_view_files", "host_exempt_mappings", "host_exempt_rss_mib",
+                          "host_exempt_bound_mib"} & set(report))
+        self.assertFalse(any("host_judged_mib" in row for row in report["memory_samples"]))
+
+    def test_an_unreadable_smaps_fails_the_soak_and_keeps_its_receipt(self):
+        argv = ["--host-memory-scope", self.SCOPE, "--mapped-view-file", TABLES[0]]
+        code, report = self.soak(self.proc(unreadable=lambda n: (101,) if n == 1 else ()), argv)
+        self.assertEqual((code, report["passed"]), (1, False))
+        self.assertGreaterEqual(len(report["memory_samples"]), 2)
+        self.assertEqual([list(error) for error in report["errors"]], [["memory"]])
+        self.assertIn("has no host_exempt_rss_mib", report["errors"][0]["memory"])
+        self.assertEqual(report["host_memory_scope"], self.SCOPE)
+
 
 
 if __name__ == "__main__":

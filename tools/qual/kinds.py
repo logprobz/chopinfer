@@ -958,11 +958,13 @@ class Soak(Kind):
     metrics = ("passed", "completed", "duration_seconds", "measured_duration_seconds", "concurrency",
                "memory_samples", "memory_scope", "memory_growth_mib", "host_memory_growth_mib",
                "steady_memory_growth_mib", "steady_host_memory_growth_mib", "host_memory_scope",
-               "host_rss_file_growth_mib", "host_rss_file_growth_limit_mib", "mixed_requests", "prefix_mix")
+               "host_rss_file_growth_mib", "host_rss_file_growth_limit_mib", "mapped_view_files",
+               "host_exempt_rss_mib", "host_exempt_bound_mib", "mixed_requests", "prefix_mix")
     verdict = ("complete measured interval, bounded host and device memory growth (after any declared warm-up, "
-               "and over the whole soak within any declared cache allowance; host memory is VmRSS, or under a "
+               "and over the whole soak within any declared cache allowance; host memory is VmRSS, under a "
                "declared anonymous_shmem scope RssAnon + RssShmem with RssFile growth within the mapped-view "
-               "bytes), and exercised mixes")
+               "bytes, or under a declared rss_less_mapped_views scope VmRSS less the Rss of the declared "
+               "read-only mapped views held at the first sample), and exercised mixes")
 
     def verify(self, value, reference=None, check=None):
         self.score(value, reference, check)
@@ -1003,23 +1005,28 @@ class Soak(Kind):
                                                    declared.get("CACHE_ALLOWANCE_MIB", {}).get("value",
                                                                                                 {"host": 0, "device": 0}))
             scope = soak.host_memory_scope(declared.get("HOST_MEMORY_SCOPE", {}).get("value", "rss"))
+            files = soak.mapped_view_files(declared.get("MAPPED_VIEW_FILES", {}).get("value", []), scope)
         except ValueError as error:
             raise Insufficient(f"soak: {error}") from None
         require(value.get("warmup_seconds", 0) == warmup
                 and value.get("cache_allowance_mib", {"host": 0, "device": 0}) == allowance,
                 "soak: the receipt was judged under another warm-up or cache allowance")
-        require(value.get("host_memory_scope", "rss") == scope,
-                "soak: the receipt was judged under another host memory scope")
+        require(value.get("host_memory_scope", "rss") == scope and value.get("mapped_view_files", []) == files,
+                "soak: the receipt was judged under another host memory scope or other mapped-view files")
         if scope == "anonymous_shmem":
             require(not any(soak.missing_parts(row) for row in samples),
                     "soak: incomplete anonymous, shared, file-backed or mapped-view memory samples")
+        if scope == "rss_less_mapped_views":
+            require(not any(soak.exempt_problem(row) for row in samples),
+                    "soak: incomplete or inconsistent judged, exempt mapped-view or bound memory samples")
         rule = soak.memory_rule(samples, duration, {
             "device": min(512, argument_number(args, "--memory-growth-mib", 512)),
             "host": min(512, argument_number(args, "--host-memory-growth-mib", 512))}, warmup, allowance, scope)
         growth = {key: rule[key] for key in ("memory_growth_mib", "host_memory_growth_mib",
                                               "steady_memory_growth_mib", "steady_host_memory_growth_mib",
                                               "host_memory_scope", "host_rss_file_growth_mib",
-                                              "host_rss_file_growth_limit_mib") if key in rule}
+                                              "host_rss_file_growth_limit_mib", "host_exempt_rss_mib",
+                                              "host_exempt_bound_mib") if key in rule}
         passed = rule["passed"]
         mixed = value.get("mixed_requests") or {}
         for flag, key in (("--media-mix", "media"), ("--structured-mix", "structured")):

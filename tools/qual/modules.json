@@ -441,6 +441,7 @@
    "CANARY": "number",
    "HOST_MEMORY_SCOPE": "str",
    "KEEP_STRUCTURED": "int",
+   "MAPPED_VIEW_FILES": "list",
    "MEDIA_CASES": "list",
    "NEAR_TIE_MARGIN": "number",
    "PREFIX_DLOGPROB": "number",

@@ -35,6 +35,15 @@ class DeepseekInventory(ModelRequirements):
         keys = {'CHOPINFER_DEEPSEEK_CHECKPOINT', 'CHOPINFER_DEEPSEEK_TOKENIZER_DIR'}
         self.assertEqual(self.cleared(keys), keys)
 
+    def test_cpu_checks(self):
+        self.assert_references('test_reference.py', 'test_reference_kernel.py', 'test_reference_workloads.py',
+                               'test_frontend_corpus.py')
+        # The CPU profile build builds the helper; the bundle's CUDA build stays out of it.
+        self.assertEqual([(t.package, t.name, t.kind) for t in self.model.checks.profile_targets],
+                         [('model-deepseek41', 'chopinfer-model-deepseek41', 'bin')])
+        for target in self.model.checks.profile_targets:
+            self.assert_profiled(target.package, target.name, target.kind)
+
     def test_the_checkpoint_pin_names_the_official_revision(self):
         pin = self.qual()['qualification']['checkpoint']
         self.assertEqual(pin['lock'], 'models/deepseek41/checkpoint-files.json')

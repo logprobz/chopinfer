@@ -83,3 +83,10 @@ contract_tests = ["kernel_compressor", "kernel_latent", "kernel_moe", "kernel_mx
 
 [checks]
 reference_tests = ["test_reference.py", "test_reference_kernel.py", "test_reference_workloads.py", "test_frontend_corpus.py"]
+
+# The CPU profile build builds the helper, as every released model's does
+# (tests/test_model_inventory.py released_facts).
+[[checks.profile_targets]]
+package = "model-deepseek41"
+kind = "bin"
+target = "chopinfer-model-deepseek41"

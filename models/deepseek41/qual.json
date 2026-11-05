@@ -551,6 +551,14 @@
           "image-blue-square.png"
         ]
       },
+      "constants": {
+        "soak": {
+          "HOST_MEMORY_SCOPE": {
+            "value": "anonymous_shmem",
+            "source": "models/deepseek41/README.md#qualification"
+          }
+        }
+      },
       "rules": [
         {
           "path": [

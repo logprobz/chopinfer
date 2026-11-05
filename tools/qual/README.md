@@ -98,9 +98,10 @@ the allowance (`soak.memory_rule`; the warm-up is capped at a quarter of the
 duration). Undeclared, the rule is the plain one. Host memory is VmRSS
 unless the constants declare `HOST_MEMORY_SCOPE` `anonymous_shmem`, for a
 server that maps large read-only files: the limit then applies to RssAnon +
-RssShmem, and RssFile, the file-backed pages of the mappings, is reported
-and its growth over the whole soak must stay within the smallest
-`mapped_view_bytes` sampled. Every sample must then carry RssAnon,
+RssShmem, and RssFile is reported and its growth over the whole soak must
+stay within the smallest `mapped_view_bytes` sampled. RssFile also holds
+driver-pinned host buffers mapped through the GPU device nodes and library
+pages, so that bound is a coarse ceiling, not a leak check. Every sample must then carry RssAnon,
 RssShmem, RssFile and `mapped_view_bytes`; one without them fails the soak
 and is insufficient evidence on rescore, as is a receipt judged under
 another scope. The release preview passes the declared warm-up, allowance and

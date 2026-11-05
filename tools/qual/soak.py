@@ -70,10 +70,12 @@ WARMUP_SECONDS = 0
 CACHE_ALLOWANCE_MIB = {"host": 0, "device": 0}
 # The host memory the rule judges, declared in the same constants: "rss",
 # the default, judges VmRSS. "anonymous_shmem", for a server that maps large
-# read-only files, judges RssAnon + RssShmem; the file-backed pages (RssFile),
-# clean page cache of the mappings, are reported, and their growth over the
-# whole soak must stay within the bytes the host's mapped views cover (the
-# smallest mapped_view_bytes sampled).
+# read-only files, judges RssAnon + RssShmem; RssFile is reported, and its
+# growth over the whole soak must stay within the bytes the host's mapped
+# views cover (the smallest mapped_view_bytes sampled). RssFile holds the
+# mapped files' pages but also driver-pinned host buffers mapped through the
+# GPU device nodes and library pages, so that bound is a coarse ceiling, not
+# a leak check.
 HOST_MEMORY_SCOPE = "rss"
 
 

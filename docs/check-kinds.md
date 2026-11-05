@@ -40,7 +40,10 @@ against the same limits and requires the RssFile growth over the whole soak
 to stay within the smallest `mapped_view_bytes` sampled, in MiB; a sample
 without a finite non-negative RssAnon, RssShmem, RssFile or
 `mapped_view_bytes` is insufficient. Under that scope the metrics add the
-scope, the RssFile growth and its bound.
+scope, the RssFile growth and its bound. RssFile holds the mapped files'
+pages but also driver-pinned host buffers mapped through the GPU device
+nodes and library pages, so the bound is a coarse ceiling, not a leak
+check: a pinned host buffer that leaks grows RssFile, not RssAnon.
 
 ## Common rules
 

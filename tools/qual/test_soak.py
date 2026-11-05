@@ -541,12 +541,14 @@ class FakeProc:
     the server's, and the server (pid 101), started in `cwd`. `mappings(n)`
     gives the server's mappings at the nth sample (the nth listing of the
     tree), `start(n)` its start time; `unreadable(n)` the pids whose smaps
-    cannot be read then."""
+    cannot be read then. A mapped file that exists here has its device and
+    inode, unless it is in `foreign` (another file object under its path);
+    the processes' root is this one's."""
 
     def __init__(self, cwd, mappings, argv=("chopinfer", "serve", "--model", "checkpoint"),
-                 unreadable=lambda n: (), start=lambda n: 5001):
+                 unreadable=lambda n: (), start=lambda n: 5001, foreign=()):
         self.cwd, self.mappings, self.argv, self.unreadable = cwd, mappings, list(argv), unreadable
-        self.start = start
+        self.start, self.foreign = start, set(foreign)
         self.samples = -1
         self.smaps_reads = 0
 
@@ -572,6 +574,11 @@ class FakeProc:
         lines = []
         for span, perms, offset, path, size, rss in self.rows(pid):
             device, inode = ("00:00", 0) if not path else ("103:01", sum(map(ord, path)))
+            if path in self.foreign:
+                device, inode = "00:05", 999
+            elif path and os.path.isfile(path):
+                status = os.stat(path)
+                device, inode = f"{os.major(status.st_dev):02x}:{os.minor(status.st_dev):02x}", status.st_ino
             lines += [f"{span} {perms} {offset} {device} {inode}" + (f"                 {path}" if path else ""),
                       f"Size:           {size:8} kB", "KernelPageSize:        4 kB",
                       f"Rss:            {rss:8} kB", f"Pss:            {rss:8} kB",
@@ -608,6 +615,7 @@ class FakeProc:
     @contextmanager
     def mounted(self):
         with patch.object(soak, "process_tree", side_effect=self.tree), \
+                patch.object(soak, "process_root", return_value="/"), \
                 patch.object(soak.Path, "read_text", autospec=True, side_effect=self.read_text), \
                 patch.object(soak.Path, "read_bytes", autospec=True, side_effect=self.read_bytes), \
                 patch.object(soak.os, "readlink", side_effect=self.readlink):
@@ -632,6 +640,21 @@ class MappedViewScope(unittest.TestCase):
         (base / "work").mkdir()
         (base / "work" / "checkpoint").symlink_to(base / "store")
         self.store, self.cwd = str(base / "store"), str(base / "work")
+        (base / "store" / "tables").mkdir()
+        for name in TABLES:
+            (base / "store" / name).write_bytes(b"table")
+
+    @contextmanager
+    def serving_this_process(self):
+        """This process as the serving tree, its smaps, stat and status read
+        from /proc, with a command line that serves the test checkpoint."""
+        pid = os.getpid()
+        argv = b"".join(word + b"\0" for word in (b"chopinfer", b"serve", b"--model", os.fsencode(self.store)))
+        with patch.object(soak, "process_tree", return_value={pid}), \
+                patch.object(soak.Path, "read_bytes", autospec=True,
+                             side_effect=lambda path: argv if str(path) == f"/proc/{pid}/cmdline"
+                             else REAL["read_bytes"](path)):
+            yield pid
 
     def proc(self, grow=lambda t: {}, **options):
         return FakeProc(self.cwd, lambda n: server_mappings(self.store, **grow(30 * n)), **options)
@@ -757,11 +780,10 @@ class MappedViewScope(unittest.TestCase):
             self.assertEqual(ctypes.string_at(pointer, 1), b"x")
             return pointer
 
-        views, pid = soak.MappedViews(["table.bin"]), os.getpid()
+        views = soak.MappedViews(["table.bin"])
 
         def sample():
-            with patch.object(soak, "process_tree", return_value={pid}), \
-                    patch.object(soak, "checkpoint_directory", return_value=self.store):
+            with self.serving_this_process() as pid:
                 return soak.host_memory(pid, views)
 
         pointer = mapped(None, mmap.MAP_SHARED)
@@ -797,19 +819,81 @@ class MappedViewScope(unittest.TestCase):
     def test_the_served_checkpoint_directory_must_be_named_once(self):
         for argv, exempt in ((("chopinfer", "serve", "--bundle", "package", "--checkpoint", "checkpoint"), 4),
                              (("chopinfer", "serve", "--model", self.store), 4),
-                             (("chopinfer", "serve", "--model", f"{self.cwd}/elsewhere"), 0),
-                             (("chopinfer", "serve", "--listen", "127.0.0.1:1"), None),
-                             (("chopinfer", "serve", "--model", "checkpoint", "--checkpoint", "checkpoint"), None),
-                             (("chopinfer", "serve", "--model"), None),
-                             (("chopinfer", "verify", "--model", "checkpoint"), None)):
+                             (("chopinfer", "serve", "--model", f"{self.cwd}/elsewhere"), "No such file"),
+                             (("chopinfer", "serve", "--listen", "127.0.0.1:1"), "checkpoint director"),
+                             (("chopinfer", "serve", "--model", "checkpoint", "--checkpoint", "checkpoint"),
+                              "checkpoint director"),
+                             (("chopinfer", "serve", "--model"), "checkpoint director"),
+                             (("chopinfer", "verify", "--model", "checkpoint"), "checkpoint director")):
             with self.subTest(argv=argv):
-                rows, _ = self.sampled(argv=argv)
-                if exempt is None:
-                    self.assertIn("checkpoint director", rows[0]["host_exempt_error"])
+                rows, views = self.sampled(argv=argv)
+                if isinstance(exempt, str):
+                    self.assertIn(exempt, rows[0]["host_exempt_error"])
                     self.assertTrue(all(row["host_judged_mib"] is None for row in rows))
                 else:
                     self.assertEqual(len(rows[0]["host_exempt_mappings"]), exempt)
+                    self.assertEqual([identity[:2] for identity in views.identities],
+                                     [(name, f"{self.store}/{name}") for name in TABLES])
                     self.assertNotIn("host_exempt_error", rows[0])
+
+    def test_a_declared_file_must_be_a_regular_file(self):
+        # The declared table is a symbolic link to a device node whose
+        # read-only mapping holds 600 MiB.
+        for node in [node for node in ("/dev/nvidiactl", "/dev/null") if os.path.exists(node)]:
+            table = Path(self.store) / TABLES[0]
+            table.unlink()
+            table.symlink_to(node)
+            node_view = ("700700000000-700740000000", "r--s", "00000000", node, 1048576, 600 * 1024)
+            proc = FakeProc(self.cwd, lambda n: [*server_mappings(self.store), node_view])
+            views = soak.MappedViews(list(TABLES))
+            try:
+                with self.subTest(node), proc.mounted():
+                    rows = [{"elapsed_seconds": t, "mib": 1000, **soak.host_memory(100, views)}
+                            for t in range(0, 1201, 30)]
+                    self.assertTrue(all(row["host_judged_mib"] is None for row in rows))
+                    self.assertIsNone(views.identities)
+                    self.assertIn(f"{TABLES[0]} of serving process 101 is not a regular file ({node})",
+                                  rows[0]["host_exempt_error"])
+                    with self.assertRaisesRegex(ValueError, "at 0 s has no"):
+                        self.rule(rows)
+            finally:
+                table.unlink()
+                table.write_bytes(b"table")
+
+    def test_a_mapping_under_a_declared_path_of_another_file_object_counts(self):
+        # Mappings named as the first table but of another device and inode.
+        table = f"{self.store}/{TABLES[0]}"
+        rows, _ = self.sampled(lambda t: {"exempt": t * self.RESIDENT // 1200}, foreign={table})
+        self.assertEqual(self.listed(rows[0]), [(101, "7428b2600000-743f96013000", "r--s", "00000000"),
+                                                (101, "743f96212000-74404d3e4000", "r--s", "16e3a12000")])
+        rule = self.rule(rows)
+        self.assertEqual((rule["host_memory_growth_mib"], rule["passed"]), (5425, False))
+
+    def test_a_real_mapping_of_a_deleted_file_is_not_exempt(self):
+        # This process maps a declared file, then the file is deleted and
+        # another regular file takes its name, or the name smaps then shows.
+        import mmap
+        for label, declared, mapped, replaced in (("kept", "table.bin", "table.bin", None),
+                                                  ("deleted", "table.bin", "table.bin", "table.bin"),
+                                                  ("name collision", "another.bin (deleted)", "another.bin",
+                                                   "another.bin (deleted)")):
+            with self.subTest(label):
+                path = Path(self.store) / mapped
+                path.write_bytes(b"x" * mmap.PAGESIZE)
+                with path.open("rb") as stream:
+                    view = mmap.mmap(stream.fileno(), mmap.PAGESIZE, mmap.MAP_SHARED, mmap.PROT_READ)
+                self.addCleanup(view.close)
+                self.assertEqual(view[0], ord("x"))
+                if replaced:
+                    path.unlink()
+                    (Path(self.store) / replaced).write_bytes(b"y" * mmap.PAGESIZE)
+                with self.serving_this_process() as pid:
+                    row = soak.host_memory(pid, soak.MappedViews([declared]))
+                mappings = [entry for entry in row["host_exempt_mappings"]]
+                self.assertEqual(row["host_exempt_rss_mib"], mmap.PAGESIZE / 2 ** 20 if not replaced else 0)
+                self.assertEqual(len(mappings), 0 if replaced else 1)
+                view.close()
+                (Path(self.store) / (replaced or mapped)).unlink()
 
     def test_a_sample_without_consistent_values_is_insufficient(self):
         keys = ("host_rss_mib", "host_exempt_rss_mib", "host_exempt_bound_mib", "host_judged_mib")
@@ -901,7 +985,7 @@ class MappedViewScope(unittest.TestCase):
     def test_the_declared_files_belong_to_the_scope(self):
         self.assertEqual(soak.mapped_view_files(TABLES, self.SCOPE), TABLES)
         self.assertEqual(soak.mapped_view_files(), [])
-        for files, scope in (([], self.SCOPE), (TABLES, "rss"), (["/abs.bin"], self.SCOPE),
+        for files, scope in (([], self.SCOPE), (TABLES, "rss"), (["/abs.bin"], self.SCOPE), (["a.bin (deleted)"], self.SCOPE),
                              (["../up.bin"], self.SCOPE), (["a//b.bin"], self.SCOPE), (["a/./b.bin"], self.SCOPE),
                              (["a/"], self.SCOPE), ([""], self.SCOPE), (["a.bin", "a.bin"], self.SCOPE),
                              ([1], self.SCOPE), ("a.bin", self.SCOPE), ([["a.bin"]], self.SCOPE)):
@@ -937,6 +1021,11 @@ class MappedViewScope(unittest.TestCase):
                 self.assertEqual((report["host_memory_scope"], report["mapped_view_files"],
                                   report["host_memory_growth_mib"], [len(row["host_exempt_mappings"]) for row in samples]),
                                  (self.SCOPE, TABLES, 0, [4] * len(samples)))
+                identities = [(Path(self.store) / name).stat() for name in TABLES]
+                self.assertEqual(report["mapped_view_file_identities"],
+                                 [{"file": name, "path": f"{self.store}/{name}",
+                                   "device": f"{os.major(status.st_dev):02x}:{os.minor(status.st_dev):02x}",
+                                   "inode": status.st_ino} for name, status in zip(TABLES, identities)])
                 self.assertGreaterEqual(len(samples), 2)
                 self.assertEqual(report["host_exempt_rss_mib"], max(row["host_exempt_rss_mib"] for row in samples))
                 self.assertGreater(samples[-1]["host_exempt_rss_mib"], samples[0]["host_exempt_rss_mib"])
@@ -946,8 +1035,8 @@ class MappedViewScope(unittest.TestCase):
         proc = self.proc(grow)
         code, report = self.soak(proc)
         self.assertEqual((code, proc.smaps_reads), (1, 0))
-        self.assertFalse({"host_memory_scope", "mapped_view_files", "host_exempt_mappings", "host_exempt_rss_mib",
-                          "host_exempt_bound_mib"} & set(report))
+        self.assertFalse({"host_memory_scope", "mapped_view_files", "mapped_view_file_identities",
+                          "host_exempt_rss_mib", "host_exempt_bound_mib"} & set(report))
         self.assertFalse(any({"host_judged_mib", "host_exempt_mappings"} & set(row) for row in report["memory_samples"]))
 
     def test_an_unreadable_smaps_fails_the_soak_and_keeps_its_receipt(self):

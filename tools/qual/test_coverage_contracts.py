@@ -17,6 +17,13 @@ def table_mapping(rss_kib, size_mib=193365, **changed):
             **changed}
 
 
+def file_identities(files):
+    """The declared files as a soak receipt names them; the first holds the
+    table_mapping inode."""
+    return [{"file": name, "path": f"/checkpoint/{name}", "device": "103:01", "inode": 11 + index}
+            for index, name in enumerate(files)]
+
+
 def soak_receipt():
     return {"passed": True, "completed": 10, "duration_seconds": 1380,
             "measured_duration_seconds": 1380, "concurrency": 32,
@@ -261,6 +268,7 @@ class DeclaredMappedViews(unittest.TestCase):
             value["host_memory_scope"] = scope
         if scope == "rss_less_mapped_views" or files is not None:
             value["mapped_view_files"] = self.FILES if files is None else files
+            value["mapped_view_file_identities"] = file_identities(value["mapped_view_files"])
         return value
 
     def rescore(self, value, scope="rss_less_mapped_views", files=None):
@@ -341,6 +349,7 @@ class DeclaredMappedViews(unittest.TestCase):
             return {"passed": True, "errors": [], "completed": 3, "duration_seconds": 60,
                     "measured_duration_seconds": 60, "concurrency": 1, "memory_scope": "serving_process_tree",
                     "host_memory_scope": "rss_less_mapped_views", "mapped_view_files": ["table.bin"],
+                    "mapped_view_file_identities": file_identities(["table.bin"]),
                     "memory_samples": [{"elapsed_seconds": t, "mib": 100, "host_rss_mib": 100 + 10 * t,
                                         "host_exempt_rss_mib": 10 * t, "host_exempt_bound_mib": 1024,
                                         "host_judged_mib": 100, **listed(10 * t * 1024)} for t in (0, 30, 60)]}
@@ -362,6 +371,33 @@ class DeclaredMappedViews(unittest.TestCase):
                 result = score(listed)
                 self.assertEqual(result["status"], "insufficient")
                 self.assertIn("incomplete or inconsistent mapped-view memory evidence", result["error"])
+
+    def test_exempt_mappings_must_be_of_the_declared_files(self):
+        self.assertEqual(self.rescore(self.receipt())["status"], "pass")
+        identities = file_identities(self.FILES)
+        for label, change, message in (
+                ("no identities", lambda value: value.pop("mapped_view_file_identities"), "names no device and inode"),
+                ("another file's", lambda value: value.update(mapped_view_file_identities=identities[1:]),
+                 "names no device and inode"),
+                ("a malformed device", lambda value: value["mapped_view_file_identities"][0].update(device="0x67"),
+                 "names no device and inode"),
+                ("a mapping of another inode",
+                 lambda value: [row["host_exempt_mappings"][0].update(inode=99) for row in value["memory_samples"]],
+                 "at 0 s exempts a mapping of no declared file"),
+                ("a mapping of another device",
+                 lambda value: [row["host_exempt_mappings"][0].update(device="00:05")
+                                for row in value["memory_samples"]],
+                 "at 0 s exempts a mapping of no declared file")):
+            value = self.receipt()
+            change(value)
+            with self.subTest(label):
+                result = self.rescore(value)
+                self.assertEqual(result["status"], "insufficient")
+                self.assertIn(message, result["error"])
+        # Device numbers compare as numbers, however smaps pads them.
+        value = self.receipt()
+        value["mapped_view_file_identities"][0]["device"] = "103:1"
+        self.assertEqual(self.rescore(value)["status"], "pass")
 
     def test_invalid_declared_files_are_refused(self):
         for scope, files in (("rss_less_mapped_views", []), ("rss_less_mapped_views", ["/abs.bin"]),

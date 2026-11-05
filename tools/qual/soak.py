@@ -39,9 +39,11 @@ mapping from /proc/PID/smaps.
 """
 
 from concurrent.futures import ThreadPoolExecutor
+import errno
 import math
 import os
 import re
+import stat
 import statistics
 import subprocess
 import threading
@@ -106,13 +108,14 @@ def host_memory_scope(scope=None):
 
 def mapped_view_files(files=None, scope=None):
     """The declared mapped-view files, validated for the host memory scope:
-    distinct file names relative to the checkpoint directory, at least one
-    under rss_less_mapped_views and none under rss."""
+    distinct file names relative to the checkpoint directory, none ending as
+    smaps marks a deleted file, at least one under rss_less_mapped_views and
+    none under rss."""
     files = MAPPED_VIEW_FILES if files is None else files
     scope = host_memory_scope(scope)
     if not isinstance(files, (list, tuple)) or not all(
             isinstance(name, str) and all(part not in ("", ".", "..") for part in name.split("/"))
-            for name in files) or len(set(files)) != len(files):
+            and not name.endswith(" (deleted)") for name in files) or len(set(files)) != len(files):
         raise ValueError("soak mapped-view files must be distinct file names relative to the checkpoint directory")
     if bool(files) != (scope == "rss_less_mapped_views"):
         raise ValueError("soak mapped-view files are declared with, and only with, the rss_less_mapped_views scope")
@@ -169,6 +172,30 @@ def exempt_problem(samples):
         if (row["host_exempt_rss_mib"] > row["host_rss_mib"]
                 or row["host_judged_mib"] != row["host_rss_mib"] - row["host_exempt_rss_mib"]):
             return f"{at} holds an exempt Rss beyond VmRSS, or a judged value other than VmRSS less it"
+    return None
+
+
+def exempt_receipt_problem(value, files):
+    """Why the rss_less_mapped_views scope cannot judge a soak receipt
+    declaring the mapped-view `files`, or None: the receipt names each
+    file's path, device and inode in the serving process's namespace
+    (`mapped_view_file_identities`), its samples hold consistent evidence
+    (exempt_problem), and every exempt mapping they list is of one of those
+    files."""
+    identities = value.get("mapped_view_file_identities")
+    if not (isinstance(identities, list) and all(
+            isinstance(entry, dict) and set(entry) == {"file", "path", "device", "inode"}
+            and isinstance(entry["path"], str) and isinstance(entry["device"], str)
+            and re.fullmatch(r"[0-9a-f]+:[0-9a-f]+", entry["device"]) and type(entry["inode"]) is int
+            and entry["inode"] >= 0 for entry in identities) and [entry["file"] for entry in identities] == files):
+        return "the receipt names no device and inode of each declared mapped-view file"
+    if problem := exempt_problem(value.get("memory_samples") or []):
+        return problem
+    declared = {(device_number(entry["device"]), entry["inode"]) for entry in identities}
+    for row in value["memory_samples"]:
+        if any((device_number(entry["device"]), entry["inode"]) not in declared
+               for entry in row["host_exempt_mappings"]):
+            return f"memory sample at {row['elapsed_seconds']} s exempts a mapping of no declared file"
     return None
 
 
@@ -442,26 +469,72 @@ def smaps(pid):
     return mappings
 
 
-def checkpoint_directory(pids):
-    """The checkpoint directory the serving tree's `serve` process loads: the
-    value of its --model (or, beside --bundle, --checkpoint), resolved
-    against its working directory and through symbolic links, as
-    /proc/PID/smaps names a mapped file."""
+def process_root(pid):
+    """The root directory of a process's mount namespace, through procfs."""
+    return f"/proc/{pid}/root"
+
+
+def resolve_within(root, path):
+    """`path`, absolute in the namespace whose root directory is `root`, with
+    every symbolic link resolved within that root (an absolute link target
+    starts again at `root`): the path as that namespace names it."""
+    pending, resolved, links = [part for part in path.split("/") if part], [], 0
+    while pending:
+        part = pending.pop(0)
+        if part == ".":
+            continue
+        if part == "..":
+            resolved = resolved[:-1]
+            continue
+        if not stat.S_ISLNK(os.lstat(os.path.join(root, *resolved, part)).st_mode):
+            resolved.append(part)
+            continue
+        links += 1
+        if links > 40:
+            raise OSError(errno.ELOOP, "too many levels of symbolic links", path)
+        target = os.readlink(os.path.join(root, *resolved, part))
+        resolved = [] if target.startswith("/") else resolved
+        pending[:0] = [part for part in target.split("/") if part]
+    return "/" + "/".join(resolved)
+
+
+def device_number(text):
+    """(major, minor) of a device as smaps writes it, "MAJ:MIN" in hex."""
+    major, minor = text.split(":")
+    return int(major, 16), int(minor, 16)
+
+
+def mapped_view_identities(pids, files):
+    """The declared files as the serving tree's `serve` process sees them,
+    each as (name, path, device, inode): its checkpoint directory is the
+    value of --model (or, beside --bundle, --checkpoint) against its working
+    directory, each file's path has every symbolic link resolved within the
+    process's root, and the file there must be a regular one. Every `serve`
+    process of the tree must see the same files."""
     found = set()
     for pid in pids:
         try:
             argv = Path(f"/proc/{pid}/cmdline").read_bytes().split(b"\0")
-            if argv[1:2] != [b"serve"]:
-                continue
-            named = [value for flag, value in zip(argv, argv[1:]) if flag in (b"--model", b"--checkpoint")]
-            if len(named) != 1 or not named[0]:
-                raise ValueError(f"serving process {pid} names no single checkpoint directory")
-            found.add(os.path.realpath(os.path.join(os.readlink(f"/proc/{pid}/cwd"), os.fsdecode(named[0]))))
         except (FileNotFoundError, ProcessLookupError):
             continue
+        if argv[1:2] != [b"serve"]:
+            continue
+        named = [value for flag, value in zip(argv, argv[1:]) if flag in (b"--model", b"--checkpoint")]
+        if len(named) != 1 or not named[0]:
+            raise ValueError(f"serving process {pid} names no single checkpoint directory")
+        directory, root = os.path.join(os.readlink(f"/proc/{pid}/cwd"), os.fsdecode(named[0])), process_root(pid)
+        identities = []
+        for name in files:
+            path = resolve_within(root, os.path.join(directory, name))
+            status = os.stat(os.path.join(root, path.lstrip("/")), follow_symlinks=False)
+            if not stat.S_ISREG(status.st_mode):
+                raise ValueError(f"mapped-view file {name} of serving process {pid} is not a regular file ({path})")
+            identities.append((name, path, f"{os.major(status.st_dev):02x}:{os.minor(status.st_dev):02x}",
+                               status.st_ino))
+        found.add(tuple(identities))
     if len(found) != 1:
-        raise ValueError(f"the serving tree names {len(found)} checkpoint directories, not one")
-    return found.pop()
+        raise ValueError(f"the serving tree names no single checkpoint directory and its files ({len(found)} found)")
+    return list(found.pop())
 
 
 def start_time(pid):
@@ -474,8 +547,11 @@ def start_time(pid):
 class MappedViews:
     """The mappings the rss_less_mapped_views scope exempts: the read-only
     mappings of the declared files under the served checkpoint directory
-    that the serving tree holds at the first sample, each identified by its
-    process (PID and start time), address range, device, inode and offset.
+    (whose device and inode are those of the regular file the serving
+    process resolves, mapped_view_identities, and whose path smaps does not
+    mark deleted) that the serving tree holds at the first sample, each
+    identified by its process (PID and start time), address range, device,
+    inode and offset.
     An exempt mapping must be present, read-only, in every sample from the
     first on: one a sample lacks or holds writable is retired for the rest
     of the soak, so a later mapping with the same identity counts. A first
@@ -486,16 +562,23 @@ class MappedViews:
         self.files = files
         self.exempt = None
         self.error = None
+        # The declared files' (name, path, device, inode), for the receipt.
+        self.identities = None
+
+    @staticmethod
+    def eligible(mapping):
+        return "w" not in mapping["perms"] and not mapping["path"].endswith(" (deleted)")
 
     def establish(self, tree):
-        directory = checkpoint_directory([pid for pid, _ in tree])
-        paths = {os.path.realpath(os.path.join(directory, name)) for name in self.files}
+        identities = mapped_view_identities([pid for pid, _ in tree], self.files)
+        files = {(device_number(device), inode) for _, _, device, inode in identities}
         exempt = set()
         for (pid, start), mappings in tree.items():
             for mapping in mappings:
-                if mapping["path"] in paths and "w" not in mapping["perms"]:
+                span, device, inode, offset = mapping["key"]
+                if self.eligible(mapping) and (device_number(device), int(inode)) in files:
                     exempt.add((pid, start, *mapping["key"]))
-        self.exempt = exempt
+        self.identities, self.exempt = identities, exempt
 
     def judge(self, tree, rss, unread=None):
         """A sample's judged host memory (VmRSS `rss` less the exempt Rss),
@@ -513,7 +596,7 @@ class MappedViews:
             except (OSError, ValueError) as error:
                 self.error = f"the first sample identified no exempt mappings: {error}"
         present = {(pid, start, *mapping["key"]): mapping for (pid, start), mappings in tree.items()
-                   for mapping in mappings if "w" not in mapping["perms"]}
+                   for mapping in mappings if self.eligible(mapping)}
         if self.exempt is not None:
             self.exempt &= present.keys()
         if error := self.error or (unread and f"no mappings of {unread}"):
@@ -822,7 +905,11 @@ def main():
                                if rule else {}),
                             # Recorded only under a scope other than the default.
                             **({"host_memory_scope": scope} if scope != "rss" else {}),
-                            **({"mapped_view_files": files} if views is not None else {}),
+                            **({"mapped_view_files": files,
+                                "mapped_view_file_identities": None if views.identities is None else [
+                                    {"file": name, "path": path, "device": device, "inode": inode}
+                                    for name, path, device, inode in views.identities]}
+                               if views is not None else {}),
                             **({key: rule[key] for key in ("host_exempt_rss_mib", "host_exempt_bound_mib")
                                 if key in rule}),
                             "prefix_mix": prefix,

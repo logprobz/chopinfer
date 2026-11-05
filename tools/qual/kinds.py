@@ -1012,7 +1012,7 @@ class Soak(Kind):
         require(value.get("host_memory_scope", "rss") == scope and value.get("mapped_view_files", []) == files,
                 "soak: the receipt was judged under another host memory scope or other mapped-view files")
         if scope == "rss_less_mapped_views":
-            problem = soak.exempt_problem(samples)
+            problem = soak.exempt_receipt_problem(value, files)
             require(problem is None, f"soak: incomplete or inconsistent mapped-view memory evidence: {problem}")
         rule = soak.memory_rule(samples, duration, {
             "device": min(512, argument_number(args, "--memory-growth-mib", 512)),

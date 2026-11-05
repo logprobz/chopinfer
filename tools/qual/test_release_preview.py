@@ -138,6 +138,9 @@ def soak_receipt(facts, duration, scope=None, files=None):
         for row in value['memory_samples']:
             exempt(row, 20)
         value['mapped_view_files'] = files
+        # The first file holds the inode of the samples' exempt mapping.
+        value['mapped_view_file_identities'] = [{'file': name, 'path': f'/checkpoint/{name}', 'device': '103:01',
+                                                 'inode': 11 + index} for index, name in enumerate(files)]
     if scope != 'rss':
         value['host_memory_scope'] = scope
     return value
@@ -832,6 +835,10 @@ class RuleTests(unittest.TestCase):
             del incomplete['memory_samples'][3][key]
             with self.subTest(key), self.assertRaisesRegex(ValueError, 'incomplete or inconsistent'):
                 runner.judge_soak(incomplete, facts, rule)
+        unbound = soak_receipt(facts, 1200)
+        del unbound['mapped_view_file_identities']
+        with self.assertRaisesRegex(ValueError, 'names no device and inode'):
+            runner.judge_soak(unbound, facts, rule)
 
     def test_queue_needle_and_greedy_rules(self):
         clients = runner.queue_clients(self.facts)

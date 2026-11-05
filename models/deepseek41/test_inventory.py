@@ -15,11 +15,25 @@ from tools.model_sdk.graph import Graph  # noqa: E402
 class DeepseekInventory(ModelRequirements):
     MODEL = 'deepseek41'
 
-    def test_unreleased_until_qualified(self):
-        # Released only after its full qualification through the release preview.
-        self.assertIs(self.declared['release']['enabled'], False)
-        self.assertIsNone(self.release())
+    def test_released_once_qualified(self):
+        # Released after its full qualification through the release preview.
+        self.assertIs(self.declared['release']['enabled'], True)
+        self.assertIsNotNone(self.release())
         self.assertEqual(self.model.checkpoint_env, 'DEEPSEEK')
+
+    def test_release_targets_and_lock_directory(self):
+        self.assertEqual(self.declared['release']['bins'], ['chopinfer-model-deepseek41'])
+        self.assertEqual(self.declared['release']['cdylibs'], ['bundle_deepseek41'])
+        release = self.release()
+        self.assertEqual({(target.name, target.kind) for target in release.targets},
+                         {('chopinfer-model-deepseek41', 'bin'), ('bundle_deepseek41', 'cdylib')})
+        # The bundle keeps only the directory lock form; every family file ships.
+        self.assertFalse((ROOT / 'models/deepseek41/bundle/kernels.lock').exists())
+        families = sorted(path.name for path in (ROOT / 'models/deepseek41/bundle/kernels.lock.d').iterdir())
+        self.assertTrue(families)
+        self.assertEqual([(asset.source, asset.destination) for asset in release.assets],
+                         [(f'models/deepseek41/bundle/kernels.lock.d/{name}',
+                           f'models/deepseek41/kernels.lock.d/{name}') for name in families])
 
     def test_one_bundle_and_its_roles(self):
         self.assertEqual({role: package.name for role, package in self.model.packages.items()},

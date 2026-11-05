@@ -2,8 +2,9 @@
 
 Expect bugs and breaking formats, flags and packages. Requires Linux x86_64
 with glibc 2.39 or newer. Serving is tested and supported only on NVIDIA RTX
-PRO 6000 Blackwell 96 GB GPUs, two or four per model; other SM120 parts are
-untested and may be refused. Models: Qwen3.8 Flash and GLM 5.3 Flash.
+PRO 6000 Blackwell 96 GB GPUs, two or four per model (DeepSeek needs four);
+other SM120 parts are untested and may be refused. Models: Qwen3.8 Flash,
+GLM 5.3 Flash and DeepSeek V4.1 Flash.
 Weights and GPU qualification are not included.
 
 1. Check the archive against the adjacent SHA256SUMS, extract it, then run

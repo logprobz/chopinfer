@@ -10,7 +10,8 @@ Download a complete Hugging Face snapshot with `hf download REPOSITORY
 --revision REVISION --local-dir DIRECTORY`, retaining its download metadata.
 The model's `checkpoint-files.json` records the pinned source and revision:
 [Qwen](../models/qwen38/checkpoint-files.json),
-[GLM](../models/glm5next/checkpoint-files.json).
+[GLM](../models/glm5next/checkpoint-files.json),
+[DeepSeek](../models/deepseek41/checkpoint-files.json).
 Set `CHECKPOINT` to the local directory. Allow space for weights, build
 output and host memory outside the checkout.
 

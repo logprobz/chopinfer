@@ -20,10 +20,15 @@ bin = ["chopinfer-model-deepseek41"]
 [contract]
 package = "model-deepseek41-contract"
 
-# Not released until it passes its full qualification through the release
-# preview.
+# Released after its full qualification through the release preview
+# (models/deepseek41/README.md#qualification); the released-model facts
+# apply (tests/test_model_inventory.py, tests/test_serve_profiles.py,
+# tools/qual/qual_test_config.py). The release ships the helper and the
+# bundle; DeepSeek loads checkpoints directly and has no packaging bin.
 [release]
-enabled = false
+enabled = true
+bins = ["chopinfer-model-deepseek41"]
+cdylibs = ["bundle_deepseek41"]
 
 # Weightless fixtures for `ci/quick.sh --contributor deepseek41`: the compiled
 # geometries' config admission, the checkpoint snapshot refusals over sparse

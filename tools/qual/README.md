@@ -410,11 +410,14 @@ The runner records the RAM-hit arm for a configuration whose serve words
 force the tier. A model whose bundle runs the tier may declare the opt-in
 `ram-forced` configuration, which serves every arm that way
 (`release_preview.sh run --model MODEL --config ram-forced --suite full`).
-It runs prefix_exact, soak, spec_verify and verify_exact, and determinism
-where the default full cohort runs it: a configuration's checks keep their
-declared input rules, and a check only another configuration runs may pin
-that configuration's serving profile. Its quick cohort holds a check that
-reads only what a quick run records. Its prefix_exact input
+It runs prefix_exact, determinism, soak, spec_verify and verify_exact.
+Where the default runs determinism only as a runner screen (the screens run
+on `default` alone), the configuration runs the declared determinism check,
+which judges the same AR and speculative captures. A configuration's checks
+keep their declared input rules, so where a check's rules pin another
+configuration's serving profile, the configuration states the default's
+facts in `serving` (such as `context_parallel_size` 1). Its quick cohort
+holds a check that reads only what a quick run records. Its prefix_exact input
 predicates require RAM-hit records (`hit_tier` "ram", `checks.ram_hits`
 true), so a GPU-hit record given with `--input` is refused.
 

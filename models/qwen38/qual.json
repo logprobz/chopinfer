@@ -3166,6 +3166,7 @@
       ],
       "checks": [
         "prefix_exact",
+        "determinism",
         "soak",
         "spec_verify",
         "verify_exact"
@@ -3173,6 +3174,9 @@
       "quick": [
         "soak"
       ],
+      "serving": {
+        "context_parallel_size": 1
+      },
       "append": {
         "prefix_exact": {
           "prefix_record": [

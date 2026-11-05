@@ -431,16 +431,48 @@ class PlanTests(unittest.TestCase):
                                     if arm.get('server', True)))
                 self.assertEqual({arm['arm'] for arm in arms}, {'verify-ar', 'verify-spec', 'prefix', 'ar', 'spec'})
 
-    def test_a_ram_forced_configuration_runs_only_checks_its_default_runs(self):
-        # A configuration's checks keep their declared input rules, written
-        # for the default's servers: a check only another configuration runs
-        # may pin that configuration's profile. A quick check reads only what
-        # a quick run records (no record steps; the determinism stages).
+    def test_a_ram_forced_configuration_covers_its_default_on_the_default_profile(self):
+        # Each check runs in the default full cohort or is the declared check
+        # over the captures of a screen the runner runs on the default
+        # (determinism). A check keeps its declared input rules, which may pin
+        # the profile of another configuration that runs it, so every profile
+        # rule must state the default profile's facts, as must the
+        # configuration's serving facts. A quick check reads only what a quick
+        # run records (no record steps; the determinism stages).
+        profile_path = ['server', 'health', 'serving', 'profile']
         for name, config in sorted(OPT_IN):
             with self.subTest(model=name, config=config):
                 facts = runner.model_facts(name)
                 forced = runner.configuration_facts(facts, config)
-                self.assertEqual(set(forced['full']) - set(facts['full']), set())
+                served, default = (runner.configurations(name)[key] for key in (config, 'default'))
+                screens = {step['stage'] for arm in runner.plan(facts, 'full', 'default', default)
+                           for step in arm['steps'] if step['kind'] == 'stage'}
+                for check in set(forced['full']) - set(facts['full']):
+                    self.assertIn(check, screens)
+                    self.assertLessEqual(set(forced['checks'][check]['files']), set(runner.STAGE_INPUTS))
+
+                def profile_rules(checks, ids):
+                    return [rule for check in ids for rules in [checks[check].get('rules', []),
+                                                                *checks[check].get('input_rules', {}).values()]
+                            for rule in rules if rule['path'][:4] == profile_path and len(rule['path']) == 5]
+
+                profile = runner.read(runner.ROOT / 'models' / name / 'profiles.json')['profiles'][facts['profile']]
+                expected = {'context_parallel_size': profile.get('context_parallel_size', 1),
+                            'tensor_parallel_size': profile['tensor_parallel']}
+                dtypes = {rule['value'] for rule in profile_rules(facts['checks'], facts['full'])
+                          if rule['path'][4] == 'kv_cache_dtype'}
+                if len(dtypes) == 1:
+                    expected['kv_cache_dtype'] = dtypes.pop()
+                self.assertEqual((served['profile'], served['depth'], served['tensor_parallel_size']),
+                                 (default['profile'], default['depth'], expected['tensor_parallel_size']))
+                stated = declaration.configurations(name)[config].get('serving', {})
+                self.assertEqual({key: value for key, value in stated.items() if key in expected},
+                                 {key: expected[key] for key in stated if key in expected})
+                rules = profile_rules(forced['checks'], forced['full'])
+                for rule in rules:
+                    if rule['path'][4] in expected:
+                        self.assertEqual((rule['op'], rule['value']), ('eq', expected[rule['path'][4]]), rule)
+                self.assertLessEqual(len({rule['value'] for rule in rules if rule['path'][4] == 'kv_cache_dtype'}), 1)
                 self.assertTrue(forced['quick'])
                 self.assertEqual(set(forced['quick']) - set(forced['full']), set())
                 known = {runner.LOG_INPUT, *runner.STAGE_INPUTS, *forced['checks'], 'url', 'model', 'raw', 'run',

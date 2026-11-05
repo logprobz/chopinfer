@@ -128,7 +128,7 @@ dependencies = [
 
 [[package]]
 name = "bundle-deepseek41"
-version = "0.1.0-alpha.3"
+version = "0.1.0-alpha.4"
 dependencies = [
  "bundle-runtime",
  "encoder-spec",
@@ -148,7 +148,7 @@ dependencies = [
 
 [[package]]
 name = "bundle-glm5next"
-version = "0.1.0-alpha.3"
+version = "0.1.0-alpha.4"
 dependencies = [
  "bundle-runtime",
  "encoder-spec",
@@ -167,7 +167,7 @@ dependencies = [
 
 [[package]]
 name = "bundle-mimo26"
-version = "0.1.0-alpha.3"
+version = "0.1.0-alpha.4"
 dependencies = [
  "bundle-runtime",
  "encoder-spec",
@@ -185,7 +185,7 @@ dependencies = [
 
 [[package]]
 name = "bundle-qwen38"
-version = "0.1.0-alpha.3"
+version = "0.1.0-alpha.4"
 dependencies = [
  "bundle-runtime",
  "encoder-spec",
@@ -203,7 +203,7 @@ dependencies = [
 
 [[package]]
 name = "bundle-recurrent-fixture"
-version = "0.1.0-alpha.3"
+version = "0.1.0-alpha.4"
 dependencies = [
  "frontend-format",
  "kernel-core",
@@ -226,7 +226,7 @@ dependencies = [
 
 [[package]]
 name = "bundle-runtime"
-version = "0.1.0-alpha.3"
+version = "0.1.0-alpha.4"
 dependencies = [
  "encoder-spec",
  "kernel-build",
@@ -242,7 +242,7 @@ dependencies = [
 
 [[package]]
 name = "bundle-tp4-fixture"
-version = "0.1.0-alpha.3"
+version = "0.1.0-alpha.4"
 dependencies = [
  "frontend-format",
  "kernel-core",
@@ -285,7 +285,7 @@ checksum = "9330f8b2ff13f34540b44e946ef35111825727b38d33286ef986142615121801"
 
 [[package]]
 name = "choptop"
-version = "0.1.0-alpha.3"
+version = "0.1.0-alpha.4"
 dependencies = [
  "crossterm",
  "libc",
@@ -383,7 +383,7 @@ dependencies = [
 
 [[package]]
 name = "encoder-spec"
-version = "0.1.0-alpha.3"
+version = "0.1.0-alpha.4"
 dependencies = [
  "serde",
  "serde_json",
@@ -439,7 +439,7 @@ dependencies = [
 
 [[package]]
 name = "frontend-format"
-version = "0.1.0-alpha.3"
+version = "0.1.0-alpha.4"
 dependencies = [
  "runtime-bundle-abi",
  "runtime-frontend-contract",
@@ -631,7 +631,7 @@ checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
 
 [[package]]
 name = "kernel-build"
-version = "0.1.0-alpha.3"
+version = "0.1.0-alpha.4"
 dependencies = [
  "object",
  "serde",
@@ -641,7 +641,7 @@ dependencies = [
 
 [[package]]
 name = "kernel-core"
-version = "0.1.0-alpha.3"
+version = "0.1.0-alpha.4"
 dependencies = [
  "miniz_oxide 0.8.9",
  "serde",
@@ -650,7 +650,7 @@ dependencies = [
 
 [[package]]
 name = "kernel-harness"
-version = "0.1.0-alpha.3"
+version = "0.1.0-alpha.4"
 dependencies = [
  "encoder-spec",
  "kernel-build",
@@ -665,7 +665,7 @@ dependencies = [
 
 [[package]]
 name = "kernel-lab"
-version = "0.1.0-alpha.3"
+version = "0.1.0-alpha.4"
 dependencies = [
  "bundle-glm5next",
  "bundle-mimo26",
@@ -695,7 +695,7 @@ dependencies = [
 
 [[package]]
 name = "kernel-lab-families"
-version = "0.1.0-alpha.3"
+version = "0.1.0-alpha.4"
 dependencies = [
  "kernel-build",
  "kernel-core",
@@ -707,7 +707,7 @@ dependencies = [
 
 [[package]]
 name = "kernels-sm120"
-version = "0.1.0-alpha.3"
+version = "0.1.0-alpha.4"
 dependencies = [
  "encoder-spec",
  "kernel-build",
@@ -805,7 +805,7 @@ dependencies = [
 
 [[package]]
 name = "model-compiler-sdk"
-version = "0.1.0-alpha.3"
+version = "0.1.0-alpha.4"
 dependencies = [
  "kernel-core",
  "projection-spec",
@@ -819,7 +819,7 @@ dependencies = [
 
 [[package]]
 name = "model-deepseek41"
-version = "0.1.0-alpha.3"
+version = "0.1.0-alpha.4"
 dependencies = [
  "bundle-runtime",
  "frontend-format",
@@ -845,7 +845,7 @@ dependencies = [
 
 [[package]]
 name = "model-deepseek41-contract"
-version = "0.1.0-alpha.3"
+version = "0.1.0-alpha.4"
 dependencies = [
  "bundle-runtime",
  "encoder-spec",
@@ -867,7 +867,7 @@ dependencies = [
 
 [[package]]
 name = "model-deepseek41-lab"
-version = "0.1.0-alpha.3"
+version = "0.1.0-alpha.4"
 dependencies = [
  "bundle-deepseek41",
  "kernel-build",
@@ -881,7 +881,7 @@ dependencies = [
 
 [[package]]
 name = "model-glm5next"
-version = "0.1.0-alpha.3"
+version = "0.1.0-alpha.4"
 dependencies = [
  "frontend-format",
  "model-compiler-sdk",
@@ -901,7 +901,7 @@ dependencies = [
 
 [[package]]
 name = "model-glm5next-contract"
-version = "0.1.0-alpha.3"
+version = "0.1.0-alpha.4"
 dependencies = [
  "bundle-runtime",
  "encoder-spec",
@@ -920,7 +920,7 @@ dependencies = [
 
 [[package]]
 name = "model-glm5next-lab"
-version = "0.1.0-alpha.3"
+version = "0.1.0-alpha.4"
 dependencies = [
  "bundle-glm5next",
  "bundle-runtime",
@@ -934,7 +934,7 @@ dependencies = [
 
 [[package]]
 name = "model-mimo26"
-version = "0.1.0-alpha.3"
+version = "0.1.0-alpha.4"
 dependencies = [
  "frontend-format",
  "kernel-core",
@@ -961,7 +961,7 @@ dependencies = [
 
 [[package]]
 name = "model-mimo26-contract"
-version = "0.1.0-alpha.3"
+version = "0.1.0-alpha.4"
 dependencies = [
  "bundle-runtime",
  "encoder-spec",
@@ -984,7 +984,7 @@ dependencies = [
 
 [[package]]
 name = "model-qwen38"
-version = "0.1.0-alpha.3"
+version = "0.1.0-alpha.4"
 dependencies = [
  "frontend-format",
  "kernel-core",
@@ -1015,7 +1015,7 @@ dependencies = [
 
 [[package]]
 name = "model-qwen38-contract"
-version = "0.1.0-alpha.3"
+version = "0.1.0-alpha.4"
 dependencies = [
  "bundle-runtime",
  "encoder-spec",
@@ -1105,7 +1105,7 @@ dependencies = [
 
 [[package]]
 name = "projection-spec"
-version = "0.1.0-alpha.3"
+version = "0.1.0-alpha.4"
 dependencies = [
  "kernel-core",
  "serde",
@@ -1130,7 +1130,7 @@ dependencies = [
 
 [[package]]
 name = "qwen38-load-proto"
-version = "0.1.0-alpha.3"
+version = "0.1.0-alpha.4"
 dependencies = [
  "kernel-core",
  "model-compiler-sdk",
@@ -1183,7 +1183,7 @@ checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 
 [[package]]
 name = "runtime-bundle"
-version = "0.1.0-alpha.3"
+version = "0.1.0-alpha.4"
 dependencies = [
  "libc",
  "object",
@@ -1197,14 +1197,14 @@ dependencies = [
 
 [[package]]
 name = "runtime-bundle-abi"
-version = "0.1.0-alpha.3"
+version = "0.1.0-alpha.4"
 dependencies = [
  "libc",
 ]
 
 [[package]]
 name = "runtime-bundle-sdk"
-version = "0.1.0-alpha.3"
+version = "0.1.0-alpha.4"
 dependencies = [
  "runtime-bundle-abi",
  "serde_json",
@@ -1212,7 +1212,7 @@ dependencies = [
 
 [[package]]
 name = "runtime-conformance"
-version = "0.1.0-alpha.3"
+version = "0.1.0-alpha.4"
 dependencies = [
  "bundle-recurrent-fixture",
  "bundle-tp4-fixture",
@@ -1224,11 +1224,11 @@ dependencies = [
 
 [[package]]
 name = "runtime-cuda"
-version = "0.1.0-alpha.3"
+version = "0.1.0-alpha.4"
 
 [[package]]
 name = "runtime-engine"
-version = "0.1.0-alpha.3"
+version = "0.1.0-alpha.4"
 dependencies = [
  "runtime-bundle-sdk",
  "runtime-grammar",
@@ -1244,7 +1244,7 @@ dependencies = [
 
 [[package]]
 name = "runtime-eval"
-version = "0.1.0-alpha.3"
+version = "0.1.0-alpha.4"
 dependencies = [
  "fancy-regex",
  "runtime-bundle",
@@ -1255,7 +1255,7 @@ dependencies = [
 
 [[package]]
 name = "runtime-frontend"
-version = "0.1.0-alpha.3"
+version = "0.1.0-alpha.4"
 dependencies = [
  "frontend-format",
  "runtime-bundle-abi",
@@ -1269,7 +1269,7 @@ dependencies = [
 
 [[package]]
 name = "runtime-frontend-contract"
-version = "0.1.0-alpha.3"
+version = "0.1.0-alpha.4"
 dependencies = [
  "runtime-sampling",
  "runtime-tokenizer",
@@ -1279,14 +1279,14 @@ dependencies = [
 
 [[package]]
 name = "runtime-grammar"
-version = "0.1.0-alpha.3"
+version = "0.1.0-alpha.4"
 dependencies = [
  "serde_json",
 ]
 
 [[package]]
 name = "runtime-host"
-version = "0.1.0-alpha.3"
+version = "0.1.0-alpha.4"
 dependencies = [
  "bundle-runtime",
  "kernel-core",
@@ -1319,11 +1319,11 @@ dependencies = [
 
 [[package]]
 name = "runtime-kernel-contract"
-version = "0.1.0-alpha.3"
+version = "0.1.0-alpha.4"
 
 [[package]]
 name = "runtime-kernels"
-version = "0.1.0-alpha.3"
+version = "0.1.0-alpha.4"
 dependencies = [
  "kernel-build",
  "kernels-sm120",
@@ -1332,18 +1332,18 @@ dependencies = [
 
 [[package]]
 name = "runtime-kv"
-version = "0.1.0-alpha.3"
+version = "0.1.0-alpha.4"
 dependencies = [
  "sha2",
 ]
 
 [[package]]
 name = "runtime-log"
-version = "0.1.0-alpha.3"
+version = "0.1.0-alpha.4"
 
 [[package]]
 name = "runtime-media"
-version = "0.1.0-alpha.3"
+version = "0.1.0-alpha.4"
 dependencies = [
  "axum",
  "crc32fast",
@@ -1361,11 +1361,11 @@ dependencies = [
 
 [[package]]
 name = "runtime-model-api"
-version = "0.1.0-alpha.3"
+version = "0.1.0-alpha.4"
 
 [[package]]
 name = "runtime-sampling"
-version = "0.1.0-alpha.3"
+version = "0.1.0-alpha.4"
 dependencies = [
  "kernel-core",
  "runtime-model-api",
@@ -1374,14 +1374,14 @@ dependencies = [
 
 [[package]]
 name = "runtime-scheduler"
-version = "0.1.0-alpha.3"
+version = "0.1.0-alpha.4"
 dependencies = [
  "runtime-kv",
 ]
 
 [[package]]
 name = "runtime-server"
-version = "0.1.0-alpha.3"
+version = "0.1.0-alpha.4"
 dependencies = [
  "axum",
  "hyper",
@@ -1402,7 +1402,7 @@ dependencies = [
 
 [[package]]
 name = "runtime-tokenizer"
-version = "0.1.0-alpha.3"
+version = "0.1.0-alpha.4"
 dependencies = [
  "fancy-regex",
  "runtime-weights",
@@ -1411,7 +1411,7 @@ dependencies = [
 
 [[package]]
 name = "runtime-weights"
-version = "0.1.0-alpha.3"
+version = "0.1.0-alpha.4"
 dependencies = [
  "libc",
  "sha2",
@@ -1794,7 +1794,7 @@ checksum = "589f6da84c646204747d1270a2a5661ea66ed1cced2631d546fdfb155959f9ec"
 
 [[package]]
 name = "xtask"
-version = "0.1.0-alpha.3"
+version = "0.1.0-alpha.4"
 
 [[package]]
 name = "zlib-rs"

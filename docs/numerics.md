@@ -1176,15 +1176,19 @@ through the opt-in `ram-forced` qualification configuration
 - every prefix hit of the forced server was a RAM hit: 3,377 hits reusing
   4,114,560 tokens on GLM, 4,039 hits reusing 4,267,968 tokens on Qwen, the
   same hit counts as the GPU-hit arm;
-- each RAM hit scored bitwise equal to cold prefill, at interior and prompt
-  end anchors and after media; the 12 greedy continuations after a hit equal
-  cold on each model, and drafter acceptance after a hit stayed within its
-  bound (margins 0.030 and 0.032);
+- each RAM hit of a text prompt scored bitwise equal to cold prefill, at
+  interior and prompt-end anchors; the 12 greedy continuations after a hit
+  equal cold on each model, and drafter acceptance after a hit stayed within
+  its bound (margins 0.030 and 0.032);
+- media prompts passed the cache-key isolation check (with the same text and
+  another image they shared no anchor past the image and no encoder rows,
+  and a repeat of the same image hit) and the RAM-hit accounting (all four
+  media hits on each model were RAM hits); this check gates isolation, not
+  equality of a same-image hit's output with cold prefill;
 - the soak canary with the tier forced passed (5,613 requests over 1,200 s on
-  GLM, 26,036 over 1,380 s on Qwen), and so did `spec_verify` and
-  `verify_exact`; on GLM the determinism screen passed too (Qwen declares
-  its determinism screen only for its context-parallel configuration; its
-  forced-RAM determinism records still compared bit-identical);
+  GLM, 26,036 over 1,380 s on Qwen), and so did `spec_verify`,
+  `verify_exact` and the determinism screen on both models (Qwen's when the
+  run's recorded captures were rescored);
 - under the prefix-pressure arm, C1 output matched the tier-off arm bitwise
   (36 requests each), with 12 (GLM) and 19 (Qwen) published promotions, as
   many RAM hits, and no stalled or pending copy at the end;

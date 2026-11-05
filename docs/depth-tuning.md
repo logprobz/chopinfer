@@ -655,8 +655,10 @@ outside `mode: ab`, with `cold_engram`, with `changes_engram` true (a change
 to an Engram path is judged on raw time) and when an arm's `env` names a
 mapped-row or Engram control. Staging validates the declaration, and the
 report checks `config.json` against the sealed capture, so the metric cannot
-change after a result. A receipt without that binding, or without both wait
-fields in every decided step, reads only as raw.
+change after a result; a receipt without that binding reads only as raw.
+Cells that decide, required shapes and A1 control shapes need a positive
+adjusted time for every step; an informational cell without one reports
+adjusted time as unavailable beside its raw result.
 
 The 1,000-major-fault visit limit applies unchanged to both metrics:
 adjusted time removes only the wait on the critical path, not the CPU and

@@ -724,7 +724,9 @@ def decision_cells(model, selected, c, change):
                 'adjusted_ms_median': None if adjusted is None else [median(v) for v in adjusted],
                 'metric': primary, 'nominal_weight': nominal,
                 'supported': supported, 'weight': nominal if eligible else 0, 'decision': eligible and nominal > 0}
-        if primary == 'adjusted' and adjusted is None and eligible:
+        # Only a cell that decides or is required needs adjusted evidence;
+        # an informational cell reports it unavailable beside its raw result.
+        if primary == 'adjusted' and adjusted is None and eligible and (nominal > 0 or shape in required):
             raise ValueError(f'c{c}/{shape}: adjusted step time needs a positive Engram-adjusted time '
                              'for every step of every visit')
         if shape in required and not eligible:
@@ -735,6 +737,9 @@ def decision_cells(model, selected, c, change):
             cell.update(verdict='informational', reason='arm-specific shape')
         elif not paired_shape:
             cell.update(verdict='unmatched', reason='coverage gap')
+        elif primary == 'adjusted' and adjusted is None:
+            cell.update(verdict='informational', reason='adjusted time unavailable',
+                        raw=other_verdict([median(v) for v in values], change))
         else:
             decided, other = (values, adjusted) if primary == 'raw' else (adjusted, values)
             cell.update(paired([1 / median(v) for v in decided], change))
@@ -768,6 +773,9 @@ def control_offsets(config, rows):
                     checks[key] = {'status': 'unavailable', 'reason': 'needs support in all four visits'}
                     continue
                 values = cell['adjusted_ms_median' if cell['metric'] == 'adjusted' else 'cycle_ms_median']
+                if values is None:
+                    raise ValueError(f'{key}: an adjusted A1 control check needs a positive '
+                                     'Engram-adjusted time for every step of every visit')
                 a1, later = values[0], values[1:]
                 offset = a1 / median(later) - 1
                 noise = max(later) / min(later) - 1
@@ -921,7 +929,7 @@ def step_time_lines(pairs):
             cells = {**{f'c{c}/{shape}': cell for shape, cell in result.get('cells', {}).items()},
                      **result.get('prefill_cells', {})}
             for name, cell in cells.items():
-                if 'd1' not in cell:
+                if 'd1' not in cell and not cell.get('raw'):
                     continue
                 raw = cell.get('cycle_ms_median', cell.get('execution_ms_median'))
                 verdicts = {cell['metric']: cell['verdict']}

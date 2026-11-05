@@ -3080,6 +3080,39 @@ class EngramAdjusted(unittest.TestCase):
             self.assertTrue(out['weighted']['a/b']['timing_accepted'])
             self.assertIsNotNone(report.costs(root)['cells']['i8-r32']['adjusted_ms_median'])
 
+    def test_informational_cells_report_unavailable_adjusted_time_beside_raw(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config, _ = ab_fixture(root)
+            with_waits(root, lambda row: .15 if row['arm'] == 'a' else 0)
+            for path in root.glob('*/windows/*.json'):
+                row = json.loads(path.read_text())
+                # A weight-0 shape, sampled in every visit; in B1 one step's
+                # summed waits exceed its cycle, which the upper bound allows.
+                waits = [0] * 20
+                if path.parent.parent.name == 'b-r0':
+                    waits[0] = 3
+                row['cells']['i8-r12'] = {'cycle_ms': [2] * 20, 'execution_ms': [], 'engram_wait_ms': waits}
+                tune.r.write(path, row)
+            config['model']['step_time'] = ADJUSTED
+            bind_ab_fixture(root, config)
+            out = report.ab(root)
+            cells = out['pairs']['a/b']['8']['cells']
+            self.assertEqual(cells['i8-r32']['verdict'], 'resolved regression')
+            cell = cells['i8-r12']
+            self.assertEqual((cell['weight'], cell['verdict'], cell['reason']),
+                             (0, 'informational', 'adjusted time unavailable'))
+            self.assertIsNone(cell['adjusted_ms_median'])
+            self.assertEqual(cell['raw']['verdict'], 'neutral')
+            self.assertIn('| a/b c8/i8-r12 | adjusted | 2.000 / 2.000 / 2.000 / 2.000 | - | neutral | informational |',
+                          (root / 'ab.md').read_text())
+            # A shape that decides, or a declared control, still needs the evidence.
+            for change in ({'cell_weights': {'c8/i8-r12': 1}}, {'control_shapes': {'8': ['i8-r12']}}):
+                with self.subTest(change=change):
+                    bind_ab_fixture(root, {**config, 'model': {**config['model'], **change}})
+                    with self.assertRaisesRegex(ValueError, 'Engram-adjusted time'):
+                        report.ab(root)
+
     def test_historical_receipts_read_raw_and_cannot_be_adjusted(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

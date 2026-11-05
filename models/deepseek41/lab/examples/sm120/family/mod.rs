@@ -271,7 +271,7 @@ fn simple() -> Vec<Recipe> {
             "position_mma_guard_fast",
             cubins(bundle::indexer_mma_guard_fast::cubins(GEOMETRIES)?)
         ),
-        one!(Bundle, "position_mma_guard_probe", {
+        one!(Lab, "position_mma_guard_probe", {
             let families = bundle::indexer_mma_guard::cubins(GEOMETRIES)?
                 .into_iter()
                 .map(|(_, mut spec)| {

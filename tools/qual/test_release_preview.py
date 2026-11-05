@@ -450,6 +450,12 @@ class PlanTests(unittest.TestCase):
                 for check in set(forced['full']) - set(facts['full']):
                     self.assertIn(check, screens)
                     self.assertLessEqual(set(forced['checks'][check]['files']), set(runner.STAGE_INPUTS))
+                # The forced exactness set keeps the determinism check and
+                # its captures on both the AR and the speculative server.
+                self.assertLessEqual({'prefix_exact', 'determinism', 'soak'}, set(forced['full']))
+                staged = {(arm['arm'], step['stage']) for arm in runner.plan(facts, 'full', config, served)
+                          for step in arm['steps'] if step['kind'] == 'stage'}
+                self.assertLessEqual({('ar', 'determinism'), ('spec', 'determinism')}, staged)
 
                 def profile_rules(checks, ids):
                     return [rule for check in ids for rules in [checks[check].get('rules', []),

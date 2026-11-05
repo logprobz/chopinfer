@@ -27,6 +27,21 @@ errors, shapes and integer equality remain recorded fields. Rejudging these
 fields is not a fresh tensor comparison and cannot establish strict numerical
 recovery of a failed run.
 
+## Soak receipts
+
+The Python `soak` kind re-scores a soak's memory samples with
+`soak.memory_rule` under the check's declared warm-up, cache allowance and
+host memory scope. The receipt must record the same ones: a receipt
+without `warmup_seconds`, `cache_allowance_mib` or `host_memory_scope`
+counts as the defaults (no warm-up, no allowance, `rss`), and one judged
+under others is insufficient. The `rss` scope judges VmRSS
+(`host_rss_mib`). The `anonymous_shmem` scope judges RssAnon + RssShmem
+against the same limits and requires the RssFile growth over the whole soak
+to stay within the smallest `mapped_view_bytes` sampled, in MiB; a sample
+without a finite non-negative RssAnon, RssShmem, RssFile or
+`mapped_view_bytes` is insufficient. Under that scope the metrics add the
+scope, the RssFile growth and its bound.
+
 ## Common rules
 
 ### The receipt envelope

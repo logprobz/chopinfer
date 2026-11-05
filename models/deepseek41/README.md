@@ -1093,6 +1093,15 @@ The bundle declares no KV offload: the server keeps no KV in host memory,
 and a preempted request recomputes its KV. `qual.json` declares offload not
 served, so the release preview reports it as not applicable.
 
+The soak judges host memory as RssAnon + RssShmem against the 512 MiB
+limit (`HOST_MEMORY_SCOPE` in `qual.json`); RssFile, the file-backed pages
+of the authenticated read-only checkpoint mappings, is reported and its
+growth must stay within the mapped-view bytes. In the 1200-second C32 GPU
+soaks of 2026-11-05, VmRSS grew 5,555 MiB on the DSpark server (RssFile
++5,425 MiB, all in the two Engram checkpoint tables of 188.8 GiB of mapped
+views; RssAnon +130 MiB; RssShmem 0) and 113 MiB, all RssAnon, on the AR
+server.
+
 The [numerical gates](../../docs/numerics.md#serving-qualification-gates)
 and [serving profiles](../../docs/serving-profiles.md) describe the shared
 acceptance rules. Store captures, qualification receipts and timings outside

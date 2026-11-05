@@ -83,19 +83,28 @@ identify the required checks, so each model chooses its own IDs.
 | `prefix_cache` | Boolean; `prefix_exact` scores bitwise equality. |
 | `preemption` | Boolean; `preempt_compare compare --exact`, without `--baseline`. |
 | `long_context` | Boolean; `needle` with the declared context lengths. |
-| `stability` | Boolean; a local `soak` with timed host-RSS and device-memory samples, bounded growth and traffic in every enabled mix. A `--remote-only` soak cannot satisfy it. The media mix reads the `soak_media_fixtures` input when the declaration states one, else `media_fixtures`. |
+| `stability` | Boolean; a local `soak` with timed host-memory and device-memory samples, bounded growth and traffic in every enabled mix. A `--remote-only` soak cannot satisfy it. The media mix reads the `soak_media_fixtures` input when the declaration states one, else `media_fixtures`. |
 | `kv_offload` | Boolean. True requires model-level `kv_offload` facts and hard plain/pressure checks in the full suite. Serving offload remains off by default. |
 | `not_served` | Optional. Maps a boolean capability declared false, one the model does not serve, to its reason. The correctness runner reports each false boolean capability as a not-applicable row with its reason, never a pass, and fails one without a reason. |
 
 The soak must run the declared duration and concurrency, with samples
 spanning the interval (no gap over 60 seconds) and at most 512 MiB growth in
-both host RSS and device memory. A server that fills a bounded cache while it
+both host and device memory. A server that fills a bounded cache while it
 warms up (such as pinned prefill graphs) declares the soak check's constants
 `WARMUP_SECONDS` and `CACHE_ALLOWANCE_MIB` (host and device, the cache's
 bound): the growth from the first sample at or after the warm-up must stay
 within the limit, and the growth over the whole soak within the limit plus
 the allowance (`soak.memory_rule`; the warm-up is capped at a quarter of the
-duration). Undeclared, the rule is the plain one. A shorter saved soak is diagnostic only. A
+duration). Undeclared, the rule is the plain one. Host memory is VmRSS
+unless the constants declare `HOST_MEMORY_SCOPE` `anonymous_shmem`, for a
+server that maps large read-only files: the limit then applies to RssAnon +
+RssShmem, and RssFile, the file-backed pages of the mappings, is reported
+and its growth over the whole soak must stay within the smallest
+`mapped_view_bytes` sampled. Every sample must then carry RssAnon,
+RssShmem, RssFile and `mapped_view_bytes`; one without them fails the soak
+and is insufficient evidence on rescore, as is a receipt judged under
+another scope. The release preview passes the declared warm-up, allowance and
+scope to its AR soak stage. A shorter saved soak is diagnostic only. A
 capability the server does not serve is `not_applicable`, never a silently
 skipped check. Capability coverage is a declaration check; the gate run must
 still prove every predicate and input.

@@ -330,6 +330,12 @@ print(json.dumps({'result': 'prepared-direct', 'bundle': str(bundle)}))
                         self.assertEqual(profile['qualified_max_sequences'], 32)
                         self.assertEqual(profile['status'], 'qualified')
                         self.assertIn('GATES4', profile['qualification'])
+                    elif dspark:
+                        # Qualified through 32 by the release preview's full
+                        # suite; tp4-ar stays the experimental baseline.
+                        self.assertEqual(profile['qualified_max_sequences'], 32)
+                        self.assertEqual(profile['status'], 'qualified')
+                        self.assertIn("release preview's full suite passed", profile['qualification'])
                     elif not at_64:
                         self.assertIsNone(profile['qualified_max_sequences'])
                     if data['model'] == 'mimo26' and name in ('tp4-mtp', 'tp4-dflash'):
@@ -366,7 +372,7 @@ print(json.dumps({'result': 'prepared-direct', 'bundle': str(bundle)}))
                     self.assertEqual(profile_comparison(json.loads(result.stdout)), profile_comparison(expected))
             subprocess.run([host, 'profiles', 'list', path], check=True, capture_output=True)
         for name in ['chopinfer-host', 'mimo26-package', 'qwen38-package', 'chopinfer-model-mimo26', 'chopinfer-model-qwen38',
-                     'chopinfer-model-glm5next']:
+                     'chopinfer-model-glm5next', 'chopinfer-model-deepseek41']:
             result = subprocess.run([host.parent / name, '--help'], text=True, capture_output=True)
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertTrue(result.stdout.strip())

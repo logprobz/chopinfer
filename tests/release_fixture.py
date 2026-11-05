@@ -57,6 +57,7 @@ fn main() {
         println!("{} {} ({})", name, env!("CARGO_PKG_VERSION"), env!("CHOPINFER_BUILD_REVISION"));
     } else if args.get(1).map(String::as_str) == Some("eval") {
         println!("models/fixture/checkpoint-files.json");
+        println!("tools/qual/modules.json");
     } else { std::process::exit(2); }
 }
 '''
@@ -126,6 +127,7 @@ pub extern "C" fn fixture_value() -> u8 { std::hint::black_box(MAIN)[0] ^ std::h
           '[release]\nenabled = true\nbins = ["fixture-package", "chopinfer-model-fixture"]\ncdylibs = ["bundle_fixture"]\n')
     write(root, 'models/fixture/checkpoint-files.json', '{}\n')
     write(root, 'models/fixture/profiles.json', '{}\n')
+    write(root, 'tools/qual/modules.json', '{}\n')
     env = {key: value for key, value in os.environ.items() if key not in ('CARGO_ENCODED_RUSTFLAGS', 'RUSTFLAGS')}
     env.update(FIXTURE_CREATE_LOCK='1', CARGO_TARGET_DIR=str(directory / 'initial-target'), CHOPINFER_BUILD_REVISION='a' * 40)
     subprocess.run(['cargo', 'generate-lockfile', '--offline'], cwd=root, env=env, check=True, capture_output=True)

@@ -64,7 +64,8 @@ class SourceContext(unittest.TestCase):
     def test_snapshot_binds_selected_inputs_and_ignores_unrelated_files(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            for name in ('Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml', 'LICENSE', 'THIRD_PARTY_NOTICES'):
+            for name in ('Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml', 'LICENSE', 'THIRD_PARTY_NOTICES',
+                         'tools/qual/modules.json'):
                 release_fixture.write(root, name, 'source\n')
             release_fixture.write(root, '.git/HEAD', 'a' * 40)
             release_fixture.write(root, 'crates/selected/src/lib.rs', 'pub fn value() {}\n')

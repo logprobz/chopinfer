@@ -124,7 +124,9 @@ def source_roots(root, metadata, packages, models):
 
 def snapshot(root, roots):
     root = Path(root).resolve()
-    files = {root / name for name in ('Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml', 'LICENSE', 'THIRD_PARTY_NOTICES')}
+    # Every model's `chopinfer eval files` ships the shared qualification module metadata.
+    files = {root / name for name in ('Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml', 'LICENSE', 'THIRD_PARTY_NOTICES',
+                                      'tools/qual/modules.json')}
     files |= set((root / 'models').glob('*/model.toml'))
     if (root / '.dockerignore').is_file():
         files.add(root / '.dockerignore')

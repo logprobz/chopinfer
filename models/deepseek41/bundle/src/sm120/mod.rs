@@ -1346,24 +1346,11 @@ impl crate::Kernels {
     /// The payload of the copy-engine reduction that replaces a prefill
     /// collective, or `None` for a collective it does not replace. The
     /// BF16-partial contract's two-shot and turns entries send each rank's
-    /// partial rounded once to BF16, as they do. With `composed`, the
-    /// composed form's F32 reduce-scatter (unadmitted phased entries) is
-    /// replaced with F32 partials: under the BF16-partial contract its
-    /// preceding launches have already rounded the partials in place, so
-    /// the sum is the same.
-    pub(crate) fn prefill_dma_payload(
-        symbol: &str,
-        composed: bool,
-    ) -> Option<crate::ops::DmaPayload> {
-        use crate::ops::DmaPayload;
+    /// partial rounded once to BF16, as they do.
+    pub(crate) fn prefill_dma_payload(symbol: &str) -> Option<crate::ops::DmaPayload> {
         use kernels_sm120::comm::{phased_bf16, phased_turns_bf16};
-        if composed && symbol == COMPOSED_SCATTER {
-            Some(DmaPayload::F32)
-        } else if symbol == phased_bf16::SYMBOL || symbol == phased_turns_bf16::SYMBOL {
-            Some(DmaPayload::Bf16)
-        } else {
-            None
-        }
+        (symbol == phased_bf16::SYMBOL || symbol == phased_turns_bf16::SYMBOL)
+            .then_some(crate::ops::DmaPayload::Bf16)
     }
 
     pub(crate) fn prefill_dma_sum_info(
@@ -1590,9 +1577,6 @@ impl crate::Kernels {
         })
     }
 }
-
-/// The first collective of the all-reduces' composed form.
-const COMPOSED_SCATTER: &str = "chop_comm_reduce_scatter_f32_v1";
 
 // The build script includes the registration files, and so does the
 // projection assembly test; a test that reads the bundle's own modules

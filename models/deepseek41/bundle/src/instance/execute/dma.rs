@@ -156,22 +156,21 @@ impl Call {
 
     /// The reduction of rows `first..first + rows` that replaces the four
     /// ranks' `collectives`, carrying the payload they send. `None` where
-    /// the rows or the collectives are outside the transport; `composed`
-    /// admits the composed form (`Kernels::prefill_dma_payload`).
+    /// the rows or the collectives are outside the transport
+    /// (`Kernels::prefill_dma_payload`).
     pub(super) fn prepare(
         instance: &Instance,
         first: u32,
         rows: u32,
         embedding: bool,
         collectives: &[&str],
-        composed: bool,
     ) -> Result<Option<Self>, String> {
         if instance.dma.len() != 4 || !(512..=PREFILL_TOKENS).contains(&rows) {
             return Ok(None);
         }
         let payloads = collectives
             .iter()
-            .map(|symbol| crate::Kernels::prefill_dma_payload(symbol, composed))
+            .map(|symbol| crate::Kernels::prefill_dma_payload(symbol))
             .collect::<Vec<_>>();
         let Some(Some(payload)) = payloads.first().copied() else {
             return Ok(None);

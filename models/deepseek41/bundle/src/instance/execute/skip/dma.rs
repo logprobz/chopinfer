@@ -39,7 +39,7 @@ fn reductions(instance: &Instance, body: &Programs, rank: usize) -> Result<Vec<R
                 .ok_or("sparse reduction has no collective")?;
             let launch = &programs[rank][collective];
             // Only the admitted phased contracts; composed parts keep theirs.
-            if crate::Kernels::prefill_dma_payload(&launch.symbol, false).is_none() {
+            if crate::Kernels::prefill_dma_payload(&launch.symbol).is_none() {
                 at = end;
                 continue;
             }
@@ -222,7 +222,6 @@ impl Plan {
                 reference.rows,
                 reference.stage == Stage::EmbeddingReduce,
                 &collectives,
-                false,
             )?
             else {
                 continue;

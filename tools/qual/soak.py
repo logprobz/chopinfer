@@ -32,7 +32,9 @@ tokens and the server's response id) and their total.
 
 Each memory sample also records the serving tree's RssAnon, RssFile and
 RssShmem and, when /metrics serves them, the host's mapped-view gauges. The
-memory rule judges device memory and VmRSS only.
+memory rule judges device memory and the host memory of the declared
+HOST_MEMORY_SCOPE: VmRSS by default, or RssAnon + RssShmem with RssFile
+bounded by the mapped-view bytes.
 """
 
 from concurrent.futures import ThreadPoolExecutor
@@ -66,6 +68,13 @@ from structured import PERSON, PERSON_PROMPT, schema_errors
 # limits.
 WARMUP_SECONDS = 0
 CACHE_ALLOWANCE_MIB = {"host": 0, "device": 0}
+# The host memory the rule judges, declared in the same constants: "rss",
+# the default, judges VmRSS. "anonymous_shmem", for a server that maps large
+# read-only files, judges RssAnon + RssShmem; the file-backed pages (RssFile),
+# clean page cache of the mappings, are reported, and their growth over the
+# whole soak must stay within the bytes the host's mapped views cover (the
+# smallest mapped_view_bytes sampled).
+HOST_MEMORY_SCOPE = "rss"
 
 
 def memory_policy(warmup=None, allowance=None):
@@ -80,11 +89,37 @@ def memory_policy(warmup=None, allowance=None):
     return warmup, dict(allowance)
 
 
-def memory_rule(samples, duration, limits, warmup=None, allowance=None):
-    """Growth of device (`mib`) and host (`host_rss_mib`) memory over the
-    whole soak and after the warm-up, judged against `limits` ({"device",
-    "host"} MiB) and the declared allowance."""
+def host_memory_scope(scope=None):
+    """The declared host memory scope, validated."""
+    scope = HOST_MEMORY_SCOPE if scope is None else scope
+    if scope not in ("rss", "anonymous_shmem"):
+        raise ValueError(f"soak host memory scope must be rss or anonymous_shmem, not {scope!r}")
+    return scope
+
+
+def missing_parts(row):
+    """The fields the anonymous_shmem scope reads that a memory sample lacks
+    or holds as other than a finite non-negative number."""
+    return [key for key in ("host_rss_anon_mib", "host_rss_shmem_mib", "host_rss_file_mib", "mapped_view_bytes")
+            if type(row.get(key)) not in (int, float) or not math.isfinite(row[key]) or row[key] < 0]
+
+
+def memory_rule(samples, duration, limits, warmup=None, allowance=None, scope=None):
+    """Growth of device (`mib`) and host memory (`host_rss_mib`, or under the
+    anonymous_shmem scope RssAnon + RssShmem) over the whole soak and after
+    the warm-up, judged against `limits` ({"device", "host"} MiB) and the
+    declared allowance. Under that scope every sample must carry RssAnon,
+    RssShmem, RssFile and mapped_view_bytes, and the RssFile growth over the
+    whole soak must stay within the smallest mapped_view_bytes, in MiB."""
     warmup, allowance = memory_policy(warmup, allowance)
+    scope = host_memory_scope(scope)
+    if scope == "anonymous_shmem":
+        for row in samples:
+            if missing := missing_parts(row):
+                raise ValueError(f"memory sample at {row['elapsed_seconds']} s has no {', '.join(missing)}")
+        host = lambda row: row["host_rss_anon_mib"] + row["host_rss_shmem_mib"]
+    else:
+        host = lambda row: row["host_rss_mib"]
     effective = min(warmup, duration / 4)
     steady = [row for row in samples if row["elapsed_seconds"] >= effective]
     if not steady:
@@ -92,12 +127,18 @@ def memory_rule(samples, duration, limits, warmup=None, allowance=None):
     result = {"warmup_seconds": warmup, "effective_warmup_seconds": effective,
               "steady_baseline_seconds": steady[0]["elapsed_seconds"], "cache_allowance_mib": allowance}
     passed = True
-    for kind, key, prefix in (("device", "mib", "memory"), ("host", "host_rss_mib", "host_memory")):
-        whole = max(row[key] for row in samples) - samples[0][key]
-        after = max(row[key] for row in steady) - steady[0][key]
+    for kind, value, prefix in (("device", lambda row: row["mib"], "memory"), ("host", host, "host_memory")):
+        whole = max(map(value, samples)) - value(samples[0])
+        after = max(map(value, steady)) - value(steady[0])
         result[prefix + "_growth_mib"] = whole
         result["steady_" + prefix + "_growth_mib"] = after
         passed = passed and after <= limits[kind] and whole <= limits[kind] + allowance[kind]
+    if scope == "anonymous_shmem":
+        files = max(row["host_rss_file_mib"] for row in samples) - samples[0]["host_rss_file_mib"]
+        bound = min(row["mapped_view_bytes"] for row in samples) / 2 ** 20
+        result.update(host_memory_scope=scope, host_rss_file_growth_mib=files,
+                      host_rss_file_growth_limit_mib=bound)
+        passed = passed and files <= bound
     result["passed"] = passed
     return result
 
@@ -316,10 +357,10 @@ def device_memory(root_pid):
 
 def host_memory(root_pid):
     """Resident memory of the serving process and its current children, in
-    MiB: VmRSS (`host_rss_mib`), which the memory rule judges, and its
-    anonymous, file-backed and shared-memory parts (RssAnon, RssFile,
-    RssShmem), which are recorded only. A part some process does not report
-    is None."""
+    MiB: VmRSS (`host_rss_mib`), which the memory rule judges by default,
+    and its anonymous, file-backed and shared-memory parts (RssAnon,
+    RssFile, RssShmem), which the anonymous_shmem scope judges instead. A
+    part some process does not report is None."""
     fields = {"VmRSS": "host_rss_mib", "RssAnon": "host_rss_anon_mib", "RssFile": "host_rss_file_mib",
               "RssShmem": "host_rss_shmem_mib"}
     totals = dict.fromkeys(fields.values(), 0)
@@ -341,10 +382,12 @@ def host_memory(root_pid):
 def mapped_views(client):
     """The host's mapped-view gauges when its /metrics serves them: the bytes
     its mapped views cover and, while residency is visible, the bytes of them
-    resident. They are recorded only: a scrape that fails in transport,
-    decoding or parsing, or a gauge that is not a finite whole number of
-    bytes, records `mapped_view_error` beside the memory sample and never
-    fails the soak."""
+    resident. A scrape that fails in transport, decoding or parsing, or a
+    gauge that is not a finite whole number of bytes, records
+    `mapped_view_error` beside the memory sample. By default the gauges are
+    recorded only; the anonymous_shmem scope needs mapped_view_bytes in
+    every sample, so there a failed scrape leaves the memory rule without
+    evidence."""
     try:
         text = metrics_text(client)
         views = {}
@@ -388,6 +431,8 @@ def main():
                         help="seconds before the steady memory baseline (default: the declared WARMUP_SECONDS)")
     parser.add_argument("--cache-allowance-mib", type=lambda value: dict(zip(("host", "device"), map(int, value.split(",")))),
                         help="HOST,DEVICE MiB of declared bounded cache growth (default: CACHE_ALLOWANCE_MIB)")
+    parser.add_argument("--host-memory-scope",
+                        help="rss or anonymous_shmem: the host memory judged (default: the declared HOST_MEMORY_SCOPE)")
     args = parser.parse_args()
     if args.duration <= 0 or args.concurrency <= 0:
         parser.error("duration and concurrency must be positive")
@@ -395,6 +440,7 @@ def main():
         parser.error("server-pid must be positive")
     try:
         warmup, allowance = memory_policy(args.warmup_seconds, args.cache_allowance_mib)
+        scope = host_memory_scope(args.host_memory_scope)
     except (ValueError, TypeError) as error:
         parser.error(str(error))
     # Media and structured answers come without reasoning, or after it when
@@ -525,9 +571,15 @@ def main():
     growth = host_growth = None
     rule = {}
     if memory:
-        rule = memory_rule(memory, duration, {"device": args.memory_growth_mib, "host": args.host_memory_growth_mib},
-                           warmup, allowance)
-        growth, host_growth = rule["memory_growth_mib"], rule["host_memory_growth_mib"]
+        # A sample the declared scope cannot judge fails the soak but keeps
+        # its receipt.
+        try:
+            rule = memory_rule(memory, duration,
+                               {"device": args.memory_growth_mib, "host": args.host_memory_growth_mib},
+                               warmup, allowance, scope)
+            growth, host_growth = rule["memory_growth_mib"], rule["host_memory_growth_mib"]
+        except ValueError as error:
+            errors.append({"memory": str(error)})
     prefix = None
     if args.prefix_mix:
         canaries.extend([canary(), canary()])
@@ -564,6 +616,9 @@ def main():
                                                            "steady_baseline_seconds", "cache_allowance_mib",
                                                            "steady_memory_growth_mib", "steady_host_memory_growth_mib")}
                                if rule else {}),
+                            # Recorded only under a scope other than the default.
+                            **({key: rule[key] for key in ("host_memory_scope", "host_rss_file_growth_mib",
+                                                           "host_rss_file_growth_limit_mib") if key in rule}),
                             "prefix_mix": prefix,
                             "mixed_requests": mixed if media or args.structured_mix else None,
                             "structured_kept": kept if args.structured_mix else None,

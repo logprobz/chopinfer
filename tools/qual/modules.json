@@ -439,6 +439,7 @@
   "soak": {
    "CACHE_ALLOWANCE_MIB": "dict",
    "CANARY": "number",
+   "HOST_MEMORY_SCOPE": "str",
    "KEEP_STRUCTURED": "int",
    "MEDIA_CASES": "list",
    "NEAR_TIE_MARGIN": "number",

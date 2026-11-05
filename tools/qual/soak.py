@@ -119,19 +119,56 @@ def mapped_view_files(files=None, scope=None):
     return list(files)
 
 
-def exempt_problem(row):
-    """Why the rss_less_mapped_views scope cannot judge a memory sample, or
-    None: VmRSS, the exempt mappings' Rss and Size (their bound) and the
-    judged host memory must be finite non-negative numbers, the exempt Rss
-    within its bound and VmRSS, and the judged value VmRSS less it."""
+def exempt_identity(entry):
+    """The identity of an exempt mapping a sample lists (PID, start time,
+    address range, device, inode, offset), or None unless the entry is a
+    read-only mapping whose Size is its address range and holds its Rss."""
+    keys = ("pid", "start_time", "range", "device", "inode", "offset", "perms", "size_kib", "rss_kib")
+    if not isinstance(entry, dict) or set(entry) != set(keys):
+        return None
+    natural = lambda value: type(value) is int and value >= 0
+    text = lambda key, pattern: isinstance(entry[key], str) and re.fullmatch(pattern, entry[key])
+    span = text("range", r"([0-9a-f]+)-([0-9a-f]+)")
+    if not (span and natural(entry["pid"]) and entry["pid"] > 0 and natural(entry["start_time"])
+            and natural(entry["inode"]) and natural(entry["size_kib"]) and natural(entry["rss_kib"])
+            and text("device", r"[0-9a-f]+:[0-9a-f]+") and text("offset", r"[0-9a-f]+")
+            and text("perms", r"[r-]-[x-][ps]")):
+        return None
+    if int(span[2], 16) - int(span[1], 16) != entry["size_kib"] * 1024 or entry["rss_kib"] > entry["size_kib"]:
+        return None
+    return tuple(entry[key] for key in keys[:6])
+
+
+def exempt_problem(samples):
+    """Why the rss_less_mapped_views scope cannot judge `samples`, or None.
+    Each sample lists its exempt mappings (`host_exempt_mappings`), each a
+    distinct read-only mapping whose Size is its address range and holds its
+    Rss (exempt_identity), and every one listed by the first sample and by
+    each sample since. Its VmRSS, exempt Rss, bound and judged host memory
+    are finite non-negative numbers: the exempt Rss and bound the listed
+    mappings' Rss and Size, in MiB, the exempt Rss within VmRSS, and the
+    judged value VmRSS less it."""
     keys = ("host_rss_mib", "host_exempt_rss_mib", "host_exempt_bound_mib", "host_judged_mib")
-    if missing := [key for key in keys if type(row.get(key)) not in (int, float)
-                   or not math.isfinite(row[key]) or row[key] < 0]:
-        return f"has no {', '.join(missing)}" + (f" ({row['host_exempt_error']})" if row.get("host_exempt_error")
-                                                  else "")
-    if (row["host_exempt_rss_mib"] > min(row["host_exempt_bound_mib"], row["host_rss_mib"])
-            or row["host_judged_mib"] != row["host_rss_mib"] - row["host_exempt_rss_mib"]):
-        return "holds an exempt Rss beyond its bound or VmRSS, or a judged value other than VmRSS less it"
+    held = None
+    for row in samples:
+        at = f"memory sample at {row.get('elapsed_seconds')} s"
+        if missing := [key for key in keys if type(row.get(key)) not in (int, float)
+                       or not math.isfinite(row[key]) or row[key] < 0]:
+            return f"{at} has no {', '.join(missing)}" + (f" ({row['host_exempt_error']})"
+                                                          if row.get("host_exempt_error") else "")
+        entries = row.get("host_exempt_mappings")
+        identities = [exempt_identity(entry) for entry in entries] if isinstance(entries, list) else [None]
+        if None in identities or len(set(identities)) != len(identities):
+            return f"{at} lists no exempt mappings, or one that is not a distinct read-only mapping within its Size"
+        if held is not None and not set(identities) <= held:
+            return f"{at} exempts a mapping that the first sample and every sample since did not hold"
+        held = set(identities)
+        if (row["host_exempt_rss_mib"] != sum(entry["rss_kib"] for entry in entries) / 1024
+                or row["host_exempt_bound_mib"] != sum(entry["size_kib"] for entry in entries) / 1024):
+            return f"{at} holds an exempt Rss or bound other than its listed mappings'"
+        if (row["host_exempt_rss_mib"] > row["host_rss_mib"]
+                or row["host_judged_mib"] != row["host_rss_mib"] - row["host_exempt_rss_mib"]):
+            return f"{at} holds an exempt Rss beyond VmRSS, or a judged value other than VmRSS less it"
     return None
 
 
@@ -140,15 +177,14 @@ def memory_rule(samples, duration, limits, warmup=None, allowance=None, scope=No
     rss_less_mapped_views scope VmRSS less the exempt mappings' Rss,
     `host_judged_mib`) over the whole soak and after the warm-up, judged
     against `limits` ({"device", "host"} MiB) and the declared allowance.
-    Under that scope every sample must carry consistent judged, exempt and
-    bound values (exempt_problem), and the judged series is recomputed from
-    VmRSS and the exempt Rss."""
+    Under that scope every sample must carry its exempt mappings and
+    consistent judged, exempt and bound values (exempt_problem), and the
+    judged series is recomputed from VmRSS and the exempt Rss."""
     warmup, allowance = memory_policy(warmup, allowance)
     scope = host_memory_scope(scope)
     if scope == "rss_less_mapped_views":
-        for row in samples:
-            if problem := exempt_problem(row):
-                raise ValueError(f"memory sample at {row['elapsed_seconds']} s {problem}")
+        if problem := exempt_problem(samples):
+            raise ValueError(problem)
         host = lambda row: row["host_rss_mib"] - row["host_exempt_rss_mib"]
     else:
         host = lambda row: row["host_rss_mib"]
@@ -450,8 +486,6 @@ class MappedViews:
         self.files = files
         self.exempt = None
         self.error = None
-        # The exempt mappings as the first sample found them, for the receipt.
-        self.mappings = []
 
     def establish(self, tree):
         directory = checkpoint_directory([pid for pid, _ in tree])
@@ -461,19 +495,16 @@ class MappedViews:
             for mapping in mappings:
                 if mapping["path"] in paths and "w" not in mapping["perms"]:
                     exempt.add((pid, start, *mapping["key"]))
-                    span, device, inode, offset = mapping["key"]
-                    self.mappings.append({"pid": pid, "start_time": start, "range": span, "perms": mapping["perms"],
-                                          "offset": offset, "device": device, "inode": inode,
-                                          "path": mapping["path"], "size_mib": mapping["Size"] / 1024})
         self.exempt = exempt
 
     def judge(self, tree, rss, unread=None):
         """A sample's judged host memory (VmRSS `rss` less the exempt Rss),
         the exempt Rss and their bound (the exempt mappings' Size), in MiB,
-        from the tree's mappings ({(pid, start time): smaps}). None beside
-        `host_exempt_error` when a process's mappings were `unread`, or the
-        first sample could not identify the exempt ones; an unread process's
-        exempt mappings are retired."""
+        and the exempt mappings themselves (identity, permissions, Size and
+        Rss in kB), from the tree's mappings ({(pid, start time): smaps}).
+        None beside `host_exempt_error` when a process's mappings were
+        `unread`, or the first sample could not identify the exempt ones; an
+        unread process's exempt mappings are retired."""
         if self.exempt is None and self.error is None:
             try:
                 if unread:
@@ -487,12 +518,15 @@ class MappedViews:
             self.exempt &= present.keys()
         if error := self.error or (unread and f"no mappings of {unread}"):
             return {"host_judged_mib": None, "host_exempt_rss_mib": None, "host_exempt_bound_mib": None,
-                    "host_exempt_error": error}
-        rss_kib = sum(present[identity]["Rss"] for identity in self.exempt)
-        size_kib = sum(present[identity]["Size"] for identity in self.exempt)
-        exempt = rss_kib / 1024
+                    "host_exempt_mappings": None, "host_exempt_error": error}
+        listed = [{"pid": pid, "start_time": start, "range": span, "device": device, "inode": int(inode),
+                   "offset": offset, "perms": present[identity]["perms"], "size_kib": present[identity]["Size"],
+                   "rss_kib": present[identity]["Rss"]}
+                  for identity in sorted(self.exempt) for pid, start, span, device, inode, offset in [identity]]
+        exempt = sum(entry["rss_kib"] for entry in listed) / 1024
         return {"host_judged_mib": rss - exempt, "host_exempt_rss_mib": exempt,
-                "host_exempt_bound_mib": size_kib / 1024}
+                "host_exempt_bound_mib": sum(entry["size_kib"] for entry in listed) / 1024,
+                "host_exempt_mappings": listed}
 
 
 def process_memory(pid, mapped):
@@ -788,8 +822,7 @@ def main():
                                if rule else {}),
                             # Recorded only under a scope other than the default.
                             **({"host_memory_scope": scope} if scope != "rss" else {}),
-                            **({"mapped_view_files": files, "host_exempt_mappings": views.mappings}
-                               if views is not None else {}),
+                            **({"mapped_view_files": files} if views is not None else {}),
                             **({key: rule[key] for key in ("host_exempt_rss_mib", "host_exempt_bound_mib")
                                 if key in rule}),
                             "prefix_mix": prefix,

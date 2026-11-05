@@ -109,6 +109,17 @@ def spec_receipt(name, arm, run_id):
                                              for _ in range(16)]} for set_name in ('copy', 'natural')}}
 
 
+def exempt(row, mib):
+    """Make `mib` MiB of a soak sample's VmRSS the Rss of its one exempt
+    mapping, a 1024 MiB read-only view."""
+    start, kib = 0x7428b2600000, round(mib * 1024)
+    row.update(host_exempt_rss_mib=kib / 1024, host_exempt_bound_mib=1024,
+               host_judged_mib=row['host_rss_mib'] - kib / 1024,
+               host_exempt_mappings=[{'pid': 101, 'start_time': 5001, 'range': f'{start:x}-{start + 2 ** 30:x}',
+                                      'device': '103:01', 'inode': 11, 'offset': '00000000', 'perms': 'r--s',
+                                      'size_kib': 2 ** 20, 'rss_kib': kib}])
+
+
 def soak_receipt(facts, duration, scope=None, files=None):
     """A soak receipt judged under `scope` and the mapped-view `files`
     (default: the model's declared ones); rss_less_mapped_views records the
@@ -125,7 +136,7 @@ def soak_receipt(facts, duration, scope=None, files=None):
         value.update(warmup_seconds=facts['soak_warmup'], cache_allowance_mib=facts['soak_allowance'])
     if scope == 'rss_less_mapped_views':
         for row in value['memory_samples']:
-            row.update(host_exempt_rss_mib=20, host_exempt_bound_mib=1024, host_judged_mib=80)
+            exempt(row, 20)
         value['mapped_view_files'] = files
     if scope != 'rss':
         value['host_memory_scope'] = scope
@@ -793,12 +804,12 @@ class RuleTests(unittest.TestCase):
         self.assertIn({'metric': 'host_exempt_rss_mib', 'value': 20, 'op': 'le', 'limit': 1024}, values)
         # The exempt mappings' pages pass however VmRSS grows; the same
         # VmRSS growth fails a model without the scope.
-        exempt, vmrss = soak_receipt(facts, 1200), soak_receipt(plain, 1200)
-        for row, other in zip(exempt['memory_samples'], vmrss['memory_samples']):
-            row['host_exempt_rss_mib'] += row['elapsed_seconds'] * 2 // 3
+        resident, vmrss = soak_receipt(facts, 1200), soak_receipt(plain, 1200)
+        for row, other in zip(resident['memory_samples'], vmrss['memory_samples']):
             row['host_rss_mib'] += row['elapsed_seconds'] * 2 // 3
+            exempt(row, 20 + row['elapsed_seconds'] * 2 // 3)
             other['host_rss_mib'] = row['host_rss_mib']
-        values, _ = runner.judge_soak(exempt, facts, rule)
+        values, _ = runner.judge_soak(resident, facts, rule)
         self.assertIn({'metric': 'host_memory_growth_mib', 'value': 0, 'op': 'le', 'limit': 512}, values)
         self.assertIn({'metric': 'host_exempt_rss_mib', 'value': 820, 'op': 'le', 'limit': 1024}, values)
         with self.assertRaisesRegex(ValueError, 'grew more than'):
@@ -816,10 +827,11 @@ class RuleTests(unittest.TestCase):
             runner.judge_soak(soak_receipt(facts, 1200, 'rss'), facts, rule)
         with self.assertRaisesRegex(ValueError, 'other mapped-view files'):
             runner.judge_soak(soak_receipt(facts, 1200, files=files[:1]), facts, rule)
-        incomplete = soak_receipt(facts, 1200)
-        del incomplete['memory_samples'][3]['host_exempt_rss_mib']
-        with self.assertRaisesRegex(ValueError, 'incomplete or inconsistent'):
-            runner.judge_soak(incomplete, facts, rule)
+        for key in ('host_exempt_rss_mib', 'host_exempt_mappings'):
+            incomplete = soak_receipt(facts, 1200)
+            del incomplete['memory_samples'][3][key]
+            with self.subTest(key), self.assertRaisesRegex(ValueError, 'incomplete or inconsistent'):
+                runner.judge_soak(incomplete, facts, rule)
 
     def test_queue_needle_and_greedy_rules(self):
         clients = runner.queue_clients(self.facts)

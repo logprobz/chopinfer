@@ -8,6 +8,15 @@ def rule(path, value=True, op="eq"):
     return {"path": path, "op": op, "value": value, "source": "test"}
 
 
+def table_mapping(rss_kib, size_mib=193365, **changed):
+    """An exempt mapping as a soak sample lists it: a read-only shared view
+    of `size_mib` MiB holding `rss_kib` kB."""
+    start = 0x7428b2600000
+    return {"pid": 101, "start_time": 5001, "range": f"{start:x}-{start + size_mib * 2 ** 20:x}", "device": "103:01",
+            "inode": 11, "offset": "00000000", "perms": "r--s", "size_kib": size_mib * 1024, "rss_kib": rss_kib,
+            **changed}
+
+
 def soak_receipt():
     return {"passed": True, "completed": 10, "duration_seconds": 1380,
             "measured_duration_seconds": 1380, "concurrency": 32,
@@ -246,6 +255,7 @@ class DeclaredMappedViews(unittest.TestCase):
             value["memory_samples"].append({"elapsed_seconds": t, "mib": 100, "host_rss_mib": rss,
                                             "host_exempt_rss_mib": 12000 + exempt(t),
                                             "host_exempt_bound_mib": 193365,
+                                            "host_exempt_mappings": [table_mapping((12000 + exempt(t)) * 1024)],
                                             "host_judged_mib": rss - 12000 - exempt(t)})
         if scope is not None:
             value["host_memory_scope"] = scope
@@ -318,6 +328,40 @@ class DeclaredMappedViews(unittest.TestCase):
                 result = self.rescore(value)
                 self.assertEqual(result["status"], "insufficient")
                 self.assertIn("incomplete or inconsistent", result["error"])
+
+    def test_exempt_bytes_need_the_mappings_each_sample_lists(self):
+        # VmRSS 100, 400 and 700 MiB, 0, 300 and 600 MiB of it claimed
+        # exempt within a 1024 MiB bound: judged flat.
+        check = {"module": "soak", "args": ["--duration", "60", "--concurrency", "1"],
+                 "constants": {"soak": {"HOST_MEMORY_SCOPE": {"value": "rss_less_mapped_views", "source": "test"},
+                                        "MAPPED_VIEW_FILES": {"value": ["table.bin"], "source": "test"}}},
+                 "rules": [rule(["passed"])]}
+
+        def receipt(listed):
+            return {"passed": True, "errors": [], "completed": 3, "duration_seconds": 60,
+                    "measured_duration_seconds": 60, "concurrency": 1, "memory_scope": "serving_process_tree",
+                    "host_memory_scope": "rss_less_mapped_views", "mapped_view_files": ["table.bin"],
+                    "memory_samples": [{"elapsed_seconds": t, "mib": 100, "host_rss_mib": 100 + 10 * t,
+                                        "host_exempt_rss_mib": 10 * t, "host_exempt_bound_mib": 1024,
+                                        "host_judged_mib": 100, **listed(10 * t * 1024)} for t in (0, 30, 60)]}
+
+        def score(listed):
+            return kinds.rescore(kinds.of("soak"), receipt(listed), None, check)
+
+        self.assertEqual(score(lambda kib: {"host_exempt_mappings": [table_mapping(kib, 1024)]})["status"], "pass")
+        for label, listed in (
+                ("no list", lambda kib: {}),
+                ("an empty list", lambda kib: {"host_exempt_mappings": []}),
+                ("a 1 MiB mapping", lambda kib: {"host_exempt_mappings": [table_mapping(min(kib, 1024), 1)]}),
+                ("a writable device mapping", lambda kib: {"host_exempt_mappings": [
+                    table_mapping(kib, 1024, perms="rw-s", device="00:05")]}),
+                ("Rss over Size", lambda kib: {"host_exempt_mappings": [table_mapping(kib, 1024, size_kib=1)]}),
+                ("another process later", lambda kib: {"host_exempt_mappings": [
+                    table_mapping(kib, 1024, start_time=5001 if kib == 0 else 9001)]})):
+            with self.subTest(label):
+                result = score(listed)
+                self.assertEqual(result["status"], "insufficient")
+                self.assertIn("incomplete or inconsistent mapped-view memory evidence", result["error"])
 
     def test_invalid_declared_files_are_refused(self):
         for scope, files in (("rss_less_mapped_views", []), ("rss_less_mapped_views", ["/abs.bin"]),

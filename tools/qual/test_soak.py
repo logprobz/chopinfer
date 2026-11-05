@@ -647,6 +647,10 @@ class MappedViewScope(unittest.TestCase):
     def rule(self, rows, scope=SCOPE):
         return soak.memory_rule(rows, 1200, LIMITS, 0, None, scope)
 
+    @staticmethod
+    def listed(row):
+        return [(entry["pid"], entry["range"], entry["perms"], entry["offset"]) for entry in row["host_exempt_mappings"]]
+
     def test_the_fake_mappings_are_realizable(self):
         # At the largest growth any test applies, each mapping's Size is its
         # address range and holds its Rss, and no two mappings overlap.
@@ -673,13 +677,18 @@ class MappedViewScope(unittest.TestCase):
         for row in rows:
             self.assertEqual(row["host_judged_mib"], row["host_rss_mib"] - row["host_exempt_rss_mib"])
             self.assertEqual(row["host_exempt_bound_mib"], bound)
-        # The server's four read-only table views, not the wrapper whose
-        # command line names the same checkpoint, nor an undeclared file.
-        self.assertEqual([(row["pid"], row["path"], row["perms"], row["offset"]) for row in views.mappings],
-                         [(101, f"{self.store}/{TABLES[0]}", "r--s", "00000000"),
-                          (101, f"{self.store}/{TABLES[0]}", "r--s", "16e3781000"),
-                          (101, f"{self.store}/{TABLES[1]}", "r--s", "00000000"),
-                          (101, f"{self.store}/{TABLES[1]}", "r--s", "16e3a12000")])
+        # Every sample lists the server's four read-only table views, not
+        # the wrapper whose command line names the same checkpoint, nor an
+        # undeclared file, with their Size and Rss.
+        tables = [(101, "7428b2600000-743f96013000", "r--s", "00000000"),
+                  (101, "743f96212000-74404d3e4000", "r--s", "16e3a12000"),
+                  (101, "74404d400000-745730b82000", "r--s", "00000000"),
+                  (101, "745730d81000-7457e7f3e000", "r--s", "16e3781000")]
+        self.assertTrue(all(self.listed(row) == tables for row in rows))
+        self.assertEqual([(entry["start_time"], entry["size_kib"], entry["rss_kib"])
+                          for entry in rows[-1]["host_exempt_mappings"]],
+                         [(5001, 96004172, 3904596), (5001, 3000136, 2612208), (5001, 96001544, 3905472 + self.RESIDENT),
+                          (5001, 3000052, 2672428)])
         # Judged by VmRSS the same soak fails.
         self.assertEqual((self.rule(rows, "rss")["passed"], self.rule(rows, "rss")["host_memory_growth_mib"]),
                          (False, 5425))
@@ -694,15 +703,15 @@ class MappedViewScope(unittest.TestCase):
                 self.assertEqual((rule["host_memory_growth_mib"], rule["passed"]), (500, True))
 
     def test_a_mapping_of_a_declared_file_after_the_first_sample_counts(self):
-        rows, views = self.sampled(lambda t: {"later": t * 600 * 1024 // 1200} if t else {})
+        rows, _ = self.sampled(lambda t: {"later": t * 600 * 1024 // 1200} if t else {})
         rule = self.rule(rows)
         self.assertEqual((rule["host_memory_growth_mib"], rule["passed"]), (600, False))
-        self.assertEqual(len(views.mappings), 4)
+        self.assertEqual(len(rows[-1]["host_exempt_mappings"]), 4)
 
     def test_a_writable_mapping_of_a_declared_file_is_not_exempt(self):
-        rows, views = self.sampled(lambda t: {"writable": t * 600 * 1024 // 1200})
+        rows, _ = self.sampled(lambda t: {"writable": t * 600 * 1024 // 1200})
         self.assertEqual((self.rule(rows)["host_memory_growth_mib"], self.rule(rows)["passed"]), (600, False))
-        self.assertNotIn("rw-s", {row["perms"] for row in views.mappings})
+        self.assertEqual({entry["perms"] for entry in rows[0]["host_exempt_mappings"]}, {"r--s"})
         # An exempt mapping made writable after the first sample counts from then on.
         rows, _ = self.sampled(lambda t: {"protected": t >= 600})
         rule = self.rule(rows)
@@ -778,11 +787,10 @@ class MappedViewScope(unittest.TestCase):
             self.rule(rows)
         # Unread at the first sample, the exempt mappings are unknown for
         # the whole soak.
-        rows, views = self.sampled(unreadable=lambda n: (101,) if n == 0 else ())
-        self.assertTrue(all(row["host_judged_mib"] is None for row in rows))
+        rows, _ = self.sampled(unreadable=lambda n: (101,) if n == 0 else ())
+        self.assertTrue(all(row["host_judged_mib"] is None and row["host_exempt_mappings"] is None for row in rows))
         self.assertTrue(all(row["host_exempt_error"].startswith("the first sample identified no exempt mappings")
                             for row in rows))
-        self.assertEqual(views.mappings, [])
         with self.assertRaisesRegex(ValueError, "at 0 s has no"):
             self.rule(rows)
 
@@ -795,12 +803,12 @@ class MappedViewScope(unittest.TestCase):
                              (("chopinfer", "serve", "--model"), None),
                              (("chopinfer", "verify", "--model", "checkpoint"), None)):
             with self.subTest(argv=argv):
-                rows, views = self.sampled(argv=argv)
+                rows, _ = self.sampled(argv=argv)
                 if exempt is None:
                     self.assertIn("checkpoint director", rows[0]["host_exempt_error"])
                     self.assertTrue(all(row["host_judged_mib"] is None for row in rows))
                 else:
-                    self.assertEqual(len(views.mappings), exempt)
+                    self.assertEqual(len(rows[0]["host_exempt_mappings"]), exempt)
                     self.assertNotIn("host_exempt_error", rows[0])
 
     def test_a_sample_without_consistent_values_is_insufficient(self):
@@ -815,13 +823,76 @@ class MappedViewScope(unittest.TestCase):
                 with self.subTest(key=key, value=value), self.assertRaisesRegex(ValueError, f"has no .*{key}"):
                     self.rule(rows)
         rows, _ = self.sampled()
-        for key, value in (("host_judged_mib", rows[5]["host_judged_mib"] - 600),
-                           ("host_exempt_rss_mib", rows[5]["host_exempt_bound_mib"] + 1),
-                           ("host_exempt_bound_mib", rows[5]["host_exempt_rss_mib"] - 1)):
+        for key, value, message in (("host_judged_mib", rows[5]["host_judged_mib"] - 600, "other than VmRSS less"),
+                                    ("host_exempt_rss_mib", rows[5]["host_exempt_bound_mib"] + 1, "listed mappings'"),
+                                    ("host_exempt_bound_mib", rows[5]["host_exempt_rss_mib"] - 1, "listed mappings'"),
+                                    ("host_exempt_rss_mib", rows[5]["host_rss_mib"] + 1, "listed mappings'")):
             changed = [dict(row) for row in rows]
             changed[5][key] = value
-            with self.subTest(key=key), self.assertRaisesRegex(ValueError, "beyond its bound"):
+            with self.subTest(key=key, value=value), self.assertRaisesRegex(ValueError, f"at 150 s .*{message}"):
                 self.rule(changed)
+
+    def test_exempt_bytes_need_the_listed_mappings_of_every_sample(self):
+        """The exempt Rss and bound must be those of the mappings each sample
+        lists, each listed by the first sample and every sample since."""
+        def drop(row, index):
+            entry = row["host_exempt_mappings"].pop(index)
+            row["host_exempt_rss_mib"] -= entry["rss_kib"] / 1024
+            row["host_exempt_bound_mib"] -= entry["size_kib"] / 1024
+            row["host_judged_mib"] = row["host_rss_mib"] - row["host_exempt_rss_mib"]
+
+        def unlisted(rows):
+            del rows[5]["host_exempt_mappings"]
+
+        def emptied(rows):
+            rows[5]["host_exempt_mappings"] = []
+
+        def one_kept(rows):
+            del rows[5]["host_exempt_mappings"][1:]
+
+        def changed(key, value):
+            def change(rows):
+                rows[5]["host_exempt_mappings"][0][key] = value
+            return change
+
+        def duplicated(rows):
+            entries = rows[5]["host_exempt_mappings"]
+            entries[1] = dict(entries[0])
+
+        def gone_then_back(rows):
+            drop(rows[5], 0)
+
+        def recycled(rows):
+            for row in rows[5:]:
+                row["host_exempt_mappings"][0]["start_time"] = 9001
+
+        def remapped(rows):
+            for row in rows[5:]:
+                row["host_exempt_mappings"][0]["range"] = "100000000000-101000000000"
+                row["host_exempt_mappings"][0]["size_kib"] = 0x1000000000 // 1024
+
+        for label, change, message in (
+                ("no list", unlisted, "lists no exempt mappings"),
+                ("an empty list", emptied, "listed mappings'"),
+                ("one listed mapping", one_kept, "listed mappings'"),
+                ("Rss over Size", changed("rss_kib", 96004172 + 1), "not a distinct read-only mapping"),
+                ("Size other than the range", changed("size_kib", 96004172 + 1), "not a distinct read-only mapping"),
+                ("a writable mapping", changed("perms", "rw-s"), "not a distinct read-only mapping"),
+                ("an unknown field", changed("path", "/x"), "not a distinct read-only mapping"),
+                ("a duplicate", duplicated, "not a distinct read-only mapping"),
+                ("a mapping absent from a sample", gone_then_back, "at 180 s exempts a mapping"),
+                ("another process", recycled, "at 150 s exempts a mapping"),
+                ("another range", remapped, "at 150 s exempts a mapping")):
+            rows, _ = self.sampled()
+            change(rows)
+            with self.subTest(label), self.assertRaisesRegex(ValueError, message):
+                self.rule(rows)
+        # A mapping dropped for good, its bytes counted from then on, is
+        # consistent evidence of their growth.
+        rows, _ = self.sampled()
+        for row in rows[5:]:
+            drop(row, 0)
+        self.assertEqual(self.rule(rows)["host_memory_growth_mib"], 3904596 / 1024)
         # The judged series is VmRSS less the exempt Rss: a lower recorded
         # judged value cannot hide growth from the rule.
         rows, _ = self.sampled(lambda t: {"anon": t * 600 * 1024 // 1200})
@@ -862,10 +933,10 @@ class MappedViewScope(unittest.TestCase):
                     patch.object(soak, "MAPPED_VIEW_FILES", () if declared else tuple(TABLES)):
                 code, report = self.soak(self.proc(grow), **declared)
                 self.assertEqual((code, report["passed"], report["errors"]), (0, True, []))
-                self.assertEqual((report["host_memory_scope"], report["mapped_view_files"],
-                                  report["host_memory_growth_mib"], len(report["host_exempt_mappings"])),
-                                 (self.SCOPE, TABLES, 0, 4))
                 samples = report["memory_samples"]
+                self.assertEqual((report["host_memory_scope"], report["mapped_view_files"],
+                                  report["host_memory_growth_mib"], [len(row["host_exempt_mappings"]) for row in samples]),
+                                 (self.SCOPE, TABLES, 0, [4] * len(samples)))
                 self.assertGreaterEqual(len(samples), 2)
                 self.assertEqual(report["host_exempt_rss_mib"], max(row["host_exempt_rss_mib"] for row in samples))
                 self.assertGreater(samples[-1]["host_exempt_rss_mib"], samples[0]["host_exempt_rss_mib"])
@@ -877,7 +948,7 @@ class MappedViewScope(unittest.TestCase):
         self.assertEqual((code, proc.smaps_reads), (1, 0))
         self.assertFalse({"host_memory_scope", "mapped_view_files", "host_exempt_mappings", "host_exempt_rss_mib",
                           "host_exempt_bound_mib"} & set(report))
-        self.assertFalse(any("host_judged_mib" in row for row in report["memory_samples"]))
+        self.assertFalse(any({"host_judged_mib", "host_exempt_mappings"} & set(row) for row in report["memory_samples"]))
 
     def test_an_unreadable_smaps_fails_the_soak_and_keeps_its_receipt(self):
         argv = ["--host-memory-scope", self.SCOPE, "--mapped-view-file", TABLES[0]]

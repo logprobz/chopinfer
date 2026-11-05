@@ -725,7 +725,7 @@ fn verify(request: u64, slot: u64, start: u64, drafts: u32) -> Vec<u8> {
 }
 
 #[track_caller]
-fn execute(instance: &mut BundleInstanceV1, host: &Host, batch: &[u8]) -> Sink {
+fn execute(instance: &mut BundleInstanceV1, host: &FakeHost, batch: &[u8]) -> Sink {
     let mut sink = Sink::default();
     instance.execute(batch, &mut sink).unwrap_or_else(|e| {
         panic!(

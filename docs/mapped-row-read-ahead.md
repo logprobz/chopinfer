@@ -137,9 +137,10 @@ stream; `stream`, the default, keeps the stream wait. The DeepSeek model
 option `dspark_mixed_prepared_engram` replaces the synchronous gather of the
 verify rows (`engram/sync/mixed_target`) with prepared gathers
 (`engram/prepared/dspark_mixed_target`) that begin after the prefill's last
-Engram join. It admits only single-request DMA prefills of 512 through 8192
-rows beside graphed verify phases of at most 64 rows; every other mixed step
-keeps the synchronous gather. Both are candidate switches with CPU evidence
+Engram join. It admits only text-only single-request DMA prefills of 512
+through 8192 rows beside graphed verify phases of at most 64 rows, on
+instances that serve images too; every other mixed step keeps the synchronous
+gather. Both are candidate switches with CPU evidence
 only; GPU exactness and step-time acceptance decide adoption.
 
 Cold-row experiments must keep async read-ahead enabled. The shared defaults

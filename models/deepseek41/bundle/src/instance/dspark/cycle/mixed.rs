@@ -15,16 +15,17 @@ use runtime_bundle_abi::{BundleAbiError, BundleStatusV1};
 
 impl Instance {
     /// Takes a mixed step's verify-row ids where `admits_mixed_engram`
-    /// admits the step, for its prefill to gather after its last Engram
-    /// join (`begin_mixed_dspark_engram`). False keeps the synchronous
-    /// gather.
+    /// admits the step (`media`: the step encodes media), for its prefill
+    /// to gather after its last Engram join (`begin_mixed_dspark_engram`).
+    /// False keeps the synchronous gather.
     pub(crate) fn defer_mixed_dspark_engram(
         &mut self,
         prefill: &PhaseInputs,
         verify: &PhaseInputs,
+        media: bool,
         hashed: &Hashed,
     ) -> Result<bool, String> {
-        if !self.admits_mixed_engram(prefill, verify)
+        if !self.admits_mixed_engram(prefill, verify, media)
             || verify.live_tokens() as usize != hashed.rows()
         {
             return Ok(false);

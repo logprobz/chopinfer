@@ -29,7 +29,7 @@ const SHA256: &str = "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a
 const GRID: [u32; 3] = [1, 7, 5];
 /// Its rows: 3 x 2 cells, a newline after each row of cells, and the
 /// start and end rows.
-const IMAGE_ROWS: u32 = 3 * (2 + 1) + 2;
+pub(super) const IMAGE_ROWS: u32 = 3 * (2 + 1) + 2;
 /// The stem of the encoder's embedding override, the layout's entry.
 const INJECT: &str = "chop_enc_layout_learned_delimiters";
 /// The arena page the image is encoded into.
@@ -37,7 +37,7 @@ const ARENA_PAGE: u64 = 2;
 
 /// The package's fake host, which also serves the encoder's image, its
 /// rank indexes and their image identities.
-struct MediaHost {
+pub(super) struct MediaHost {
     host: FakeHost,
     /// The handle slot of the opened encoder image.
     image: Cell<Option<u32>>,
@@ -52,7 +52,7 @@ impl std::ops::Deref for MediaHost {
 }
 
 impl MediaHost {
-    fn new(shape: Shape, kv: KvLayout) -> Rc<Backend<MediaHost>> {
+    pub(super) fn new(shape: Shape, kv: KvLayout) -> Rc<Backend<MediaHost>> {
         let host = FakeHost {
             device: FakeHost::device(shape, kv),
             logs: RefCell::new(Vec::new()),
@@ -244,6 +244,29 @@ impl FakePackage for MediaHost {
     }
 }
 
+/// The media section of an image span at `item_row` of item `item`.
+pub(super) fn image_section(item: u32, item_row: u32) -> BatchMediaSectionV3 {
+    let patches = u64::from(GRID[1] * GRID[2]);
+    let payload_bytes = patches * u64::from(PATCH_COLUMNS) * 4;
+    BatchMediaSectionV3 {
+        encodes: vec![BatchMediaEncodeV3 {
+            encoder: 0,
+            geometry: [GRID[0], GRID[1], GRID[2], 0],
+            output_rows: IMAGE_ROWS,
+            pages: vec![ARENA_PAGE],
+            payload_offset: 0,
+            payload_bytes,
+        }],
+        injects: vec![BatchMediaInjectV3 {
+            item_index: item,
+            item_row,
+            rows: IMAGE_ROWS,
+            arena_row: ARENA_PAGE * PAGE_ROWS,
+        }],
+        payload: (0..payload_bytes).map(|byte| (byte % 251) as u8).collect(),
+    }
+}
+
 /// A full instance serving images and `items` items.
 fn create(host: &Rc<Backend<MediaHost>>, items: u32) -> BundleInstanceV1 {
     let record = crate::config::tests::media_record(&host.shape, host.kv, items);
@@ -257,25 +280,7 @@ fn create(host: &Rc<Backend<MediaHost>>, items: u32) -> BundleInstanceV1 {
 /// a text row).
 fn image_prompt(request: u64, slot: u64) -> (Vec<u8>, Vec<u32>, Vec<i64>) {
     let image_token = FLASH.shape.tokens.image;
-    let patches = u64::from(GRID[1] * GRID[2]);
-    let payload_bytes = patches * u64::from(PATCH_COLUMNS) * 4;
-    let media = BatchMediaSectionV3 {
-        encodes: vec![BatchMediaEncodeV3 {
-            encoder: 0,
-            geometry: [GRID[0], GRID[1], GRID[2], 0],
-            output_rows: IMAGE_ROWS,
-            pages: vec![ARENA_PAGE],
-            payload_offset: 0,
-            payload_bytes,
-        }],
-        injects: vec![BatchMediaInjectV3 {
-            item_index: 0,
-            item_row: 1,
-            rows: IMAGE_ROWS,
-            arena_row: ARENA_PAGE * PAGE_ROWS,
-        }],
-        payload: (0..payload_bytes).map(|byte| (byte % 251) as u8).collect(),
-    };
+    let media = image_section(0, 1);
     let rows = IMAGE_ROWS + 2;
     let mut tokens = vec![5];
     tokens.extend(std::iter::repeat_n(image_token, IMAGE_ROWS as usize));

@@ -169,8 +169,12 @@ impl Program for Work<'_> {
             .step
             .as_ref()
             .ok_or("DSpark mixed target has no packed step")?;
+        let media = !BatchCodecV1::decode(self.request)
+            .map_err(|e| format!("DSpark mixed target batch: {e:?}"))?
+            .media()
+            .is_empty();
         self.instance
-            .defer_mixed_dspark_engram(&step.prefill, &step.decode, hashed)
+            .defer_mixed_dspark_engram(&step.prefill, &step.decode, media, hashed)
     }
 
     fn stage_prefill_engram(

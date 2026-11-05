@@ -52,7 +52,9 @@ impl MappedHost {
     /// the ids the bundle uploaded when it is enqueued, as the host's id
     /// copy does; ids a kernel wrote read as row 0. A gather of the wrong
     /// rows then lands other bytes than the synchronous gather.
-    pub(in crate::fake_host_tests) fn with_row_ids(host: Rc<Host>) -> Self {
+    pub(in crate::fake_host_tests) fn with_row_ids<H: MappedServices + 'static>(
+        host: Rc<H>,
+    ) -> Self {
         Self {
             row_ids: true,
             ..Self::new(host)

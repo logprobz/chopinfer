@@ -4,10 +4,15 @@
 //! joined its last Engram layer, and join each layer before its verify
 //! consumer, in captured and replayed verify graphs and in eager pieces.
 //! Steps outside the admitted range keep the synchronous gather, and a
-//! failed verify join settles the gathers before the step is refused.
+//! failed verify join settles the gathers before the step is refused. An
+//! instance that also serves images, as every served instance does, admits
+//! its text-only mixed steps.
 use super::*;
 use crate::fake_host_tests::ar_engram::order;
-use crate::fake_host_tests::prefill_engram::create_backend_with_options;
+use crate::fake_host_tests::media;
+use crate::fake_host_tests::prefill_engram::{
+    create_backend_with_options, create_media_backend_with_options,
+};
 use model_deepseek41_contract::execution_options::{
     DSPARK_GRAPH_HANDLES_PER_RANK, DSPARK_MIXED_PREPARED_ENGRAM,
 };
@@ -52,15 +57,30 @@ fn host(verify_rows: u32) -> Rc<Host> {
 /// prefills the first `rows` rows of its prompt in slot `slot` beside
 /// verify items of `(slot, committed tokens, rows)`.
 fn mixed(request: u64, slot: u64, rows: u64, items: &[(u64, u64, u32)]) -> Vec<u8> {
-    let mut requests = vec![BatchItemV1::new(
-        request,
-        false,
-        rows as u32,
-        true,
-        (0..rows)
-            .map(|position| ((position * 7 + request) % 1000) as u32)
-            .collect(),
-    )];
+    mixed_with(request, slot, rows, items, false)
+}
+
+/// [`mixed`], whose prefill encodes an image span ending one row before
+/// its last when `image`. An image prompt has no grid contract, so the
+/// envelope names no boundary for it.
+fn mixed_with(
+    request: u64,
+    slot: u64,
+    rows: u64,
+    items: &[(u64, u64, u32)],
+    image: bool,
+) -> Vec<u8> {
+    let span = rows - 1 - u64::from(media::IMAGE_ROWS)..rows - 1;
+    let tokens = (0..rows)
+        .map(|position| {
+            if image && span.contains(&position) {
+                FLASH.shape.tokens.image
+            } else {
+                ((position * 7 + request) % 1000) as u32
+            }
+        })
+        .collect();
+    let mut requests = vec![BatchItemV1::new(request, false, rows as u32, true, tokens)];
     let mut appends = vec![BatchAppendV1::new(0, rows, rows, pages(slot, rows), None)];
     let mut slots = vec![slot];
     for &(slot, start, rows) in items {
@@ -75,20 +95,19 @@ fn mixed(request: u64, slot: u64, rows: u64, items: &[(u64, u64, u32)]) -> Vec<u
         ));
         slots.push(slot);
     }
-    let original = BatchRequestV1::new(BatchWireVersionV1::V3, requests, appends)
-        .with_state_slots(slots)
-        .encode()
-        .unwrap();
-    encode(
-        &original,
-        &[Boundary {
-            request_id: request,
-            prompt_tokens: rows,
-            chunk_end: rows,
-            chunk_tokens: 8192,
-        }],
-    )
-    .unwrap()
+    let mut batch =
+        BatchRequestV1::new(BatchWireVersionV1::V3, requests, appends).with_state_slots(slots);
+    if image {
+        batch = batch.with_media(media::image_section(0, span.start as u32));
+    }
+    let original = batch.encode().unwrap();
+    let boundaries = [Boundary {
+        request_id: request,
+        prompt_tokens: rows,
+        chunk_end: rows,
+        chunk_tokens: 8192,
+    }];
+    encode(&original, if image { &[] } else { &boundaries }).unwrap()
 }
 
 /// What one schedule left: its host and each mixed step's journal.
@@ -422,3 +441,67 @@ fn a_failed_verify_join_settles_the_mixed_gathers() {
 /// The prepared-gather joins of eight three-token prompts: two layers on
 /// four ranks each.
 const PROMPT_WAITS: usize = 64;
+
+/// Every served instance also serves images. Such an instance admits a
+/// text-only mixed step, whose prefill carries no media, and keeps the
+/// synchronous gather for a mixed step whose prefill encodes an image.
+#[test]
+fn an_instance_serving_images_admits_text_only_mixed_steps() {
+    let host = media::MediaHost::new(Shape::new(&FLASH, Ranks::TP4).unwrap(), KV_LAYOUTS[0]);
+    host.speculation.set(Some((5, 32)));
+    host.kv_pages.set(24 * SLOT_PAGES);
+    let layers = u64::from(FLASH.engram_layers());
+    let launches = |entry: &str| -> u64 {
+        host.logs
+            .borrow()
+            .iter()
+            .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+            .filter(|value| value["schema"] == "chopinfer.route.v1")
+            .filter_map(|value| value["entries"][entry]["launches"].as_u64())
+            .sum()
+    };
+    bundle_runtime::routes::with_logging(|| {
+        let mut instance = create_media_backend_with_options(
+            &host,
+            MappedHost::with_row_ids(Rc::clone(&host)),
+            &[(DSPARK_MIXED_PREPARED_ENGRAM, true.into())],
+        )
+        .unwrap_or_else(|e| panic!("{e:?}: {:?}", host.logs.borrow()));
+        for slot in 0..8 {
+            execute(&mut instance, &host, &prompt(verifier(slot), slot));
+            instance.commit().unwrap();
+        }
+        // The text-only step takes one prepared gather per layer; the image
+        // step's verify rows take the synchronous gather per rank and plane.
+        let expected = [(layers, 0), (layers, 2 * 4 * layers)];
+        for (index, (image, (prepared, sync))) in
+            [false, true].into_iter().zip(expected).enumerate()
+        {
+            let end = 3 + 4 * index as u64;
+            let items: Vec<_> = (0..8).map(|slot| (slot, end, 4)).collect();
+            let request = 7 + index as u64;
+            let mut sink = Sink::default();
+            instance
+                .execute_prefill(
+                    &mixed_with(request, 8 + index as u64, 512, &items, image),
+                    &mut sink,
+                )
+                .unwrap_or_else(|e| panic!("image {image}: {e:?}: {:?}", host.logs.borrow()));
+            assert_eq!(sink.draft_tokens().len(), 8);
+            let kept: Vec<_> = (0..8).map(|slot| kept(verifier(slot), 4)).collect();
+            instance.commit_accepted(&kept).unwrap();
+            instance.retire_request(request).unwrap();
+            assert_eq!(
+                launches("engram/prepared/dspark_mixed_target"),
+                prepared,
+                "image {image}"
+            );
+            assert_eq!(launches("engram/sync/mixed_target"), sync, "image {image}");
+        }
+        for slot in 0..8 {
+            instance.retire_request(verifier(slot)).unwrap();
+        }
+        instance.destroy().unwrap();
+    });
+    assert_eq!(host.acquired.get(), host.released.get());
+}

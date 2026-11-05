@@ -42,24 +42,49 @@ pub(super) fn create_backend_with_options(
     create_backend_with_api(host, skip, backend, overrides, api())
 }
 
+/// An upper-skip instance on the served APIs (device results among them)
+/// that also serves images, as every served instance does: `host` is the
+/// media host the mapped-row `backend` wraps.
+pub(super) fn create_media_backend_with_options(
+    host: &FakeHost,
+    backend: dspark::host::MappedHost,
+    overrides: &[(&str, serde_json::Value)],
+) -> Result<BundleInstanceV1, BundleAbiError> {
+    let api = api()
+        .with_device_results_api(crate::api::BUNDLE_DEEPSEEK41_DEVICE_RESULTS_API_V1)
+        .unwrap();
+    create_record_backend(host, true, true, backend, overrides, api)
+}
+
 fn create_backend_with_api(
-    host: &Rc<Host>,
+    host: &FakeHost,
     skip: bool,
     backend: dspark::host::MappedHost,
     overrides: &[(&str, serde_json::Value)],
     api: BundleApiV1,
 ) -> Result<BundleInstanceV1, BundleAbiError> {
+    create_record_backend(host, skip, false, backend, overrides, api)
+}
+
+fn create_record_backend(
+    host: &FakeHost,
+    skip: bool,
+    media: bool,
+    backend: dspark::host::MappedHost,
+    overrides: &[(&str, serde_json::Value)],
+    api: BundleApiV1,
+) -> Result<BundleInstanceV1, BundleAbiError> {
     host.drafter.set(true);
-    let mut record = crate::config::tests::record(
-        &host.shape,
-        host.kv,
-        if host.speculation.get().is_some() {
-            16
-        } else {
-            1
-        },
-        false,
-    );
+    let items = if host.speculation.get().is_some() {
+        16
+    } else {
+        1
+    };
+    let mut record = if media {
+        crate::config::tests::media_record(&host.shape, host.kv, items)
+    } else {
+        crate::config::tests::record(&host.shape, host.kv, items, false)
+    };
     let tag = record
         .windows(MODEL_OPTIONS_TAG_V1.len())
         .position(|x| x == MODEL_OPTIONS_TAG_V1)

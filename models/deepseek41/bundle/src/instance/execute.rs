@@ -828,12 +828,19 @@ impl Instance {
     /// (`dspark_mixed_prepared_engram`). Only where the candidate's
     /// evidence reaches: one text prefill of 512 to 8192 rows with
     /// prepared gathers on an instance whose upper-skip prefills take DMA,
-    /// beside a graphed verify phase of at most 64 rows. Every other mixed
+    /// beside a graphed verify phase of at most 64 rows. `media` is whether
+    /// the step encodes media: an instance serving images admits its
+    /// text-only steps, whose prefill runs carry no media. Every other mixed
     /// step keeps the synchronous gather (`SyncReason::MixedTarget`).
-    pub(super) fn admits_mixed_engram(&self, prefill: &PhaseInputs, verify: &PhaseInputs) -> bool {
+    pub(super) fn admits_mixed_engram(
+        &self,
+        prefill: &PhaseInputs,
+        verify: &PhaseInputs,
+        media: bool,
+    ) -> bool {
         self.config.execution.dspark_mixed_prepared_engram
             && self.skip_prefill
-            && self.media.is_none()
+            && !media
             && !self.taps.text()
             && self.prefill_engram.is_some()
             && skip::Plan::dma_admits(self, prefill.request_ids.len())

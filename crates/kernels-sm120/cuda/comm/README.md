@@ -16,17 +16,23 @@ every pairing, while a GPU that writes to (or pulls from) two or more peers
 at once collapses to about 2 GB/s in total. Copy-engine copies give no
 bandwidth advantage and cannot fuse the reduction, so no path uses them.
 
-The collapse is not an IOMMU or ACS effect. On 2026-10-31 the same host ran
-with the IOMMU in passthrough and ACS redirection disabled on the four GPU
+The collapse is not an IOMMU or ACS effect. On 2026-11-05 the same host ran
+with the IOMMU in passthrough and ACS redirection disabled on all four GPU
 root ports ([host configuration](../../../../docs/contributing.md#multi-gpu-host-configuration)),
-at 250 W per GPU. `peer_push_fanout` sent 46.5 GB/s at 64 KiB and 47.6 GB/s
-at 256 KiB to one destination and 2.3 GB/s in total to three at once; a push
-to one peer during a pull from another took 292 us for 256 KiB, against
-5.5 us for the push alone. nvbandwidth agreed: per pair, 42.6 GB/s SM
+at 300 W per GPU. `peer_push_fanout` sent 46.5 GB/s at 64 KiB and 47.4 GB/s
+at 256 KiB to one destination and 2.1 GB/s in total to three at once; a push
+to one peer during a pull from another took 325 us for 256 KiB, against
+5.6 us for the push alone. nvbandwidth agreed: per pair, 42.6 GB/s SM
 writes, 53.2 GB/s SM reads and 54 GB/s copy-engine writes, with about
-1.0 us SM read latency; one GPU writing to, or reading from, all three
-peers at once got 2.2 to 2.4 GB/s per peer. Several GPUs writing to one peer
-kept 40 to 43 GB/s each.
+1.0 us SM latency. One GPU writing to, or reading from, all three peers at
+once got 1.9 to 2.5 GB/s in total, and three GPUs reading from one got 1.3
+to 1.6 GB/s in total, while three GPUs writing to one peer kept 41 to
+43 GB/s in total. The 2026-10-31 run, at 250 W with one of the four ports
+still redirecting, measured the same pattern (2.3 GB/s to three peers,
+292 us for the push during a pull). NCCL's default topology uses no
+peer-to-peer path between these root ports and reached 31 GB/s of bus
+bandwidth for a 256 MiB BF16 all-reduce, against 42 GB/s with
+`NCCL_P2P_LEVEL=SYS`.
 
 ## Fused epilogues
 
@@ -350,9 +356,11 @@ every peer's output. Every element is bitwise the pair's sum.
 A grid of senders only (no workers) has each sending CTA sum its own
 blocks after the scatter and gather them without the reduced-flag handoff;
 a single sender skips the counter barrier. Decode-sized calls take these
-geometries. The served F32 one-shot (`chop_comm_allreduce_oneshot_f32_v1`)
-writes every peer at once and measured 22 us at one row and 373 us at 16
-rows on four ranks (about 2 GB/s).
+geometries. The F32 one-shot `chop_comm_allreduce_oneshot_f32_v1`, which no
+served route selects, gives each 4,096-element tile a CTA that writes the
+destinations in turn without waiting for the other CTAs, so a call of two
+or more tiles writes several peers at once. It measured 22 us at one row
+and 373 us at 16 rows on four ranks (about 2 GB/s).
 
 All four take `(input, output, inboxes[ranks], outputs[ranks],
 flags[ranks], epoch, elements, row_elements, live_rows, rank, ranks,
@@ -373,10 +381,10 @@ whole grid must be resident on every rank.
 
 Kernel-lab `tests/comm_phased_f32.rs` (lock family `comm_phased_f32`)
 checks all four entries against the host, the pair and (up to 32 rows) the
-served one-shot at 1 to 8,192 rows, the poisoned eager, relaunch, graph
+F32 one-shot at 1 to 8,192 rows, the poisoned eager, relaunch, graph
 and PDL-producer phases, four mutants (no scatter wait, no gather wait,
-reversed rank order, PDL wait after the first reads) and times the served
-collectives against every entry per sender and worker count.
+reversed rank order, PDL wait after the first reads) and times the pair
+and the F32 one-shot against every entry per sender and worker count.
 
 ## BF16 partials from F32 inputs
 

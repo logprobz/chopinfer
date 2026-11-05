@@ -612,17 +612,23 @@ GRUB_CMDLINE_LINUX_DEFAULT="iommu=pt pci=disable_acs_redir=<port>\;<port>\;<port
 ```
 
 Each `<port>` is the PCI address of a GPU's parent root port, for example
-`readlink -f /sys/bus/pci/devices/<gpu>/..`. After rebooting, check that
-`/proc/cmdline` carries both parameters, that the kernel log reports
-`Default domain type: Passthrough` and `Configured ACS to 0x0000` for each
-port, and that every GPU's IOMMU group reports `identity` in
-`/sys/kernel/iommu_groups/<group>/type`. The `disable-acs` script's
-`--verify` reads the same state; its `--apply` refuses on Ubuntu, whose
-recovery entries carry only `GRUB_CMDLINE_LINUX`.
+`readlink -f /sys/bus/pci/devices/<gpu>/..`. An address that names no
+device configures nothing, so a typo leaves that GPU's port redirecting.
+After rebooting, check that `/proc/cmdline` carries both parameters, that
+the kernel log reports `Default domain type: Passthrough` and one
+`Configured ACS to 0x0000` line for every GPU's port, and that every GPU's
+IOMMU group reports `identity` in `/sys/kernel/iommu_groups/<group>/type`.
+The `disable-acs` script's `--verify` reads the same state; its `--apply`
+refuses on Ubuntu, whose recovery entries carry only `GRUB_CMDLINE_LINUX`.
+Also check that each GPU's IOMMU group lists its root port among its
+devices: on the reference host, a GPU whose group leaves out its root port
+is one whose port was missed.
 
-On the reference host (GPUs behind separate root ports of one CPU), these
-settings did not change measured peer traffic on 2026-10-31: one destination
-still runs at 42 to 54 GB/s and a GPU driving two or more peers at once
-still collapses, as [SM120 PCIe communication](../crates/kernels-sm120/cuda/comm/README.md#measured-pcie-behaviour)
+On the reference host (GPUs behind separate root ports of one CPU), the
+2026-10-31 configuration cleared only three of the four ports, because one
+address in its list named no device. With all four cleared on 2026-11-05,
+at 300 W per GPU, peer traffic was unchanged: one destination runs at 42 to
+54 GB/s, and a GPU writing to or reading from the other three at once gets
+about 2 GB/s in total, as [SM120 PCIe communication](../crates/kernels-sm120/cuda/comm/README.md#measured-pcie-behaviour)
 records. Record the host's IOMMU mode and kernel command line with timing
 evidence, and compare timings only between runs on the same configuration.

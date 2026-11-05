@@ -111,7 +111,7 @@ pub fn declarations() -> [ModelOptionV1; 14] {
         ),
         (
             INDEXER_PREFILL_LONG,
-            OptionDefinitionV1::Boolean { default: false },
+            OptionDefinitionV1::Boolean { default: true },
         ),
         (
             PHASED_DECODE_REDUCE,
@@ -315,7 +315,7 @@ mod tests {
             dspark_confidence_staged: false,
             dspark_hc_fusion: false,
             dspark_markov_staged: false,
-            indexer_prefill_long: false,
+            indexer_prefill_long: true,
         };
         assert_eq!(Options::read(&defaults).unwrap(), expected);
         assert_eq!(Options::read(&BTreeMap::new()).unwrap(), expected);
@@ -339,7 +339,7 @@ mod tests {
             (DSPARK_CONFIDENCE_STAGED.into(), "true".into()),
             (DSPARK_HC_FUSION.into(), "true".into()),
             (DSPARK_MARKOV_STAGED.into(), "true".into()),
-            (INDEXER_PREFILL_LONG.into(), "true".into()),
+            (INDEXER_PREFILL_LONG.into(), "false".into()),
         ]);
         let resolved = declaration.resolve(&overrides).unwrap();
         assert_eq!(
@@ -358,7 +358,7 @@ mod tests {
                 dspark_confidence_staged: true,
                 dspark_hc_fusion: true,
                 dspark_markov_staged: true,
-                indexer_prefill_long: true,
+                indexer_prefill_long: false,
             }
         );
         assert!(!declaration.is_qualified(&resolved));

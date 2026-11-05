@@ -282,7 +282,8 @@ mod tests {
         ));
         // The candidate option, the tiled-route opt-out and the native
         // scorer each disable it; so do other top-k and candidate pools.
-        assert!(!long(&base, &[40000]));
+        assert!(long(&base, &[40000]));
+        assert!(!long(&base.with_indexer_prefill_long(false), &[40000]));
         for edit in [
             |s: &mut Shape| s.runtime.indexer_prefill_tile = false,
             |s: &mut Shape| s.runtime.indexer_mma = false,

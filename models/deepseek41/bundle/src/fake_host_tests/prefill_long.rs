@@ -1,7 +1,8 @@
-//! The `indexer_prefill_long` candidate on eager prefill: full-source batches
-//! past the short band, up to a 256K extent, take the tile4 scorer at the
-//! table's CTA count and the table's selector. Every other launch, and every
-//! launch outside the band or without the option, is unchanged.
+//! The `indexer_prefill_long` option (on by default) on eager prefill:
+//! full-source batches past the short band, up to a 256K extent, take the
+//! tile4 scorer at the table's CTA count and the early-stop selector. Every
+//! other launch, and every launch outside the band or with the option off,
+//! is unchanged.
 use super::*;
 use model_deepseek41_contract::execution_options::INDEXER_PREFILL_LONG;
 
@@ -132,19 +133,19 @@ fn expected(off: &[String]) -> (Vec<String>, usize) {
     (lines, taken)
 }
 
-/// With the option, chunks whose last position reaches 32768 and whose
+/// By default, chunks whose last position reaches 32768 and whose
 /// page-rounded extent is at most 262144 change exactly the full-source
-/// batches the table admits, including a chunk that straddles the short
-/// band's end and the 128K extent's batches, which select with the cached
-/// selector today. Earlier and later chunks keep today's launches, as does
-/// an explicit false.
+/// batches the table admits from their launches with the option off,
+/// including a chunk that straddles the short band's end and the 128K
+/// extent's batches, which then select with the cached selector. Earlier
+/// and later chunks keep those launches; an explicit true is the default.
 #[test]
 fn long_band_retargets_only_admitted_full_source_batches() {
     let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
     let end = 262144 + 8192;
-    let off = prefill(shape, KV_LAYOUTS[0], None, end);
-    assert_eq!(prefill(shape, KV_LAYOUTS[0], Some(false), end), off);
-    let on = prefill(shape, KV_LAYOUTS[0], Some(true), end);
+    let off = prefill(shape, KV_LAYOUTS[0], Some(false), end);
+    let on = prefill(shape, KV_LAYOUTS[0], None, end);
+    assert_eq!(prefill(shape, KV_LAYOUTS[0], Some(true), end), on);
     assert_eq!(
         on.keys().collect::<Vec<_>>(),
         off.keys().collect::<Vec<_>>()
@@ -177,18 +178,18 @@ fn long_band_retargets_only_admitted_full_source_batches() {
     assert_eq!(previous, end);
 }
 
-/// The tiled-route opt-out and BF16 keys keep today's launches with the
-/// option.
+/// The tiled-route opt-out and BF16 keys launch the same with the option on
+/// (the default) and off.
 #[test]
-fn long_band_keeps_opted_out_prefill_on_todays_launches() {
+fn long_band_leaves_opted_out_prefill_unchanged() {
     let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
     let mut untiled = shape;
     untiled.runtime.indexer_prefill_tile = false;
     for (shape, kv) in [(untiled, KV_LAYOUTS[0]), (shape, KV_LAYOUTS[1])] {
         let end = 98304 + 8192;
         assert_eq!(
-            prefill(shape, kv, Some(true), end),
             prefill(shape, kv, None, end),
+            prefill(shape, kv, Some(false), end),
             "{:?}",
             kv.storage
         );
@@ -197,7 +198,7 @@ fn long_band_keeps_opted_out_prefill_on_todays_launches() {
 
 /// A packed phase whose largest position is long takes the band for all of
 /// its batches, including those of a new prompt's short rows; a later
-/// 16-row chunk, below the table's rows, keeps today's launches.
+/// 16-row chunk, below the table's rows, launches as with the option off.
 #[test]
 fn long_band_takes_a_packed_phase_whole_and_leaves_small_batches() {
     let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
@@ -244,7 +245,7 @@ fn long_band_takes_a_packed_phase_whole_and_leaves_small_batches() {
         assert_eq!(host.acquired.get(), host.released.get());
         steps
     };
-    let (off, on) = (run(None), run(Some(true)));
+    let (off, on) = (run(Some(false)), run(None));
     let full = |lines: &[String], symbol: &str| {
         lines
             .iter()

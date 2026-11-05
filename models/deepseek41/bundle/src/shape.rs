@@ -76,7 +76,7 @@ impl Shape {
             dspark_confidence_staged: false,
             dspark_hc_fusion: false,
             dspark_markov_staged: false,
-            indexer_prefill_long: false,
+            indexer_prefill_long: true,
         })
     }
 

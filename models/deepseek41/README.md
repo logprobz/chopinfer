@@ -1098,22 +1098,23 @@ read-only checkpoint mappings, against the 512 MiB limit
 (`HOST_MEMORY_SCOPE` `rss_less_mapped_views` in `qual.json`, with
 `MAPPED_VIEW_FILES` naming `model-00047-of-00048.safetensors` and
 `model-00048-of-00048.safetensors`, the shards that hold the tables of
-Engram layers 1 and 14). Only those files' read-only mappings that the
-server holds at the first sample, and in every sample since, are exempt;
-every other mapping counts, including the CUDA driver's pinned host
-buffers mapped through the GPU device nodes. In the 1200-second C32 GPU
-soaks of 2026-11-05, VmRSS grew 5,555 MiB on the DSpark server (RssFile
-+5,425 MiB, all in the two Engram checkpoint tables of 188.8 GiB of mapped
-views; RssAnon +130 MiB; RssShmem 0) and 113 MiB, all RssAnon, on the AR
-server. Per-mapping smaps snapshots of those soaks at 0, 30, 60 and 300
-seconds and at their end give sampled diagnostic results under this rule,
-not qualification: their gaps exceed the 60 seconds a soak's samples may
-lie apart. In them the judged host memory grew at most 98.3 MiB on the
-DSpark server (the exempt Rss grew 5,425 MiB, within its 193,365 MiB
-bound) and 108.5 MiB on the AR server; the GPU device nodes held 226 MiB
-throughout (218 MiB through `/dev/nvidiactl`, 8 MiB through
-`/dev/nvidia-uvm`), and the other file-backed Rss stayed between 260 and
-267 MiB. The qualifying soak rows come from a fresh soak under this rule.
+Engram layers 1 and 14). Only those files' shared, read-only, clean
+mappings that the server holds at the first sample, and in every sample
+since, are exempt; every other mapping counts, including the CUDA
+driver's pinned host buffers mapped through the GPU device nodes. In the
+1200-second C32 GPU soaks of 2026-11-05, VmRSS grew 5,555 MiB on the
+DSpark server (RssFile +5,425 MiB, all in the two Engram checkpoint
+tables of 188.8 GiB of mapped views; RssAnon +130 MiB; RssShmem 0) and
+113 MiB, all RssAnon, on the AR server. Per-mapping smaps snapshots of
+those soaks at 0, 30, 60 and 300 seconds and at their end give sampled
+diagnostic results under this rule, not qualification: their gaps exceed
+the 60 seconds a soak's samples may lie apart. In them the judged host
+memory grew at most 98.3 MiB on the DSpark server (the exempt Rss grew
+5,425 MiB, within its 193,365 MiB bound) and 108.5 MiB on the AR server;
+the GPU device nodes held 226 MiB throughout (218 MiB through
+`/dev/nvidiactl`, 8 MiB through `/dev/nvidia-uvm`), and the other
+file-backed Rss stayed between 260 and 267 MiB. The qualifying soak rows
+come from a fresh soak under this rule.
 
 The [numerical gates](../../docs/numerics.md#serving-qualification-gates)
 and [serving profiles](../../docs/serving-profiles.md) describe the shared

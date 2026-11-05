@@ -37,24 +37,35 @@ ones: a receipt without `warmup_seconds`, `cache_allowance_mib`,
 warm-up, no allowance, `rss`, no files), and one judged under others is
 insufficient. The `rss` scope judges VmRSS (`host_rss_mib`). The
 `rss_less_mapped_views` scope judges VmRSS less the exempt Rss
-(`host_exempt_rss_mib`): the Rss of the read-only mappings of the declared
-`MAPPED_VIEW_FILES` that the serving tree held at the first sample and in
-every sample since, attributed per mapping from `/proc/PID/smaps`. Each
-sample lists those mappings (`host_exempt_mappings`: PID, process start
-time, address range, device, inode, offset, permissions, and Size and Rss
-in kB), and the receipt names each declared file's path, device and inode
-in the serving process's namespace (`mapped_view_file_identities`). The
-kind recomputes the judged series from each sample's VmRSS and exempt Rss.
-A receipt is insufficient when it lacks the file identities; when a sample
-lacks its list or a finite non-negative VmRSS, exempt Rss, bound
-(`host_exempt_bound_mib`) or judged value (`host_judged_mib`); when a
-listed mapping is writable, duplicated, of no declared file, of a Size
-other than its address range or with Rss beyond its Size, or was not
-listed by the first sample and every sample since; or when the exempt Rss
-and bound are not the listed mappings' Rss and Size summed, the exempt Rss
-exceeds VmRSS, or the judged value is not VmRSS less the exempt Rss. Under
-that scope the metrics add the scope, the files, and the largest exempt Rss
-and bound sampled.
+(`host_exempt_rss_mib`): the Rss of the shared read-only mappings of the
+declared `MAPPED_VIEW_FILES` that the serving tree held at the first sample
+and in every sample since, with the first sample's permissions and no
+Anonymous, Private_Dirty, Shared_Dirty or Swap pages, attributed per mapping
+from `/proc/PID/smaps`. Each sample lists those mappings
+(`host_exempt_mappings`: PID, process start time, address range as
+`[start, end]`, device as `[major, minor]`, inode, offset, permissions, and
+Size, Rss, Anonymous, Private_Dirty, Shared_Dirty and Swap in kB, every
+number an integer), and the receipt names each declared file's path, device
+(`[major, minor]`) and inode in the serving process's namespace
+(`mapped_view_file_identities`). The kind recomputes the judged series from
+each sample's VmRSS and exempt Rss. A receipt is insufficient when it lacks
+the file identities; when a sample lacks its list or a finite non-negative
+VmRSS, exempt Rss, bound (`host_exempt_bound_mib`) or judged value
+(`host_judged_mib`); when a listed mapping is private or writable, holds
+Anonymous, Private_Dirty, Shared_Dirty or Swap pages, gives a number in
+another form than an integer, is of no declared file, of a Size other than
+its address range or with Rss beyond its Size, or was not listed, with the
+same permissions, by the first sample and every sample since; when two
+listed mappings share an identity, or an address within one process, or
+one process has two start times; or when the exempt Rss and bound are not
+the listed mappings' Rss and Size summed, the exempt Rss exceeds VmRSS, or
+the judged value is not VmRSS less the exempt Rss. One case is beyond what
+the samples show: a mapping unmapped and replaced within one 30-second
+sampling interval by one with the identical identity that is also shared,
+read-only with the same permissions, and clean. That is the same file's
+clean shared page cache at the same address, so it cannot hide anonymous
+or dirty memory. Under that scope the metrics add the scope, the files,
+and the largest exempt Rss and bound sampled.
 
 ## Common rules
 

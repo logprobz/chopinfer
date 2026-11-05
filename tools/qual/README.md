@@ -99,32 +99,39 @@ duration). Undeclared, the rule is the plain one. Host memory is VmRSS
 unless the constants declare `HOST_MEMORY_SCOPE` `rss_less_mapped_views`
 and `MAPPED_VIEW_FILES` (file names relative to the served checkpoint
 directory), for a server that maps large read-only checkpoint files: the
-limit then applies to VmRSS less the Rss of those files' read-only mappings
-that the serving tree holds at the first sample. The soak resolves each
-declared file as the serve process sees it: the checkpoint directory is its
-`--model` (or `--checkpoint` beside `--bundle`) against its working
-directory, every symbolic link is resolved within its `/proc/PID/root`, and
-the file there must be a regular one. At each sample the soak reads every
-tree process's `/proc/PID/stat` and `/proc/PID/smaps` and attributes Rss per
-mapping. A mapping is exempt when its smaps device and inode are a declared
-file's, it is read-only, its path is not marked deleted, and its identity
-(PID, process start time, address range, device, inode and offset) was
-present at the first sample and in every sample since; one a sample lacks
-or holds writable is retired for the rest of the soak. A later mapping,
-even with the same identity, a writable one, and every other mapping count,
+limit then applies to VmRSS less the Rss of those files' shared, read-only,
+clean mappings that the serving tree holds at the first sample. The soak
+resolves each declared file as the serve process sees it: the checkpoint
+directory is its `--model` (or `--checkpoint` beside `--bundle`) against its
+working directory, every symbolic link is resolved within its
+`/proc/PID/root`, and the file there must be a regular one. At each sample
+the soak reads every tree process's `/proc/PID/stat` and `/proc/PID/smaps`
+and attributes Rss per mapping. A mapping is exempt when its smaps device
+and inode are a declared file's, it is shared and read-only, holds no
+Anonymous, Private_Dirty, Shared_Dirty or Swap pages and no more Rss than
+its Size, its path is not marked deleted, and its identity (PID, process
+start time, address range, device, inode and offset, parsed as integers) was
+so, with the same permissions, at the first sample and in every sample
+since; one a sample lacks or holds otherwise is retired for the rest of the
+soak. A mapping first seen later, a retired one even when its identity
+returns, a private, writable or dirty one, and every other mapping count,
 including the driver's pinned host buffers mapped through the GPU device
-nodes. The samples are 30 seconds apart, so a mapping replaced by an
-identical one between two samples goes unseen. Each sample records the
-judged host memory, the exempt Rss, its bound (the exempt mappings' Size)
-and the exempt mappings themselves; a sample whose smaps could not be read
-lacks them, which fails the soak and is insufficient evidence on rescore,
-as is a receipt judged under another scope or other files, or with
-incomplete or inconsistent mapping evidence. The release preview passes the
-declared warm-up, allowance, scope and files to its AR soak stage. A
-shorter saved soak is diagnostic only. A
-capability the server does not serve is `not_applicable`, never a silently
-skipped check. Capability coverage is a declaration check; the gate run must
-still prove every predicate and input.
+nodes. A process whose smaps holds an empty or overlapping address range
+leaves its sample without evidence. The samples are 30 seconds apart, so one
+case goes unseen: a mapping unmapped and replaced within one interval by one
+with the identical identity that is also shared, read-only with the same
+permissions, and clean. That is the same file's clean shared page cache at
+the same address, so it cannot hide anonymous or dirty memory. Each sample
+records the judged host memory, the exempt Rss, its bound (the exempt
+mappings' Size) and the exempt mappings themselves; a sample whose smaps
+could not be read lacks them, which fails the soak and is insufficient
+evidence on rescore, as is a receipt judged under another scope or other
+files, or with incomplete or inconsistent mapping evidence. The release
+preview passes the declared warm-up, allowance, scope and files to its AR
+soak stage. A shorter saved soak is diagnostic only. A capability the server
+does not serve is `not_applicable`, never a silently skipped check.
+Capability coverage is a declaration check; the gate run must still prove
+every predicate and input.
 
 **Producing references.** Use the
 [GPU reference runner](../refrun/README.md#prepare-and-run):

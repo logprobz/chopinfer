@@ -28,6 +28,13 @@ class DeepseekInventory(ModelRequirements):
         self.assertEqual(self.declared['bundle']['cdylib'], ['bundle_deepseek41'])
         self.assertEqual(self.model.lab, 'models/deepseek41/lab/Cargo.toml')
 
+    def test_contributor_fixtures_and_cleared_environment(self):
+        self.assertEqual(self.model.contributor.roots, ('model-deepseek41',))
+        self.assertEqual(self.model.contributor.fixtures, tuple(
+            f'models/deepseek41/geometries/{name}' for name in ('flash.json', 'supported.json')))
+        keys = {'CHOPINFER_DEEPSEEK_CHECKPOINT', 'CHOPINFER_DEEPSEEK_TOKENIZER_DIR'}
+        self.assertEqual(self.cleared(keys), keys)
+
     def test_the_checkpoint_pin_names_the_official_revision(self):
         pin = self.qual()['qualification']['checkpoint']
         self.assertEqual(pin['lock'], 'models/deepseek41/checkpoint-files.json')

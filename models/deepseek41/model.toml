@@ -25,6 +25,53 @@ package = "model-deepseek41-contract"
 [release]
 enabled = false
 
+# Weightless fixtures for `ci/quick.sh --contributor deepseek41`: the compiled
+# geometries' config admission, the checkpoint snapshot refusals over sparse
+# synthetic headers, and the package draft of each topology.
+[contributor]
+roots = ["model-deepseek41"]
+fixtures = [
+  "models/deepseek41/geometries/flash.json",
+  "models/deepseek41/geometries/supported.json",
+]
+
+[[contributor.tests]]
+name = "compile DeepSeek fixtures"
+phase = "compile"
+package = "model-deepseek41"
+lib = true
+suites = ["package_helper", "checkpoint_snapshot"]
+compile = true
+
+[[contributor.tests]]
+phase = "config"
+package = "model-deepseek41"
+suites = ["package_helper"]
+cases = [
+  { name = "routing by config alone", case = "the_probe_routes_by_config_alone" },
+  { name = "profile by geometry and rank count", case = "the_profile_follows_the_geometry_and_rank_count" },
+  { name = "DSpark profiles draft full blocks", case = "dspark_profiles_keep_balanced_full_block_drafting" },
+]
+
+[[contributor.tests]]
+phase = "mapping"
+package = "model-deepseek41"
+suites = ["checkpoint_snapshot"]
+cases = [
+  { name = "header outside the weight map refused", case = "snapshot_refuses_a_header_not_owned_by_the_weight_map" },
+  { name = "standalone planning reads only indexed inputs", case = "standalone_planning_reads_only_the_indexed_checkpoint_inputs" },
+]
+
+[[contributor.tests]]
+phase = "package_including_verify"
+package = "model-deepseek41"
+suites = ["package_helper"]
+cases = [
+  { name = "manifest declares each topology's resources", case = "the_manifest_declares_each_topology_s_resources" },
+  { name = "request state in host slots", case = "each_topology_keeps_its_request_state_in_host_slots" },
+  { name = "full-block drafting and bounded verify rows", case = "native_packages_advertise_full_block_drafting_and_bounded_verify_rows" },
+]
+
 # tests/model-geometry-recipe.sh: one `--ci` leg per fixture under
 # fixtures/deepseek41/geometries/. The bundle builds and serves the added
 # geometry, and the contract's kernel suites prepare its entries.

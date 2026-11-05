@@ -37,7 +37,7 @@ bash ci/quick.sh --contributor qwen38 --doctor
 bash ci/quick.sh --contributor qwen38
 ```
 
-Use `sdk`, `mimo26` or `glm5next` for those fixtures. Model contributor modes
+Use `sdk`, `mimo26`, `glm5next` or `deepseek41` for those fixtures. Model contributor modes
 are declared in `model.toml`; `--list` shows their commands. They exercise
 config admission, tensor mapping, frontend and weightless packaging with
 bounded inputs. They do not qualify real weights or device execution.

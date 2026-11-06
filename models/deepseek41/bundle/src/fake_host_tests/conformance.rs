@@ -18,6 +18,7 @@ use runtime_bundle_sdk::{BatchAppendV1, BatchItemV1, BatchRequestV1, BatchWireVe
 mod allocated;
 mod anchored;
 mod drafter;
+mod prefill_norm_rows;
 mod templated;
 mod wide;
 

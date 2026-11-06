@@ -710,6 +710,88 @@ fn prefill_engram_keeps_media_reason() {
     });
 }
 
+/// With `dspark_early_prefill_engram` on an instance serving images, an
+/// image prompt keeps its synchronous gather and begins nothing early: its
+/// journal is the default's. A text prompt on the same instance begins its
+/// prepared gathers before any device work, and every other line of its
+/// journal is the default's.
+#[test]
+fn early_prefill_engram_begins_only_prefills_without_image_rows() {
+    use crate::config::tests::with_option;
+    use model_deepseek41_contract::execution_options::DSPARK_EARLY_PREFILL_ENGRAM;
+    type Sink = bundle_runtime::fake_host::RecordingSink<super::conformance::Limits>;
+    let run = |early: bool| {
+        let host = MediaHost::new(Shape::new(&FLASH, Ranks::TP4).unwrap(), KV_LAYOUTS[0]);
+        host.drafter.set(true);
+        host.speculation.set(Some((3, 32)));
+        let record = with_option(
+            crate::config::tests::media_record(&host.shape, host.kv, 4),
+            DSPARK_EARLY_PREFILL_ENGRAM,
+            early.into(),
+        );
+        let mut instance = api()
+            .create(
+                HostServicesTableV1::new(Rc::new(dspark::host::MappedHost::new(Rc::clone(&host)))),
+                &record,
+            )
+            .unwrap_or_else(|error| panic!("{error:?}: {:?}", host.logs.borrow()));
+        let indices: Vec<_> = crate::instance::prefill_engram::indices(instance.handle())
+            .into_iter()
+            .map(|(_, span)| format!("buffer: {:?}, offset: {}, ", span.buffer, span.offset))
+            .collect();
+        let (image, _, _) = image_prompt(7, 0);
+        let mut steps = Vec::new();
+        for (request, batch) in [(7, image), (8, super::prompt(8, 1, 0, 5, true))] {
+            let begin = host.journal.borrow().len();
+            let mut sink = Sink::default();
+            instance
+                .execute(&batch, &mut sink)
+                .unwrap_or_else(|error| panic!("{error:?}: {:?}", host.logs.borrow()));
+            instance.commit().unwrap();
+            instance.retire_request(request).unwrap();
+            // The prefill gathers' begin: their id uploads and enqueues.
+            let (begins, rest): (Vec<_>, Vec<_>) = host.journal.borrow()[begin..]
+                .iter()
+                .cloned()
+                .partition(|line| {
+                    line.starts_with("async mapped ids ")
+                        || (line.starts_with("upload ")
+                            && indices.iter().any(|span| line.contains(span)))
+                });
+            let device = host.journal.borrow()[begin..]
+                .iter()
+                .position(|line| line.starts_with("launch ") || line.starts_with("replay "));
+            let began = host.journal.borrow()[begin..]
+                .iter()
+                .rposition(|line| line.starts_with("async mapped ids "));
+            steps.push((begins, rest, sink.drafts, sink.views, began < device));
+        }
+        instance.destroy().unwrap();
+        assert_eq!(host.acquired.get(), host.released.get());
+        let logs: Vec<_> = host
+            .logs
+            .borrow()
+            .iter()
+            .map(|line| super::dspark::untimed(line))
+            .collect();
+        (steps, logs)
+    };
+    let (off, off_logs) = run(false);
+    let (on, on_logs) = run(true);
+    assert_eq!(off_logs, on_logs);
+    // The image prompt gathers synchronously in both.
+    assert!(off[0].0.is_empty() && on[0].0.is_empty());
+    assert_eq!(off[0].1, on[0].1, "the image prompt");
+    // The text prompt's two layers begin before its first launch.
+    assert_eq!(off[1].0.len(), 4);
+    assert_eq!(off[1].0, on[1].0);
+    assert_eq!(off[1].1, on[1].1, "the text prompt");
+    assert!(on[1].4);
+    for (off, on) in off.iter().zip(&on) {
+        assert_eq!((&off.2, &off.3), (&on.2, &on.3));
+    }
+}
+
 /// A grid text prefill beside a prefill item without a boundary, on the
 /// served configuration (Flash TP4, 8192-token chunks, upper skip, cuts,
 /// the anchors export, no taps) of an instance that also serves images.

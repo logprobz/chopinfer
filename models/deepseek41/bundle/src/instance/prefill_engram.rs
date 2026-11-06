@@ -1,9 +1,7 @@
 //! Prepared, per-layer Engram uploads for eager text prefills.
 //! Enqueue before compute, then join each transfer at its first consumer.
 mod plan;
-#[cfg(test)]
-pub(super) use plan::Builder;
-pub(super) use plan::{DmaPiece, Plan};
+pub(super) use plan::{Builder, DmaPiece, Plan};
 
 use super::{
     Instance,
@@ -48,6 +46,22 @@ impl Gathers {
     /// only those this step began early, before any join.
     pub(super) fn plannable(&self) -> bool {
         self.idle() || (self.early.get() && !self.failed.get() && self.joined.get() == 0)
+    }
+
+    /// The begin the gathers hold, counted over the instance's life.
+    pub(super) fn sequence(&self) -> u64 {
+        self.sequence.get()
+    }
+
+    /// Whether the pending gathers are still those of begin `sequence`,
+    /// healthy and joined through `joined` layers: what an Engram plan made
+    /// after the begin, between its own joins, may rely on
+    /// (`prefill_streamed_lowering`), as `plannable` is before the begin.
+    pub(super) fn owned_by(&self, sequence: u64, joined: usize) -> bool {
+        self.pending.get()
+            && !self.failed.get()
+            && self.sequence.get() == sequence
+            && self.joined.get() == joined
     }
 
     /// Whether the pending gathers began early.

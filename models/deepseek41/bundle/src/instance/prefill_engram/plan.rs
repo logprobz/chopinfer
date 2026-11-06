@@ -333,15 +333,23 @@ impl Builder {
         Ok(())
     }
 
+    /// How many layers the gathers join.
+    pub(in crate::instance) fn layers(&self) -> usize {
+        self.layers
+    }
+
+    /// Each rank's consumer of layer `at`, once every rank lowered its own.
+    pub(in crate::instance) fn consumer(&self, at: usize) -> Option<Vec<usize>> {
+        self.ends.iter().map(|ends| ends.get(at).copied()).collect()
+    }
+
     /// The joins the DMA pieces split so far cross.
-    #[cfg(test)]
     pub(in crate::instance) fn joined(&self) -> usize {
         self.joined
     }
 
     /// Splits a DMA block's compute `spans` at the joins they cross, as
     /// `Plan::split_dma` does, and keeps the pieces for `finish`.
-    #[cfg(test)]
     pub(in crate::instance) fn split_dma(
         &mut self,
         spans: &[Range<usize>],

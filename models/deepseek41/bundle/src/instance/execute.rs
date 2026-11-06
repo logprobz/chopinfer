@@ -175,17 +175,41 @@ enum Execution {
     Standard,
     PrefillEngram(super::prefill_engram::Plan),
     Skip {
-        plan: std::rc::Rc<skip::Plan>,
+        plan: SkipPlan,
+        /// The body's Engram plan, made with the plan once it is ready; a
+        /// pending plan makes its own while it issues.
         engram: Option<super::prefill_engram::Plan>,
     },
 }
 
+/// An upper-skip plan: ready, from a kept plan, a template or a fresh
+/// lowering, or pending, to lower while it issues
+/// (`prefill_streamed_lowering`).
+enum SkipPlan {
+    Ready(std::rc::Rc<skip::Plan>),
+    Pending(Box<plan_cache::Pending>),
+}
+
 impl Execution {
+    /// The ready upper-skip plan; none for a pending one.
     fn skip(&self) -> Option<&skip::Plan> {
         match self {
-            Self::Skip { plan, .. } => Some(plan),
+            Self::Skip {
+                plan: SkipPlan::Ready(plan),
+                ..
+            } => Some(plan),
             _ => None,
         }
+    }
+
+    fn pending(&self) -> bool {
+        matches!(
+            self,
+            Self::Skip {
+                plan: SkipPlan::Pending(_),
+                ..
+            }
+        )
     }
 
     fn prefill_engram(&self) -> Option<&super::prefill_engram::Plan> {
@@ -875,7 +899,7 @@ impl Instance {
             if let Some(gathers) = self
                 .prefill_engram
                 .as_ref()
-                .filter(|_| run.route.prepared_gathers)
+                .filter(|_| run.route.prepared_gathers && !run.execution.pending())
             {
                 let plan = if let Some(skip) = run.execution.skip() {
                     skip.engram(gathers, self.plans.verifies())
@@ -897,10 +921,13 @@ impl Instance {
                 }
             }
             // The route says what the complete plans would.
-            debug_assert_eq!(run.route.skip, run.execution.skip().is_some());
             debug_assert_eq!(
-                run.route.prepared_gathers,
-                run.execution.prefill_engram().is_some()
+                run.route.skip,
+                run.execution.skip().is_some() || run.execution.pending()
+            );
+            debug_assert!(
+                run.execution.pending()
+                    || run.route.prepared_gathers == run.execution.prefill_engram().is_some()
             );
             Ok(())
         })();
@@ -1224,10 +1251,33 @@ impl Instance {
         if run.graph.is_some() {
             self.activate_indexer_graphs(run.bank);
         }
+        if run.execution.pending() {
+            let Execution::Skip {
+                plan: SkipPlan::Pending(pending),
+                ..
+            } = std::mem::replace(&mut run.execution, Execution::Standard)
+            else {
+                unreachable!("a pending upper-skip plan");
+            };
+            let (plan, engram) = skip::launch_streamed(self, run, &pending.layout)?;
+            let plan = self.plans.keep_streamed(self, run, plan, engram, *pending);
+            run.execution = Execution::Skip {
+                plan: SkipPlan::Ready(plan),
+                engram: None,
+            };
+            return Ok(());
+        }
         match &run.execution {
-            Execution::Skip { plan, engram } => {
+            Execution::Skip {
+                plan: SkipPlan::Ready(plan),
+                engram,
+            } => {
                 return plan.execute(self, engram.as_ref());
             }
+            Execution::Skip {
+                plan: SkipPlan::Pending(_),
+                ..
+            } => unreachable!("launched above"),
             Execution::PrefillEngram(plan) => {
                 // One unit for the whole prefill, as an upper-skip plan's.
                 return plan

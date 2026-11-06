@@ -102,6 +102,21 @@ pub(crate) fn with_limit<T>(limit: usize, run: impl FnOnce() -> T) -> T {
     run()
 }
 
+/// A run's upper-skip plan: its key's template or a fresh lowering, or a
+/// miss to lower while it issues (`prefill_streamed_lowering`).
+pub(super) enum Planned {
+    Ready(Rc<skip::Plan>),
+    Miss(Box<Miss>),
+}
+
+/// A run no template serves: its layout, its key when it has one, and
+/// whether that key's templates refused the run.
+pub(super) struct Miss {
+    pub(super) layout: skip::Layout,
+    pub(super) key: Option<Key>,
+    pub(super) refused: bool,
+}
+
 pub(super) struct Templates {
     kept: Kept<Key, skip::Plan>,
     /// Templates dropped to stay within the limit and held until the
@@ -156,39 +171,99 @@ impl Templates {
     }
 
     /// `run`'s upper-skip plan: its key's template with the index
-    /// selections lowered again, or a fresh plan, kept when it can be.
+    /// selections lowered again, or a fresh plan, kept when it can be; a
+    /// miss when `streamed`.
     pub(super) fn plan(
         &self,
         instance: &Instance,
         run: &Run,
         verify: bool,
-    ) -> Result<Rc<skip::Plan>, String> {
+        streamed: bool,
+    ) -> Result<Planned, String> {
         let layout = skip::Layout::of(instance, run)?;
         let Some(key) = Key::of(instance, run, &layout) else {
-            return skip::Plan::lower(instance, run, &layout).map(Rc::new);
+            if streamed {
+                let (key, refused) = (None, false);
+                return Ok(Planned::Miss(Box::new(Miss {
+                    layout,
+                    key,
+                    refused,
+                })));
+            }
+            return skip::Plan::lower(instance, run, &layout)
+                .map(|plan| Planned::Ready(Rc::new(plan)));
         };
         let refused = self.kept.counts().refused;
         if let Some(plan) = self.kept.reuse(&key, |plan| plan.patch(instance, run))? {
             if verify && !plan.same(&skip::Plan::lower(instance, run, &layout)?)? {
                 return Err("a reused prefill plan template differs from a fresh lowering".into());
             }
-            return Ok(plan);
+            return Ok(Planned::Ready(plan));
         }
-        let mut plan = skip::Plan::lower(instance, run, &layout)?;
+        let refused = self.kept.counts().refused > refused;
+        if streamed {
+            let key = Some(key);
+            return Ok(Planned::Miss(Box::new(Miss {
+                layout,
+                key,
+                refused,
+            })));
+        }
+        let plan = skip::Plan::lower(instance, run, &layout)?;
+        Ok(Planned::Ready(
+            self.keep(instance, run, key, refused, plan, None, self.late),
+        ))
+    }
+
+    /// Keeps `plan`, lowered while it issued and launched, as a template
+    /// of `key`, with the Engram plan `engram` it made; the plan to run. A
+    /// template the keep drops is freed once the launch returns
+    /// (`release`), as it already has.
+    pub(super) fn keep_streamed(
+        &self,
+        instance: &Instance,
+        run: &Run,
+        key: Key,
+        refused: bool,
+        plan: skip::Plan,
+        engram: Option<crate::instance::prefill_engram::Plan>,
+    ) -> Rc<skip::Plan> {
+        self.keep(instance, run, key, refused, plan, engram, true)
+    }
+
+    /// Keeps the fresh `plan` as a template of `key` when it can be, with
+    /// its Engram plan when it made one, holding a template it drops until
+    /// `release` when `hold`.
+    #[allow(clippy::too_many_arguments)]
+    fn keep(
+        &self,
+        instance: &Instance,
+        run: &Run,
+        key: Key,
+        refused: bool,
+        mut plan: skip::Plan,
+        engram: Option<crate::instance::prefill_engram::Plan>,
+        hold: bool,
+    ) -> Rc<skip::Plan> {
         if !plan.templatable() {
-            return Ok(Rc::new(plan));
+            return Rc::new(plan);
         }
-        plan.keep_engram();
+        match engram {
+            Some(engram) => plan.keep_engram_plan(engram),
+            None => plan.keep_engram(),
+        }
+        #[cfg(test)]
+        skip::record_kept(plan.describe_template());
         let plan = Rc::new(plan);
         let dropped = match self.kept.keep(key, Rc::clone(&plan)) {
-            Some(old) if self.late => {
+            Some(old) if hold => {
                 self.retired.borrow_mut().push(old);
                 true
             }
             dropped => dropped.is_some(),
         };
         let counts = self.kept.counts();
-        let refused = if counts.refused > refused {
+        let refused = if refused {
             ", its key's templates refused"
         } else {
             ""
@@ -206,7 +281,7 @@ impl Templates {
             counts.refused,
             counts.evicted
         ));
-        Ok(plan)
+        plan
     }
 }
 

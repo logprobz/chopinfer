@@ -3,6 +3,8 @@
 use super::{Instance, Programs, Run, Stage};
 use crate::instance::execute::Executor;
 use crate::instance::execute::dma::{Call, Consumers, Producers};
+use crate::instance::prefill_engram::DmaPiece;
+use bundle_runtime::dispatch::DispatchError;
 use kernel_core::contract::Argument;
 use model_deepseek41_contract::state::KvStorage;
 use runtime_bundle_abi::BundleAbiError;
@@ -190,7 +192,6 @@ impl Plan {
     }
 
     /// Each rank's launches after the last block.
-    #[cfg(test)]
     pub(super) fn tail(&self) -> &[Range<usize>] {
         &self.tail
     }
@@ -322,28 +323,56 @@ impl Builder {
     }
 
     /// The blocks prepared so far.
-    #[cfg(test)]
     pub(super) fn blocks(&self) -> usize {
         self.blocks.len()
     }
 
     /// Splits block `index`'s compute spans at the Engram joins they cross
     /// and audits its call against the spans pending there, as
-    /// `Plan::prepare_engram` does for each block.
-    #[cfg(test)]
+    /// `Plan::prepare_engram` does for each block: its pieces.
     pub(super) fn split_engram(
         &self,
         index: usize,
         engram: &mut crate::instance::prefill_engram::Builder,
         gathers: &crate::instance::prefill_engram::Gathers,
-    ) -> Result<(), String> {
+    ) -> Result<Vec<DmaPiece>, String> {
         let block = &self.blocks[index];
-        engram.split_dma(&block.compute)?;
+        let pieces = engram.split_dma(&block.compute)?.to_vec();
         block.reduce.audit_pending(
             &gathers.pending_spans(engram.joined()),
             block.consume.as_ref(),
             block.produce.as_ref(),
-        )
+        )?;
+        Ok(pieces)
+    }
+
+    /// Block `index`'s compute spans as its one piece, for a body without
+    /// prepared gathers.
+    pub(super) fn piece(&self, index: usize) -> DmaPiece {
+        DmaPiece {
+            spans: self.blocks[index].compute.clone(),
+            join: None,
+        }
+    }
+
+    /// Issues block `index`'s call after its compute pieces, as
+    /// `Plan::execute` does. A failure poisons, as any of the DMA body's.
+    pub(super) fn execute_call(
+        &self,
+        index: usize,
+        instance: &Instance,
+        streams: &[runtime_bundle_abi::BundleStreamHandleV1],
+    ) -> Result<(), DispatchError> {
+        let block = &self.blocks[index];
+        block
+            .reduce
+            .execute(
+                instance,
+                streams,
+                block.consume.as_ref(),
+                block.produce.as_ref(),
+            )
+            .inspect_err(|_| instance.collectives.poison())
     }
 
     /// Prepares the blocks `body`, lowered so far, holds: each whose call

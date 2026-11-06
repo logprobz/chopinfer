@@ -21,11 +21,15 @@ type Copy = (Span, Span);
 
 mod dma;
 mod lower;
+mod stream;
 #[cfg(test)]
 pub(crate) use dma::with_enabled as with_dma;
 use lower::Lowerer;
 #[cfg(test)]
 pub(super) use lower::sweep;
+pub(super) use stream::launch as launch_streamed;
+#[cfg(test)]
+pub(crate) use stream::{launches as streamed_launches, with_lead};
 
 #[cfg(test)]
 thread_local! { static PATCHES: std::cell::Cell<bool> = const { std::cell::Cell::new(true) }; }
@@ -42,6 +46,32 @@ pub(crate) fn without_patches<T>(run: impl FnOnce() -> T) -> T {
     }
     let _reset = Reset(PATCHES.replace(false));
     run()
+}
+
+#[cfg(test)]
+thread_local! { static LOWERINGS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) }; }
+
+/// The whole plans lowered before their launch (`Plan::lower`) on this
+/// thread.
+#[cfg(test)]
+pub(crate) fn lowerings() -> u64 {
+    LOWERINGS.get()
+}
+
+#[cfg(test)]
+thread_local! { static KEPT: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) }; }
+
+/// Every template kept on this thread since the last take, as lines in
+/// order: its description when it was kept (`Plan::describe_template`),
+/// then its Engram plan once a step made it after the keep.
+#[cfg(test)]
+pub(crate) fn take_kept() -> Vec<String> {
+    KEPT.take()
+}
+
+#[cfg(test)]
+pub(super) fn record_kept(lines: Vec<String>) {
+    KEPT.with_borrow_mut(|kept| kept.extend(lines));
 }
 
 #[cfg(test)]
@@ -338,6 +368,8 @@ impl Plan {
     /// The plan of `run`, whose layout is `layout`: the lowerer drained,
     /// then the head and row copies (`Lowerer::finish`).
     pub(super) fn lower(instance: &Instance, run: &Run, layout: &Layout) -> Result<Self, String> {
+        #[cfg(test)]
+        LOWERINGS.set(LOWERINGS.get() + 1);
         Lowerer::new(instance, run, layout)?.finish(instance, run, layout)
     }
 
@@ -604,6 +636,17 @@ impl Plan {
         lines
     }
 
+    /// The template as lines (`describe`), then its kept Engram plan once a
+    /// step made it.
+    #[cfg(test)]
+    pub(super) fn describe_template(&self) -> Vec<String> {
+        let mut lines = self.describe();
+        if let Some(engram) = self.engram.as_ref().and_then(OnceCell::get) {
+            lines.push(format!("engram {engram:?}"));
+        }
+        lines
+    }
+
     pub(super) fn uses_dma(&self) -> bool {
         self.dma.is_some()
     }
@@ -630,7 +673,6 @@ impl Plan {
     }
 
     /// Keeps `plan` as this template's Engram plan.
-    #[cfg(test)]
     pub(super) fn keep_engram_plan(&mut self, plan: Engram) {
         self.engram = Some(OnceCell::from(plan));
     }
@@ -659,6 +701,8 @@ impl Plan {
         };
         let Some(plan) = kept.get() else {
             let plan = fresh()?;
+            #[cfg(test)]
+            record_kept(vec![format!("engram {plan:?}")]);
             return Ok(kept.get_or_init(|| plan).clone());
         };
         let sites = self
@@ -684,27 +728,32 @@ impl Plan {
             dma.prepare_engram(plan, gathers)?;
             plan.check_dma_collectives(&self.body.0, &self.body.1)?;
         }
-        // The head and its row copies run beside a mixed step's verify-row
-        // gathers, which begin after the body's last Engram join.
-        let verify = gathers.pending_spans(plan.layer_count());
-        if !verify.is_empty() {
-            for (head, copies) in self.head.0.iter().zip(&self.copies) {
-                crate::shared_overlap::disjoint_copy_spans(&verify, head)?;
-                let aliased = copies
-                    .iter()
-                    .flat_map(|&(to, from)| [to, from])
-                    .any(|span| {
-                        verify.iter().any(|pending| {
-                            pending.buffer == span.buffer
-                                && pending.length != 0
-                                && span.length != 0
-                                && pending.offset < span.offset.saturating_add(span.length)
-                                && span.offset < pending.offset.saturating_add(pending.length)
-                        })
-                    });
-                if aliased {
-                    return Err("a prefill row copy aliases pending verify Engram rows".into());
-                }
+        self.audit_head(&gathers.pending_spans(plan.layer_count()))
+    }
+
+    /// The head and its row copies run beside a mixed step's verify-row
+    /// gathers `verify`, which begin after the body's last Engram join:
+    /// none touches their spans.
+    fn audit_head(&self, verify: &[Span]) -> Result<(), String> {
+        if verify.is_empty() {
+            return Ok(());
+        }
+        for (head, copies) in self.head.0.iter().zip(&self.copies) {
+            crate::shared_overlap::disjoint_copy_spans(verify, head)?;
+            let aliased = copies
+                .iter()
+                .flat_map(|&(to, from)| [to, from])
+                .any(|span| {
+                    verify.iter().any(|pending| {
+                        pending.buffer == span.buffer
+                            && pending.length != 0
+                            && span.length != 0
+                            && pending.offset < span.offset.saturating_add(span.length)
+                            && span.offset < pending.offset.saturating_add(pending.length)
+                    })
+                });
+            if aliased {
+                return Err("a prefill row copy aliases pending verify Engram rows".into());
             }
         }
         Ok(())

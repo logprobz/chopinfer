@@ -116,7 +116,6 @@ impl Lowerer {
     }
 
     /// Each rank's body lowered so far.
-    #[cfg(test)]
     pub(super) fn body(&self) -> &Programs {
         &self.body
     }
@@ -338,6 +337,26 @@ impl Lowerer {
         layout: &Layout,
     ) -> Result<Plan, String> {
         while self.lower_next(instance, run, layout)? {}
+        bundle_runtime::pipeline::check_collectives(&self.body.0, &self.body.1)
+            .map_err(|e| format!("prefill body collectives: {e:?}"))?;
+        let dma = super::dma::Plan::prepare(instance, run, &self.body)?;
+        self.assemble(instance, run, layout, dma)
+    }
+
+    /// The plan of the body every group lowered, with its DMA plan `dma`:
+    /// each rank's head and row copies lowered, and their collectives
+    /// checked. A body issued while it was lowered had each unit's
+    /// collectives checked before it issued.
+    pub(super) fn assemble(
+        self,
+        instance: &Instance,
+        run: &Run,
+        layout: &Layout,
+        dma: Option<super::dma::Plan>,
+    ) -> Result<Plan, String> {
+        if self.next != self.groups.len() {
+            return Err("the prefill body is not lowered in full".into());
+        }
         let cone = &layout.cone;
         let body = self.body;
         let sites = self.sites.into_iter().flatten().collect();
@@ -382,11 +401,8 @@ impl Lowerer {
             head.2.push(program.2);
             copies.push(rank_copies);
         }
-        bundle_runtime::pipeline::check_collectives(&body.0, &body.1)
-            .map_err(|e| format!("prefill body collectives: {e:?}"))?;
         bundle_runtime::pipeline::check_collectives(&head.0, &head.1)
             .map_err(|e| format!("prefill head collectives: {e:?}"))?;
-        let dma = super::dma::Plan::prepare(instance, run, &body)?;
         Ok(Plan {
             body,
             sites,

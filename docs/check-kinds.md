@@ -186,6 +186,26 @@ its `check` field names (after a declared rename), else as the check whose
 file name matches; `rescore --check ID` may name the check only within those
 constraints, and anything else is a usage error.
 
+A stored `checks.py check` run (its `check.json`, `chopinfer-check-run/v1`)
+is judged as the one row of a gate run under the policy it recorded
+(`--limits recorded`). Its receipt is the file the row names, or the log for
+a check whose module prints its receipt (`stdout_json`), and must keep the
+row's digest; every input its input rules read must keep its recorded
+digest, else the row is `insufficient`. A run refused before its judge
+(`"row": null`) is judged from its recorded inputs only when its receipt and
+reference record are among them, every input its arguments name is recorded
+and unchanged, and its recorded server reports qualified model options; its
+report names the refusal `unjudged`, and a refused run whose receipt its
+module writes stays `fail`. An input rule's `{model}` is the served model the
+run recorded, or for an offline check run its `--served-model` name; for a
+run recorded without it, `rescore --served-model NAME` supplies the name,
+and without one such a rule is `insufficient`.
+`release_preview.sh rescore RUN` replays a correctness run this way with the
+current code and declarations. It only reads the run and writes its judgment
+under `RUN/rescore/<UTC>/` or `--out DIR`. A regression row the run recorded
+as informational for want of a baseline stays so; any other regression row
+whose check run is missing fails.
+
 A partial media receipt must declare the server's served modalities,
 checkpoint identity and startup nonce. Its `not_applicable` reasons and
 every unserved row must agree with that identity and the pinned reference's

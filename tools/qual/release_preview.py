@@ -1880,7 +1880,10 @@ def run_check(run, context, step, arm_dir, arm):
     paths, and earlier passing checks' receipts. A regression check (one
     reading stored_<check> inputs) runs once per store, against that store's
     receipts, as `<check>/<store>`; a store without them reports no baseline
-    yet, as information."""
+    yet, as information. A replay follows the run's own record, not the
+    store as it is now: a row the run judged is judged again from its check
+    run, one it recorded as having no baseline stays informational, and any
+    other fails closed for want of its check run."""
     check = step['check']
     declared = context['facts']['checks'][check]
     config = context['config_name']
@@ -1902,14 +1905,15 @@ def run_check(run, context, step, arm_dir, arm):
         label = f'{check}/{store}'
         receipts = {name: run.stores[store].receipt(config, f'{config}/{arm}/{name[len(STORED):]}')
                     for name in stored}
-        recorded = (arm_dir / 'checks' / label.replace('/', '-') / 'inputs.json').is_file()
-        kept = run.recorded_rows.get(f'{config}/{arm}/{label}', {}) if run.replay and not recorded else {}
-        if kept.get('status') == 'informational':
-            # The store may hold a baseline now (this run's own, once
-            # promoted); the run had none to judge against.
-            run.row(config, arm, label, 'informational', reason=kept.get('reason'))
-            continue
-        if None in receipts.values() and not (run.replay and recorded):
+        if run.replay:
+            judged = (arm_dir / 'checks' / label.replace('/', '-') / 'inputs.json').is_file()
+            kept = {} if judged else run.recorded_rows.get(f'{config}/{arm}/{label}', {})
+            if kept.get('status') == 'informational' and str(kept.get('reason')).startswith('no baseline yet'):
+                # The store may hold a baseline now (this run's own, once
+                # promoted); the run had none to judge against.
+                run.row(config, arm, label, 'informational', reason=kept['reason'])
+                continue
+        elif None in receipts.values():
             run.row(config, arm, label, 'informational',
                     reason=f"no baseline yet: the {store} store holds no "
                            f"{', '.join(name[len(STORED):] for name in stored)} receipt of this arm")

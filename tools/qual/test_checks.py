@@ -866,7 +866,7 @@ class CheckRunRescoreTests(unittest.TestCase):
             def replay():
                 replayed = []
                 run = SimpleNamespace(replay=True, inputs=inputs, used_features=set(), facts=facts,
-                                      install=root / "install",
+                                      install=root / "install", recorded_rows={},
                                       row=lambda config, arm, label, status, **fields: replayed.append(
                                           (label, status, fields.get("error"), fields.get("unjudged"))),
                                       stores={store: SimpleNamespace(receipt=lambda *a: None)
@@ -1085,7 +1085,7 @@ class EvalsCompareGateTests(unittest.TestCase):
                 facts = preview.model_facts(model)
                 replayed = []
                 run = SimpleNamespace(replay=True, inputs=inputs, used_features=set(), facts=facts,
-                                      install=root / "install",
+                                      install=root / "install", recorded_rows={},
                                       row=lambda config, arm, label, status, **fields: replayed.append(
                                           (label, status, fields.get("error"))),
                                       stores={store: SimpleNamespace(receipt=lambda *a: None)

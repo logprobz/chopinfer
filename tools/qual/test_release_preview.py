@@ -3344,6 +3344,39 @@ class RescoreTests(FakeRunTests):
             self.assertEqual({row['id']: (row['status'], row['reason']) for row in rows if row['id'] in recorded},
                              {name: ('informational', row['reason']) for name, row in recorded.items()})
 
+    def test_a_regression_row_whose_check_run_is_lost_fails_closed(self):
+        """A regression row the run judged, passed or failed, whose check run
+        is gone fails on rescore, whether a store holds a baseline now or
+        not: the replay never judges by the store in the run's place."""
+        for failing in ((), ('paired_teacher',)):
+            for emptied in (False, True):
+                with self.subTest(failing=failing, emptied=emptied), tempfile.TemporaryDirectory() as temporary, \
+                        patch.object(runner, 'VALIDATION', Path(temporary) / 'validation'):
+                    name = model(lambda facts: 'paired_teacher' in facts['quick'])
+                    stored = Path(temporary) / 'seeded/teacher.json'
+                    runner.write(stored, {'passed': True})
+                    for store in runner.STORES:
+                        runner.Store(store, name).write(Path(temporary) / 'seeded', {
+                            'model': name, 'suite': 'full', 'source': FakeRun.identity(),
+                            'install_source': FakeRun.identity(),
+                            'rows': [{'id': f'default/{arm}/teacher', 'status': 'pass', 'receipt': str(stored)}
+                                     for arm in runner.ARMS]}, 'test seed')
+                    fake, code, result = self.recorded(Path(temporary), name, failing)
+                    regressions = {row['id']: row['status'] for row in result['rows'] if '/paired_teacher/' in row['id']}
+                    self.assertEqual(set(regressions.values()), {'fail' if failing else 'pass'}, regressions)
+                    self.assertEqual({row.rsplit('/', 1)[-1] for row in regressions}, set(runner.STORES))
+                    for directory in (fake.base / 'run').glob('default/*/checks/paired_teacher-*'):
+                        shutil.rmtree(directory)
+                    if emptied:
+                        for store in runner.STORES:
+                            shutil.rmtree(runner.VALIDATION / store)
+                    code, rows = self.replay(fake)
+                    self.assertEqual(code, 1)
+                    replayed = {row['id']: row for row in rows if row['id'] in regressions}
+                    self.assertEqual({key: (row['status'], row['recorded']) for key, row in replayed.items()},
+                                     {key: ('fail', status) for key, status in regressions.items()})
+                    self.assertTrue(all('missing or ambiguous receipt' in row['error'] for row in replayed.values()))
+
     def test_an_offline_check_is_rescored_with_the_served_name_its_command_recorded(self):
         with tempfile.TemporaryDirectory() as temporary:
             receipt = Path(temporary) / 'layouts.json'

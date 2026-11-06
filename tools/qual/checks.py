@@ -375,10 +375,45 @@ def rescore_row(path, row, check, config, config_path, mechanics, revision, summ
         # informational was never run and has no evidence to judge.
         status = "insufficient" if recorded_status(row) == "informational" else "fail"
         return {"kind": kind, "status": status, "error": row.get("error") or "no receipt"}
+    if named is not None and result.get("metrics") is not None:
+        # The receipt is one arm's record: the pair's recorded metrics are
+        # the comparison its run recorded, if any.
+        compared = recorded_comparison(path, row, check, config_path, value, named, mechanics, result["metrics"])
+        if compared is None:
+            result["recorded_metrics"] = None
+        else:
+            result.update(recorded_metrics=compared[0], as_recorded_metrics=compared[1])
     if row.get("exit_code") and not judged(path, row, result.get("metrics")):
         result.update(receipt_status=result["status"], receipt_error=result.get("error"), status="fail",
                       error=f"check exited {row['exit_code']}")
     return result
+
+
+def recorded_comparison(path, row, check, config_path, value, named, mechanics, metrics):
+    """(recorded, rescored) metrics of a check scored against a reference
+    record (reference_file), like for like: the comparison its module
+    printed to the row's log, which names the two records it compared
+    (`left` and `right`: the row's receipt and reference file, in either
+    order), and this code's comparison of the same records in the same
+    order (`metrics`, the rescore's, when it is the receipt's against the
+    reference). None when the log holds no such comparison."""
+    try:
+        log = json.loads(stored(path, row, "log").read_text())
+    except (KeyError, OSError, ValueError):
+        return None
+    if not isinstance(log, dict):
+        return None
+    recorded = {key: item for key, item in log.items() if key not in ("left", "right")}
+    order = (log.get("left"), log.get("right"))
+    if order == (row.get("receipt"), row.get("reference_file")):
+        return recorded, metrics
+    if order != (row.get("reference_file"), row.get("receipt")):
+        return None
+    try:
+        with kinds.policy(config_path, check):
+            return recorded, kinds.of(check["module"]).score(named, value, check, mechanics)
+    except (ValueError, KeyError, TypeError, RuntimeError):
+        return None
 
 
 def rescore_gate(path, summary, model, limits):
@@ -564,8 +599,10 @@ def rescore_receipt(path, value, model, limits, check_id=None):
 
 
 def differing(row):
-    """The metric fields whose rescored value differs from the receipt's."""
-    old, new = row.get("recorded_metrics"), row.get("metrics")
+    """The metric fields whose rescored value differs from the recorded one:
+    the receipt's, or a pair's recorded comparison (recorded_comparison)
+    against this code's of the same records in the same order."""
+    old, new = row.get("recorded_metrics"), row.get("as_recorded_metrics", row.get("metrics"))
     if old is None or new is None:
         return []
     return sorted(key for key in old.keys() | new.keys() if old.get(key) != new.get(key))
@@ -606,7 +643,10 @@ def rescore_command(args):
         rows += gate
     for row in rows:
         row["differing_metrics"] = differing(row)
-    same = [row for row in rows if row["recorded"] in (None, row["status"]) and not row["differing_metrics"]]
+    # Metrics the run did not record (a pair whose comparison it did not
+    # log, a run refused before its judge) cannot be shown equal.
+    same = [row for row in rows if row["recorded"] in (None, row["status"]) and not row["differing_metrics"]
+            and (row.get("metrics") is None or row.get("recorded_metrics") is not None)]
     report = {"schema": "chopinfer-rescore/v1", "model": args.model, "limits": args.limits,
               "gates": gates, "checks": rows}
     if args.json:
@@ -615,7 +655,8 @@ def rescore_command(args):
           "|---|---|---|---|---|---|---|---|", sep="\n")
     for row in rows:
         metrics = ("differ: " + ", ".join(row["differing_metrics"]) if row["differing_metrics"]
-                   else "equal" if row.get("metrics") is not None and row.get("recorded_metrics") is not None else "")
+                   else "" if row.get("metrics") is None else "equal" if row.get("recorded_metrics") is not None
+                   else "unrecorded")
         print(f"| {row.get('receipt') or row['source']} | {row['id']}{'' if row.get('selected', True) else ' (not selected)'} | "
               f"{row.get('kind', '')} | {row['recorded'] or ''} | {row['status']} | {metrics} | "
               f"{', '.join(row.get('recorded_fields') or [])} | {row.get('error', '')} |")

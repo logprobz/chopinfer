@@ -276,7 +276,13 @@ another model, variant or check than `--model` and `--check` name, or whose
 recorded `policy.json` is missing or changed, and a `--served-model` other
 than an offline check run's recorded one. With `--require-recorded`,
 `rescore` exits 1 unless every verdict, metric and gate result equals the
-recorded one.
+recorded one. The recorded metrics are a receipt's own metric fields, or for
+a check scored against a reference record (`reference_file`), whose receipt
+is one arm's record, the comparison its module printed to its log (with the
+two records it compared as `left` and `right`), against this code's
+comparison of the same records in the same order. Metrics the run did not
+record, such as a pair without that log or a run refused before its judge,
+are never equal.
 
 ### Conformance vectors
 

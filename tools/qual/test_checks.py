@@ -580,7 +580,7 @@ class CheckRunRescoreTests(unittest.TestCase):
             checks.check_command(args)
         return next(receipts.glob("*/check.json"))
 
-    def rescore(self, config, *paths, limits="current", selected=None, served=None):
+    def rescore(self, config, *paths, limits="current", selected=None, served=None, strict=False):
         """rescore's exit status and rows under the current `config`."""
         with tempfile.TemporaryDirectory() as scratch, \
                 patch.object(checks, "load", return_value=(config, Path(scratch) / "declaration.json")):
@@ -588,7 +588,8 @@ class CheckRunRescoreTests(unittest.TestCase):
             report = Path(scratch) / "report.json"
             status, _ = command("rescore", "--model", "mechanics", "--limits", limits, "--json", report,
                                 *(["--check", selected] if selected else []),
-                                *(["--served-model", served] if served else []), *paths)
+                                *(["--served-model", served] if served else []),
+                                *(["--require-recorded"] if strict else []), *paths)
             return status, json.loads(report.read_text())["checks"] if report.is_file() else None
 
     @staticmethod
@@ -739,6 +740,51 @@ class CheckRunRescoreTests(unittest.TestCase):
             run.write_text(json.dumps(recorded))
             status, rows = self.rescore(current, run)
             self.assertEqual((status, rows[0]["status"]), (1, "fail"), rows)
+
+    def test_an_unchanged_pair_rescores_strictly_as_recorded(self):
+        """A determinism check judges one arm's record against the other's;
+        its module prints the pair's comparison to its log, of `ar` against
+        `spec`, the gate's own scoring being of `spec` against `ar`. A strict
+        rescore compares that recorded comparison with this code's of the
+        same records in the same order, not with the arm's own fields."""
+        import determinism
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "refused").mkdir()
+            _, current, inputs = self.refused(root / "refused")
+            records = {arm: json.loads(inputs[arm].read_text()) for arm in ("ar", "spec")}
+
+            def logged(left, right):
+                return dict(determinism.compare(records[left], records[right]), left=str(inputs[left]),
+                            right=str(inputs[right]))
+
+            for order in (("ar", "spec"), ("spec", "ar")):
+                with self.subTest(order=order):
+                    case = root / "-".join(order)
+                    case.mkdir()
+                    run = self.check_run(case, current, "determinism", {key: str(path) for key, path in inputs.items()},
+                                         logged(*order))
+                    self.assertEqual(json.loads(run.read_text())["status"], "pass")
+                    for limits in ("current", "recorded"):
+                        status, rows = self.rescore(current, run, limits=limits, strict=True)
+                        self.assertEqual((status, rows[0]["status"], rows[0]["differing_metrics"]), (0, "pass", []))
+                    row = rows[0]
+                    recorded = {key: item for key, item in logged(*order).items() if key not in ("left", "right")}
+                    self.assertEqual((row["recorded_metrics"], row["as_recorded_metrics"]), (recorded, recorded))
+                    self.assertEqual((row["metrics"]["left_arm"], row["as_recorded_metrics"]["left_arm"]),
+                                     ("spec", order[0]))
+            # A recorded comparison that differs is reported, and a log that
+            # holds none leaves the metrics unrecorded, not equal.
+            log = next(case.glob("checks/*/determinism.log"))
+            value = json.loads(log.read_text())
+            log.write_text(json.dumps({**value, "tokens": value["tokens"] + 1}))
+            self.assertEqual(self.rescore(current, run)[0], 0)
+            status, rows = self.rescore(current, run, strict=True)
+            self.assertEqual((status, rows[0]["status"], rows[0]["differing_metrics"]), (1, "pass", ["tokens"]))
+            for text in ("", json.dumps({**value, "left": str(root / "another.json")})):
+                log.write_text(text)
+                status, rows = self.rescore(current, run, strict=True)
+                self.assertEqual((status, rows[0]["status"], rows[0]["recorded_metrics"]), (1, "pass", None))
 
     def test_a_refused_run_with_a_changed_or_missing_input_is_insufficient(self):
         cases = {"tampered receipt": lambda inputs: inputs["spec"].write_text(inputs["spec"].read_text() + " "),

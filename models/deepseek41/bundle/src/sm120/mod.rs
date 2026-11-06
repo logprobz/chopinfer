@@ -1259,11 +1259,7 @@ impl crate::Kernels {
         let sm120 = ceil_prefill::register(sm120, shape.geometry, shape.ranks())?;
         let sm120 = shared::register(sm120, shape.geometry, shape.ranks())?;
         let sm120 = mxfp8_fold::register(sm120, shape.geometry, shape.ranks())?;
-        let sm120 = if shape.prefill_compact_dense_rows {
-            mxfp8_fold::compact::register_range(sm120, shape.geometry, shape.ranks())?
-        } else {
-            sm120
-        };
+        let sm120 = mxfp8_fold::compact::register_range(sm120, shape.geometry, shape.ranks())?;
         let sm120 = mxfp8_fold::register_wide(
             sm120,
             shape.geometry,

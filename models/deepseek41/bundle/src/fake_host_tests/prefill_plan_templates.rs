@@ -605,12 +605,12 @@ fn long_context_templates_issue_the_fresh_lowerings_journal() {
         let (name, expected) = if dspark {
             (
                 "flash-tp4-dspark-long-context-templates",
-                (196096, 0x8b89832b3ccffb86),
+                (194848, 0x98ec08adda287b0b),
             )
         } else {
             (
                 "flash-tp4-ar-long-context-templates",
-                (167485, 0x347a171c43e7c703),
+                (166237, 0x4a3d2a6f8701e27c),
             )
         };
         for (verify, lead) in [(false, 2), (true, 2), (false, 1), (false, 4)] {

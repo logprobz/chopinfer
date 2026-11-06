@@ -81,7 +81,7 @@ const COMPACT_RANGES: [(&str, &[std::ops::RangeInclusive<u64>]); 4] = [
 ];
 
 /// The launches of a prompt of `rows` rows and of one decode step after
-/// it, with the compact range candidate `enabled`.
+/// it, with the compact range option `enabled`.
 fn compact_range_launches(rows: u64, enabled: bool) -> [Vec<String>; 2] {
     use model_deepseek41_contract::execution_options::PREFILL_COMPACT_DENSE_ROWS;
     let host = FakeHost::new(Shape::new(&FLASH, Ranks::TP4).unwrap(), KV_LAYOUTS[0]);
@@ -191,38 +191,43 @@ fn renumbered(lines: &[String]) -> Vec<String> {
         .collect()
 }
 
-/// Fails at the first launch where `candidate` and `default` differ.
-fn same_launches(what: &str, candidate: &[String], default: &[String]) {
+/// Fails at the first launch where `option` and `default` differ.
+fn same_launches(what: &str, option: &[String], default: &[String]) {
     if let Some(at) =
-        (0..candidate.len().max(default.len())).find(|&at| candidate.get(at) != default.get(at))
+        (0..option.len().max(default.len())).find(|&at| option.get(at) != default.get(at))
     {
         panic!(
-            "{what}: launch {at} differs\ncandidate: {:?}\ndefault: {:?}",
-            candidate.get(at),
+            "{what}: launch {at} differs\noption: {:?}\ndefault: {:?}",
+            option.get(at),
             default.get(at)
         );
     }
 }
 
 /// At a count inside a projection's ranges each call of that projection
-/// over the step's rows runs the compact entry in place of the full
-/// 128-row tiles and their exact-row tail folds; every other launch, the
-/// other projections' calls, every count outside all ranges, the measured
-/// exact compact row 2048 and the decode step after are unchanged. The
-/// counts hit each range end and each count a range leaves out.
+/// over the step's rows runs the compact entry, an admit and a tiles launch,
+/// in place of the full 128-row tiles and their exact-row tail folds. The
+/// counts hit each range end and each count a range leaves out. The
+/// `prefill_compact_dense_rows` option, adopted, changes no prefill or
+/// decode launch.
 #[test]
-fn compact_range_replaces_only_the_admitted_projection_calls() {
+fn compact_ranges_serve_the_admitted_projection_calls() {
     let mut ranged = 0;
     for rows in [
         1152, 1153, 1279, 1280, 1281, 1500, 2048, 2368, 2369, 2400, 2401, 2943, 2944, 2945, 3071,
         3072, 3073, 3199, 3200, 3201,
     ] {
-        let [base_prefill, base_decode] = compact_range_launches(rows, false);
-        let [prefill, decode] = compact_range_launches(rows, true);
+        let [prefill, decode] = compact_range_launches(rows, false);
+        let [option_prefill, option_decode] = compact_range_launches(rows, true);
+        same_launches(
+            &format!("prefill of {rows} rows"),
+            &renumbered(&option_prefill),
+            &renumbered(&prefill),
+        );
         same_launches(
             &format!("decode after {rows} rows"),
+            &renumbered(&option_decode),
             &renumbered(&decode),
-            &renumbered(&base_decode),
         );
         let shapes: Vec<&str> = COMPACT_RANGES
             .iter()
@@ -230,44 +235,19 @@ fn compact_range_replaces_only_the_admitted_projection_calls() {
             .map(|(shape, _)| *shape)
             .collect();
         if shapes.is_empty() {
-            same_launches(
-                &format!("prefill of {rows} rows"),
-                &renumbered(&prefill),
-                &renumbered(&base_prefill),
-            );
             continue;
         }
-        let (candidate, compact) = projection_calls(&prefill, rows, &shapes);
-        let (default, partition) = projection_calls(&base_prefill, rows, &shapes);
-        same_launches(
-            &format!("prefill of {rows} rows without the projection calls"),
-            &renumbered(&candidate),
-            &renumbered(&default),
-        );
-        // The shared gate and up launch back to back on one stream, so one
-        // marker can hold several calls: two launches (admit and tiles) per
-        // compact call, and per default call two full-tile launches and two
-        // per 64-row tail fold.
+        let (_, compact) = projection_calls(&prefill, rows, &shapes);
         let replaced: std::collections::BTreeSet<&str> =
             compact.iter().map(|(shape, _)| *shape).collect();
         assert_eq!(replaced, shapes.iter().copied().collect(), "rows={rows}");
-        assert_eq!(compact.len(), partition.len(), "rows={rows}");
-        let folds = 2 * rows.rem_euclid(128).div_ceil(64) as usize;
-        for ((shape, call), (base_shape, base)) in compact.iter().zip(&partition) {
-            assert_eq!(shape, base_shape, "rows={rows}");
+        for (_, call) in &compact {
             assert!(call.len() % 2 == 0, "rows={rows}: {call:?}");
             assert!(
                 call.iter()
                     .all(|symbol| symbol.contains("_compact_m64_n128_s2_v1_")),
                 "rows={rows}: {call:?}"
             );
-            let calls = call.len() / 2;
-            let full = base
-                .iter()
-                .filter(|symbol| symbol.contains("_prefill_tma_v1_"))
-                .count();
-            assert_eq!(full, 2 * calls, "rows={rows}: {base:?}");
-            assert_eq!(base.len(), calls * (2 + folds), "rows={rows}: {base:?}");
         }
         ranged += 1;
     }

@@ -75,6 +75,12 @@ const OUTPUTS: &[Listed] = &[
         "chop_deepseek41_mxfp8_fold_m*_f32_v2_matrix_m#_n128_s#_v1",
         4,
     ),
+    // The compact prefill fold (`mxfp8_prefill_compact`) stores each output
+    // element of a live row once, zero for a refused row (2026-11-06).
+    (
+        "chop_deepseek41_mxfp8_fold_m*_f32_v2_compact_m#_n128_s#_v1",
+        4,
+    ),
     (
         "chop_deepseek41_dense_decode_n#_k#_g#_single_e4m3_ue8m0_k32x4_f32_f32_n16r1s2w0f1_v1",
         1,

@@ -445,6 +445,10 @@ mod tests {
                     .unwrap();
                 let measured = crate::sm120::prefill_matrix::choice(q, rows).is_some()
                     || crate::sm120::mxfp8_fold::compact::stages(&FLASH, q, rows).is_some()
+                    || crate::sm120::mxfp8_fold::compact::ranges(&FLASH, 4, q)
+                        .unwrap()
+                        .iter()
+                        .any(|(range, _)| range.contains(&rows))
                     || crate::sm120::prefill_tma_scales::choice(&FLASH, 4, q, rows);
                 let changed = rows > MAX_ROWS && rows % TILE != 0 && !measured;
                 if !changed {

@@ -104,7 +104,7 @@ pub struct CudaHostDeviceV1 {
     peer_backpressure: PeerBackpressure,
 }
 
-/// Candidate switch: `stream` (the default) or `event`.
+/// Candidate switch: `event` (the default) or `stream`.
 const PEER_COPY_BACKPRESSURE_ENV: &str = "CHOPINFER_PEER_COPY_BACKPRESSURE";
 
 /// What a full peer-copy queue waits for before it takes another copy.
@@ -118,19 +118,19 @@ enum PeerBackpressure {
 }
 
 impl PeerBackpressure {
-    /// The selection a set value names; an unknown one keeps `Stream`.
+    /// The selection a set value names; an unknown one keeps `Event`.
     fn from_env(value: Option<&std::ffi::OsStr>) -> Self {
         let Some(value) = value else {
-            return Self::Stream;
+            return Self::Event;
         };
         let selected = match value.to_str() {
             Some("event") => Self::Event,
             Some("stream") => Self::Stream,
             _ => {
                 runtime_log::warn!(
-                    "{PEER_COPY_BACKPRESSURE_ENV}={value:?} is not stream or event; using stream"
+                    "{PEER_COPY_BACKPRESSURE_ENV}={value:?} is not stream or event; using event"
                 );
-                Self::Stream
+                Self::Event
             }
         };
         runtime_log::info!("peer copy backpressure: {selected:?}");

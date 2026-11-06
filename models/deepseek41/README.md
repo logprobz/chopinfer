@@ -572,3 +572,7 @@ and off: prompts of 101,305, 40,000 and 8,703 tokens, each cold and again
 from the prefix cache, ran the same 114 serving steps with the same template
 counts (17 misses, 3 hits, 4 refused) and returned the same token IDs and
 top-5 logprobs, bit for bit.
+
+B against C: 1.6% at both live cells (313.6 to 308.6 ms and 415.2 to
+408.7 ms), 2.1% at 1,024 rows, 0.4% beside C16 and 0.3% for the chunks;
+decode steps were unchanged within noise.

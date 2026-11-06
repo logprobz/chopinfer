@@ -340,7 +340,7 @@ fn peer_copy_submission_failures_fence_before_releasing_the_leases() {
 #[test]
 fn unfinished_peer_copies_apply_bounded_backpressure() {
     let mut f = Fixture::new();
-    let fences = fake_driver::call_count(5);
+    let (fences, waits) = (fake_driver::call_count(5), fake_driver::call_count(36));
     for index in 0..=MAX_PENDING_PEER_COPIES {
         if index > 0 {
             fake_driver::fail_next(31, 600);
@@ -349,11 +349,13 @@ fn unfinished_peer_copies_apply_bounded_backpressure() {
         assert!(f.device.peer_copies.len() <= MAX_PENDING_PEER_COPIES);
     }
     assert_eq!(f.device.peer_copies.len(), MAX_PENDING_PEER_COPIES);
+    // A full queue waits for its oldest copy's event, not its stream.
     assert_eq!(
-        fake_driver::call_count(5),
-        fences + 1,
+        fake_driver::call_count(36),
+        waits + 1,
         "only a full queue forces completion"
     );
+    assert_eq!(fake_driver::call_count(5), fences);
     f.finish();
 }
 
@@ -417,12 +419,12 @@ fn a_failed_event_wait_keeps_the_oldest_copy_and_submits_nothing() {
 #[test]
 fn peer_backpressure_reads_its_candidate_switch() {
     use std::ffi::OsStr;
-    assert_eq!(PeerBackpressure::from_env(None), PeerBackpressure::Stream);
+    assert_eq!(PeerBackpressure::from_env(None), PeerBackpressure::Event);
     for (value, selected) in [
         ("event", PeerBackpressure::Event),
         ("stream", PeerBackpressure::Stream),
-        ("Event", PeerBackpressure::Stream),
-        ("", PeerBackpressure::Stream),
+        ("Event", PeerBackpressure::Event),
+        ("", PeerBackpressure::Event),
     ] {
         assert_eq!(
             PeerBackpressure::from_env(Some(OsStr::new(value))),

@@ -12,7 +12,7 @@ The rules are implemented once, in Rust (crates/runtime-eval/src/
 declaration.rs): `validate` sends the declaration to `chopinfer eval
 declaration`, which refuses a missing, unknown or mistyped field with its
 path. This module keeps the paths and names of declarations and the gate
-layout. Schema evolution (tools/qual/README.md#model-declarations): v1 grows
+layout. Schema evolution (docs/check-kinds.md): v1 grows
 only by optional fields whose absence keeps the behavior before them, and any
 change in the meaning of a field takes a new schema version.
 """
@@ -37,7 +37,7 @@ CHECKPOINT_KEYS = ("repository", "revision", "served_model_name", "source_lock_s
 # The CPU fixture self-test config; it names no model and keeps the gate layout.
 MECHANICS = Path(__file__).with_name("gates") / "mechanics.json"
 # The root of external variants (`--variant-dir`): `<root>/<model>/<variant>.json`
-# overlays a model's qual.json from outside the tree (tools/qual/README.md#external-variants).
+# overlays a model's qual.json from outside the tree (docs/check-kinds.md#external-variants).
 VARIANTS_ENV = "CHOPINFER_QUAL_VARIANTS"
 
 

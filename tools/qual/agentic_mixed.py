@@ -1308,7 +1308,7 @@ def markup_for(frontend, args, model):
         raise ReParserUnavailable(f"the frontend's format declares no library tool grammar ({', '.join(TOOL_GRAMMARS)}) "
                          f"and {where} holds no agentic_markup.py: declare a library grammar in "
                          "format.parser.tool_grammar, or supply the model's own re-parser as "
-                         "agentic_markup.py in its model root (tools/qual/README.md)")
+                         "agentic_markup.py in its model root")
     module, digest = loaded
     return module.Markup(frontend), digest
 

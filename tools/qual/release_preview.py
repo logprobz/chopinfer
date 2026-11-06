@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """The direct correctness run: one model's configurations, served from one
 release install, checked against the HF F32 references and the stored
-baselines. See tools/qual/README.md#correctness-runner.
+baselines. See docs/contributing.md#correctness-runner.
 
     release_preview.sh prepare --model M [--config C ...] [--target-dir DIR]
     release_preview.sh run --model M [--config C ...] [--suite quick|full]
@@ -133,7 +133,7 @@ PRODUCER = ['record', '--url', '{url}', '--server-log', '{server_log}', '--taps-
 # The record each declared input names: (arm, script, arguments). A check
 # module may add its own arms and records in the same form, as module-level
 # RUNNER_ARMS and RUNNER_RECORDS, for inputs this table does not name
-# (README#correctness-runner).
+# (docs/contributing.md#correctness-runner).
 RECORD_ARGUMENTS = {}
 RECORDS = {
     'spec_ar': ('ar', 'spec_verify.py', ['record', *SHARED, '--arm', 'chopinfer-ar', '--run-id', '{run_id}',
@@ -173,7 +173,7 @@ SHARD_INPUT = re.compile(r'prefix_record_(\d+)$')
 LOG_INPUT = 'server_log'
 # A check input named stored_<check> is the stored receipt of <check> in the
 # same configuration and arm: such a check is a regression row, run once per
-# store (README#correctness-runner).
+# store (docs/contributing.md#correctness-runner).
 STORED = 'stored_'
 
 

@@ -1,6 +1,6 @@
 """External variants: another checkpoint of a supported model qualified from
 an overlay kept outside the tree, with its lock, checkpoint lock and
-references beside it (tools/qual/README.md#external-variants)."""
+references beside it (docs/check-kinds.md#external-variants)."""
 from qual_test_config import setUpModule  # noqa: F401
 
 import contextlib

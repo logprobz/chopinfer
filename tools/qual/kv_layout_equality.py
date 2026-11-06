@@ -139,7 +139,7 @@ RUNNER_FORCED_REFERENCES = ["long_context"]
 # A forced record, as release_preview.py RECORDS["verify_ar"] takes one.
 _FORCED = ["record", "--url", "{url}", "--model", "{name}", "--k", "0", "--require-row-shapes", "--server-log",
            "{server_log}", *(word for name in RUNNER_FORCED_REFERENCES for word in ("--reference", name))]
-# The correctness runner's arms and records (tools/qual/README.md#kv-layout-equality):
+# The correctness runner's arms and records (docs/check-kinds.md#kv-layout-equality):
 # the kv-native servers replace the configuration's --kv-cache-dtype with
 # auto, kv-native-forced also forcing the reference tokens as
 # release_preview.py FORCED does; the configuration's own server records

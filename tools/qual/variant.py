@@ -10,7 +10,7 @@
         [--quick ID...] [--keep-reference NAME...] [--from-default KEY...] [--profile-name P]
         [--checkpoint-env KEY]
 
-An external variant (tools/qual/README.md#external-variants) is the overlay
+An external variant (docs/check-kinds.md#external-variants) is the overlay
 `DIR/M/V.json` of the model's `models/M/qual.json`, with everything it owns
 beside it: its checkpoint lock, its references and their workloads, and its
 reference lock. Nothing here writes into the tree.

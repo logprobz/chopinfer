@@ -2,7 +2,7 @@
 declared margins.
 
 The accepted capture is the runner's stored last-good or seed capture of the
-same configuration and arm (tools/qual/README.md#correctness-runner); the
+same configuration and arm (docs/contributing.md#correctness-runner); the
 margins are the check's constants.paired_teacher.PROFILE_POLICIES entry for
 the live serving profile.
 """

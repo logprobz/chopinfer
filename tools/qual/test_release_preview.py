@@ -3319,6 +3319,30 @@ class RescoreTests(FakeRunTests):
                 self.assertEqual({(row['status'], row['error']) for row in rows if row['id'].endswith('/teacher')},
                                  {(status, 'spec: changed')})
 
+    def test_a_regression_row_the_run_had_no_baseline_for_replays_as_recorded(self):
+        """A store that holds a baseline only after the run (its own, once
+        promoted) is not read on rescore: the regression row the run could
+        not judge stays informational with its recorded reason."""
+        with tempfile.TemporaryDirectory() as temporary, \
+                patch.object(runner, 'VALIDATION', Path(temporary) / 'validation'):
+            fake, code, result = self.recorded(Path(temporary), model(lambda facts: 'paired_teacher' in facts['quick']))
+            self.assertEqual(code, 0)
+            recorded = {row['id']: row for row in result['rows'] if '/paired_teacher/' in row['id']}
+            self.assertTrue(recorded)
+            self.assertEqual({row['status'] for row in recorded.values()}, {'informational'})
+            stored = fake.base / 'promoted/teacher.json'
+            runner.write(stored, {'passed': True})
+            for store in runner.STORES:
+                runner.Store(store, fake.model).write(fake.base / 'promoted', {
+                    'model': fake.model, 'suite': 'full', 'source': fake.identity(),
+                    'install_source': fake.identity(), 'rows': [
+                        {'id': name.rsplit('/', 2)[0] + '/teacher', 'status': 'pass', 'receipt': str(stored)}
+                        for name in recorded]}, 'test promotion')
+            code, rows = self.replay(fake)
+            self.assertEqual(code, 0, [row for row in rows if row['status'] not in runner.PASSING])
+            self.assertEqual({row['id']: (row['status'], row['reason']) for row in rows if row['id'] in recorded},
+                             {name: ('informational', row['reason']) for name, row in recorded.items()})
+
     @staticmethod
     def snapshot(root):
         return {str(path.relative_to(root)): path.read_bytes() if path.is_file() else None

@@ -1563,8 +1563,10 @@ class Run:
         self.args, self.facts, self.configs, self.identity = args, facts, configs, identity
         self.install, self.directory = install, directory
         # A rescore replays a recorded run: its children's exits and receipts
-        # are read, not produced, and what it judges anew goes to `out`.
+        # are read, not produced, and what it judges anew goes to `out`;
+        # `recorded_rows` are the run's own rows, by ID.
         self.replay, self.out = False, directory
+        self.recorded_rows = {}
         self.install_source = None
         self.installs = {(): install}
         self.install_metadata = {}
@@ -1901,6 +1903,12 @@ def run_check(run, context, step, arm_dir, arm):
         receipts = {name: run.stores[store].receipt(config, f'{config}/{arm}/{name[len(STORED):]}')
                     for name in stored}
         recorded = (arm_dir / 'checks' / label.replace('/', '-') / 'inputs.json').is_file()
+        kept = run.recorded_rows.get(f'{config}/{arm}/{label}', {}) if run.replay and not recorded else {}
+        if kept.get('status') == 'informational':
+            # The store may hold a baseline now (this run's own, once
+            # promoted); the run had none to judge against.
+            run.row(config, arm, label, 'informational', reason=kept.get('reason'))
+            continue
         if None in receipts.values() and not (run.replay and recorded):
             run.row(config, arm, label, 'informational',
                     reason=f"no baseline yet: the {store} store holds no "
@@ -2570,6 +2578,7 @@ def rescore_run(root, out=None):
     facts, configs = select_checks(facts, configs, args.suite, args.check)
     run = Run(args, facts, configs, state['source'], Path(state['install']), root)
     run.replay, run.out = True, out
+    run.recorded_rows = {row['id']: row for row in recorded.get('rows', [])}
     run.packages, run.install_source = state['packages'], state.get('install_source')
     run.installs.update({tuple(key.split('+')): Path(path) for key, path in state.get('installs', {}).items()})
     run.install_metadata = {tuple(key.split('+')) if key else (): value

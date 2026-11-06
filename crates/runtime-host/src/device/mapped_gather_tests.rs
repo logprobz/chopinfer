@@ -435,10 +435,15 @@ fn large_gathers_read_through_descriptors_and_zero_restores_the_mapping() {
             assert!(touched, "the mapped copy must read the mapping");
         } else {
             // Rank 0's codes and scales are one batch and the shifted plane
-            // another; the other ranks copy rank 0's bytes, on four threads
-            // with copiers and on the gather's own without.
+            // another; the other ranks copy rank 0's bytes, on up to four
+            // threads with copiers and on the gather's own without.
             assert_eq!(counted, (2, 3 * LARGE as u64));
-            assert_eq!(parallel, u64::from(mode == "copiers"), "{mode:?}");
+            let threads = crate::host_rows::fetch::available_threads();
+            assert_eq!(
+                parallel,
+                u64::from(mode == "copiers" && threads > 1),
+                "{mode:?}"
+            );
             assert!(!touched, "large reads touched the mapping");
         }
         check_ranks(&planes, &ids, &outputs);

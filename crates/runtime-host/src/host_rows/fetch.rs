@@ -45,6 +45,7 @@ static LARGE_GATHERS: AtomicU64 = AtomicU64::new(0);
 static LARGE_ROWS: AtomicU64 = AtomicU64::new(0);
 static FANOUT_COPIES: AtomicU64 = AtomicU64::new(0);
 static PARALLEL_FANOUTS: AtomicU64 = AtomicU64::new(0);
+static PARALLEL_FANOUT_CHUNKS: AtomicU64 = AtomicU64::new(0);
 
 fn configured(value: Option<std::ffi::OsString>) -> bool {
     value.is_none_or(|value| value == "1")
@@ -149,18 +150,27 @@ pub(crate) fn fanout_copiers() -> usize {
     *COPIERS.get_or_init(|| configured_copiers(std::env::var_os(COPIERS_ENV)))
 }
 
+/// The threads this process may run on (its affinity and quota), read
+/// once: more copiers than that would only wait for one another.
+pub(crate) fn available_threads() -> usize {
+    static THREADS: OnceLock<usize> = OnceLock::new();
+    *THREADS.get_or_init(|| std::thread::available_parallelism().map_or(1, usize::from))
+}
+
 /// Copies each `(to, from)` pair, of equal lengths: a prepared gather's
 /// fanout. With [`fanout_copiers`] above one and at least 8 MiB to copy, up
-/// to that many threads copy it in 1 MiB chunks, the calling thread among
-/// them; a copier that cannot start leaves its chunks to the others. The
-/// copiers only copy host bytes, and every one has finished before this
-/// returns. The bytes are the same either way.
+/// to that many threads, and no more than the process may run on, copy it
+/// in 1 MiB chunks, the calling thread among them; a copier that cannot
+/// start leaves its chunks to the others. The copiers only copy host bytes,
+/// and every one has finished before this returns. The bytes are the same
+/// either way.
 pub(crate) fn copy_fanout(copies: Vec<(&mut [u8], &[u8])>) {
-    copy_fanout_on(copies, fanout_copiers());
+    copy_fanout_on(copies, fanout_copiers().min(available_threads()));
 }
 
 /// [`copy_fanout`] on up to `copiers` threads. Returns the chunks other
-/// threads copied.
+/// threads copied. A fanout that started another copier counts as a
+/// parallel fanout once every copier finished.
 fn copy_fanout_on(copies: Vec<(&mut [u8], &[u8])>, copiers: usize) -> usize {
     let bytes = copies.iter().map(|(to, _)| to.len()).sum::<usize>();
     if copiers < 2 || bytes < PARALLEL_FANOUT_BYTES {
@@ -188,8 +198,7 @@ fn copy_fanout_on(copies: Vec<(&mut [u8], &[u8])>, copiers: usize) -> usize {
             copied += 1;
         }
     };
-    PARALLEL_FANOUTS.fetch_add(1, Ordering::Relaxed);
-    std::thread::scope(|scope| {
+    let (started, copied) = std::thread::scope(|scope| {
         let others = (1..copiers)
             .filter_map(|_| {
                 std::thread::Builder::new()
@@ -199,15 +208,22 @@ fn copy_fanout_on(copies: Vec<(&mut [u8], &[u8])>, copiers: usize) -> usize {
             })
             .collect::<Vec<_>>();
         copy();
-        others
+        let started = others.len();
+        let copied = others
             .into_iter()
             .map(|other| {
                 other
                     .join()
                     .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
             })
-            .sum()
-    })
+            .sum::<usize>();
+        (started, copied)
+    });
+    if started > 0 {
+        PARALLEL_FANOUTS.fetch_add(1, Ordering::Relaxed);
+        PARALLEL_FANOUT_CHUNKS.fetch_add(copied as u64, Ordering::Relaxed);
+    }
+    copied
 }
 
 /// Whether [`copy_large`] reads `bytes` output bytes of `mapping`: large
@@ -238,6 +254,7 @@ pub(crate) fn snapshot() -> serde_json::Value {
         "large_rows":LARGE_ROWS.load(Ordering::Relaxed),
         "large_fanout_copies":FANOUT_COPIES.load(Ordering::Relaxed),
         "fanout_copiers":fanout_copiers(), "parallel_fanouts":PARALLEL_FANOUTS.load(Ordering::Relaxed),
+        "parallel_fanout_chunks":PARALLEL_FANOUT_CHUNKS.load(Ordering::Relaxed),
         "mapped_fallback_rows":MAPPED.load(Ordering::Relaxed),
         "legacy_async_gathers":legacy_gathers, "legacy_async_misses":legacy_misses,
     })

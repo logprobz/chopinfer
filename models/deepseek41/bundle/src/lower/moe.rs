@@ -250,10 +250,10 @@ impl Lowering<'_> {
     }
 
     /// The rank's routed rows summed per token into the sublayer's F32
-    /// partial, plus the shared expert's F32 partial. A prefill writes the
-    /// carried rows where it has a row origin, and also without one under
-    /// `prefill_dma_producer_intervals`, so a DMA call can split the sum
-    /// over its owner intervals; otherwise the capacity view.
+    /// partial, plus the shared expert's F32 partial. A prefill writes its
+    /// carried rows, with or without a row origin, so a DMA call can split
+    /// the sum over its owner intervals; other phases write the capacity
+    /// view.
     pub(super) fn routed_sum(&self, phase: Phase) -> Result<Option<Vec<Lowered>>, String> {
         let Some(ops) = &self.ops.moe else {
             return Ok(None);
@@ -263,9 +263,7 @@ impl Lowering<'_> {
             routed: scratch.routed,
             ids: scratch.expert_ids,
             addend: Some(scratch.shared_partial),
-            output: if phase.prefill()
-                && (self.prefill_row_origin.is_some() || self.shape.prefill_dma_producer_intervals)
-            {
+            output: if phase.prefill() {
                 self.carried(phase, scratch.partial)?
             } else {
                 scratch.partial

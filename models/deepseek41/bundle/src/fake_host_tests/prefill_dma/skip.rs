@@ -181,10 +181,8 @@ fn sparse_dma_serves_dspark_target_prefill() {
                 (0, 0)
             }
         );
-        assert_eq!(
-            split_producers(&reference, &candidate).unwrap(),
-            if rows == 8192 { 36 * 4 } else { 0 }
-        );
+        // The producer splits over the owner intervals at any row count.
+        assert_eq!(split_producers(&reference, &candidate).unwrap(), 36 * 4);
         assert_eq!(
             candidate
                 .iter()
@@ -325,10 +323,7 @@ fn sparse_dma_carries_bf16_partials_where_the_cone_reduces_them() {
         assert_eq!(phased(&reference) - phased(&candidate), 73 * 4);
         assert_eq!(count(&candidate, SUM), 0);
         assert_eq!(count(&candidate, BF16_SUM), 73 * 4);
-        assert_eq!(
-            count(&candidate, BF16_ROUND),
-            73 * 6 + if rows == 8192 { 36 * 6 } else { 0 }
-        );
+        assert_eq!(count(&candidate, BF16_ROUND), 73 * 6 + 36 * 6);
         let before = compute(&reference)
             .into_iter()
             .filter(|line| !consumer(line) && !producer(line))
@@ -346,10 +341,8 @@ fn sparse_dma_carries_bf16_partials_where_the_cone_reduces_them() {
                 (0, 0)
             }
         );
-        assert_eq!(
-            split_producers(&reference, &candidate).unwrap(),
-            if rows == 8192 { 36 * 4 } else { 0 }
-        );
+        // The producer splits over the owner intervals at any row count.
+        assert_eq!(split_producers(&reference, &candidate).unwrap(), 36 * 4);
         let copies = candidate
             .iter()
             .filter(|line| line.starts_with("peer-copy "))
@@ -866,88 +859,60 @@ fn grid_rows(line: &str) -> u64 {
         .expect("a row grid")
 }
 
-/// With `prefill_dma_producer_intervals`, the MoE producer before every DMA
-/// call (512 rows or more) splits over the transport's owner intervals at
-/// any row count and at every layer, each part an exact slice of the
-/// unsplit launch; every other launch is unchanged. Without the DMA route
-/// the only change is the routed sum writing exactly its rows instead of
-/// the partial's capacity.
+/// The MoE producer before every DMA call (512 rows or more) splits over
+/// the transport's owner intervals at any row count and at every layer,
+/// each part an exact slice of the unsplit launch, which writes exactly its
+/// rows of the partial; every other launch is the unsplit journal's. The
+/// `prefill_dma_producer_intervals` option, adopted, changes nothing.
 #[test]
 fn producer_intervals_split_every_moe_call_at_any_row_count() {
     use super::super::query_window::arguments;
     let spans = super::super::shared_overlap::journal_spans;
     let hidden = u64::from(FLASH.shape.hidden);
     let on = [(PREFILL_DMA_PRODUCER_INTERVALS, true.into())];
+    let without = |journal: &[String]| {
+        compute(journal)
+            .into_iter()
+            .filter(|line| !consumer(line) && !producer(line))
+            .cloned()
+            .collect::<Vec<_>>()
+    };
     for rows in [512, 1500, 2304, 3000, 8191, 8192] {
-        let default = capture(rows, Some(false));
-        let (reference, candidate) =
-            with_options(&on, || (capture(rows, Some(false)), capture(rows, None)));
-        assert_eq!(default.len(), reference.len(), "rows={rows}");
-        let mut narrowed = 0;
-        for (before, after) in default.iter().zip(&reference) {
-            if before == after {
-                continue;
-            }
-            assert!(producer(before) && producer(after), "rows={rows}: {after}");
-            let (old, new) = (arguments(before), arguments(after));
-            assert_eq!(old.len(), new.len());
-            for (at, (a, b)) in old.iter().zip(&new).enumerate() {
-                if at == 5 {
-                    let (whole, exact) = (spans(a), spans(b));
-                    assert_eq!(
-                        exact,
-                        vec![(whole[0].0, whole[0].1, grid_rows(after) * hidden * 4)]
-                    );
-                } else {
-                    assert_eq!(a, b, "rows={rows}: argument {at} of {after}");
-                }
-            }
-            assert_eq!(
-                before.split_once(" [").unwrap().0,
-                after.split_once(" [").unwrap().0
-            );
-            narrowed += 1;
-        }
-        let calls = reference
+        let (unsplit, split) = (capture(rows, Some(false)), capture(rows, None));
+        let calls = unsplit
             .iter()
             .filter(|line| producer(line) && grid_rows(line) >= 512)
             .count();
-        assert!(
-            calls >= 20 * 4,
-            "rows={rows}: {calls} producers before DMA calls"
-        );
+        if rows == 8192 {
+            assert_eq!(calls, 36 * 4);
+        } else {
+            assert!(
+                calls >= 20 * 4,
+                "rows={rows}: {calls} producers before DMA calls"
+            );
+        }
+        for line in unsplit.iter().filter(|line| producer(line)) {
+            let lengths = spans(&arguments(line)[5])
+                .into_iter()
+                .map(|span| span.2)
+                .collect::<Vec<_>>();
+            assert_eq!(lengths, vec![grid_rows(line) * hidden * 4], "{line}");
+        }
         assert_eq!(
-            split_producers(&reference, &candidate).unwrap(),
+            split_producers(&unsplit, &split).unwrap(),
             calls,
             "rows={rows}"
         );
-        if rows == 8192 {
-            assert_eq!(narrowed, 0);
-            assert_eq!(calls, 36 * 4);
-        } else {
-            assert!(narrowed >= 20 * 4, "rows={rows}");
-        }
-        let before = compute(&reference)
-            .into_iter()
-            .filter(|line| !consumer(line) && !producer(line))
-            .collect::<Vec<_>>();
-        let after = compute(&candidate)
-            .into_iter()
-            .filter(|line| !consumer(line) && !producer(line))
-            .collect::<Vec<_>>();
-        let unsplit = compute(&capture(rows, None))
-            .into_iter()
-            .filter(|line| !consumer(line) && !producer(line))
-            .map(|line| line.to_owned())
-            .collect::<Vec<_>>();
-        assert_eq!(before, after, "rows={rows}");
-        assert_eq!(
-            after
-                .iter()
-                .map(|line| line.to_string())
-                .collect::<Vec<_>>(),
-            unsplit,
-            "rows={rows}"
+        assert_eq!(without(&unsplit), without(&split), "rows={rows}");
+        let (option_unsplit, option_split) =
+            with_options(&on, || (capture(rows, Some(false)), capture(rows, None)));
+        assert!(
+            option_unsplit == unsplit,
+            "rows={rows}: the option changed the unsplit journal"
+        );
+        assert!(
+            option_split == split,
+            "rows={rows}: the option changed the split journal"
         );
     }
 }

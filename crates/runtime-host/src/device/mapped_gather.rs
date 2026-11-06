@@ -170,6 +170,7 @@ enum Lead {
 /// another rank's copy of a resident-path leader finds its rows in the
 /// resident cache, or without one in the page cache. The bytes equal
 /// gathering plane by plane: each is the mapped table's row or a copy of it.
+/// A gather that succeeds has written every byte of every output.
 pub fn gather_planes_v1(
     planes: &[MappedGatherPlaneV1],
     input: &[u8],

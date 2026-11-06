@@ -501,6 +501,18 @@ impl Staging {
     }
 }
 
+#[cfg(test)]
+thread_local! {
+    static EARLY_STAGINGS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// The steps that staged their prefill rows before catch-up on this thread
+/// (`Adapter::begin_prefill_engram`).
+#[cfg(test)]
+pub(crate) fn early_stagings() -> u64 {
+    EARLY_STAGINGS.get()
+}
+
 /// Host wall time of each synchronous phase of one execute, in microseconds.
 /// Catch-up, drafting and readback end in device synchronizations, so they
 /// include their device time. Prefill target includes upload, submission and
@@ -685,10 +697,12 @@ impl<P: Program> Host for Adapter<'_, P> {
     fn begin_prefill_engram(&mut self, inputs: &[Input]) -> Result<(), String> {
         self.staging.early = None;
         let is_prefill = |input: &&Input| matches!(input.rows.kind, Kind::Prefill { .. });
-        // Neither option, or no prefill, leaves the step as it was.
         let begins = self.program.begins_prefill_engram();
-        if !(begins || self.program.plans_prefill_early()) || !inputs.iter().any(|i| is_prefill(&i))
-        {
+        // A prefill plans early only beside the drafter (`plan_prefill`).
+        let plans = self.program.plans_prefill_early()
+            && inputs.iter().any(|input| input.rows.kind.drafts() > 0);
+        // Neither, or no prefill, leaves the step as it was.
+        if !(begins || plans) || !inputs.iter().any(|i| is_prefill(&i)) {
             return Ok(());
         }
         let prefill = inputs
@@ -722,6 +736,8 @@ impl<P: Program> Host for Adapter<'_, P> {
                 || program.begin_prefill_engram(&phase.hashed),
             )?;
         }
+        #[cfg(test)]
+        EARLY_STAGINGS.set(EARLY_STAGINGS.get() + 1);
         self.staging.early = Some((prefill, phase));
         Ok(())
     }

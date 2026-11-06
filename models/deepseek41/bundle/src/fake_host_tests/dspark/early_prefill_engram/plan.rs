@@ -81,10 +81,19 @@ fn early_plans_issue_the_default_journal() {
         ),
     ] {
         let (off, none) = planned(&schedule, &options);
+        let staged = crate::dspark::staging::early_stagings();
         let (on, plans) = planned(&schedule, &with(&options, &plan));
+        let staged = crate::dspark::staging::early_stagings() - staged;
         assert_eq!(none, 0, "{name}");
         assert_eq!(plans, mixed_steps(&on), "{name}");
         assert_eq!(plans, 8, "{name}");
+        // Planning alone stages only the mixed steps' prefills, which plan
+        // beside the drafter; the early begin stages every prefill.
+        let begins = options
+            .iter()
+            .any(|(option, _)| *option == DSPARK_EARLY_PREFILL_ENGRAM);
+        let expected = if begins { on.steps.len() as u64 } else { plans };
+        assert_eq!(staged, expected, "{name}");
         assert_same_runs(&off, &on, name);
     }
 }

@@ -25,6 +25,9 @@ scope.
 Qualified profiles have recorded serving evidence for their declared
 configuration. That status does not qualify every checkpoint, quantization
 or override. The linked profile files hold exact settings and evidence;
-[profile notes](docs/serving-profiles.md) explain their scope and exceptions.
+[build and serve](docs/developer-preview.md) explains profile selection and
+qualification scope.
 
-[Build and serve](docs/developer-preview.md) | [Contribute](docs/contributing.md)
+[Build and serve](docs/developer-preview.md) | [Operate](docs/operations-observability.md) |
+[HTTP API](docs/serving-request-surface.md) | [Contribute](docs/contributing.md) |
+[Architecture](BUNDLE_ARCHITECTURE.md)

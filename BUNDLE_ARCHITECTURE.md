@@ -1,15 +1,15 @@
 # Chopinfer bundle architecture
 
-This document states the ownership boundary and bundle ABI rules. The
-[model integration guide](docs/adding-a-model.md) covers in-tree and
-independent SDK workflows.
+This document states the ownership boundary and bundle ABI rules.
+[Adding a model](#adding-a-model) covers in-tree and independent SDK
+workflows.
 
 Chopinfer separates the model-neutral Rust serving runtime from installable
 model bundles. The host loads one explicitly selected local bundle at process
 start through a versioned C ABI. The initial kernel family is SM120. A
 model's sources (`bundle`, `compiler`, `contract`) live in its own
 repository, built against an exported SDK, or for the in-tree models in
-`models/<m>/` (today `mimo26`, `qwen38` and `glm5next`).
+`models/<m>/` (today `mimo26`, `qwen38`, `glm5next` and `deepseek41`).
 
 ## Ownership boundary
 
@@ -204,9 +204,9 @@ model's renderer in Rust as a `frontend_format::ChatFormatV1` in its contract
 crate and exports it with `frontend_format::export_chat_format_v1!(Format)`.
 That export renders through the model's code and parses completions and
 builds tool constraints from the declaration's `format.parser` section with
-the shared parsers of the opt-in `frontend-format` library
-([its README](crates/frontend-format/README.md)). No template runs: the
-format object is data the model's code and the shared parsers read.
+the shared parsers of the opt-in `frontend-format` library. No template
+runs: the format object is data the model's code and the shared parsers
+read.
 
 ## Model options
 
@@ -312,6 +312,91 @@ architecture, topology, artifact identities, exact kernels, and serving
 limits. Compatible quantizations of one family reuse the same implementation
 through [quantized checkpoint support](docs/kernel-library.md#activation-policy). A new
 model needs a new bundle and profile, not a shared model-specific switch.
+
+## Adding a model
+
+The model owns its compiler, contract, native bundle, frontend and
+qualification; the host owns transport, scheduling and device services. An
+in-tree model lives under `models/<model>/{compiler,contract,bundle}`; an
+independent model uses the same roles against a pinned SDK checkout. The
+executable example in `examples/external-model/` holds the export, lock,
+build, package and exercise commands.
+
+`model.toml` declares Cargo role targets, optional release selection,
+contributor fixtures and check inputs; `tools/model_sdk/inventory.py`
+validates it. A Cargo target ships only when an enabled release declaration
+selects it. `publisher` restricts the checkpoint names a model commits to
+its author; other checkpoints use
+[external qualification variants](docs/check-kinds.md#external-variants). Keep
+geometry, projections, encoders, tuning, frontend assets, serving profiles,
+deployment policy, kernel locks and qualification declarations with the
+model. Small test inputs belong in fixtures; weights and captured evidence
+stay outside the tree.
+
+### External SDK workflow
+
+Pin the SDK's full revision and content identity in `sdk-pin.json`,
+reconcile and commit Cargo.lock, and keep a real nested `sdk/` checkout.
+The `tools.model_sdk` workflow checks role dependency closures, locks,
+exports, compatibility matrices and test execution. A model's kernel tests
+use `kernel-harness` in its own test crate; new models do not register in
+`kernel-lab`. Compatibility has four parts: Rust SDK source, native ABI,
+package and frontend schemas, and host capabilities. Pin and test all four;
+matching C symbols alone does not promise compatibility across releases.
+Test independently built bundles against the intended prebuilt hosts.
+
+### Model implementation
+
+The compiler implements `model_compiler_sdk::preparation::helper::Provider`:
+`probe` routes metadata and `emit_direct` validates the checkpoint and emits
+a canonical package with planned weight components. The installed
+`chopinfer-model-<model>` helper is discovered beside the host executable.
+Package emission takes an explicitly built native module; it does not build
+one. Each model has one bundle ID and one package containing every
+supported rank topology and its resources.
+
+Declare tensor names, shapes, split rules and precision in the model's
+projection specification (`projection-spec`). Derive rank-local views from
+the checkpoint, preserving scale-group boundaries and source scale origins.
+Layout admission, payload validation and quality qualification are separate
+checks; a format an engine supports does not qualify every activation policy
+or checkpoint that uses it.
+
+Generic model code requests math through `&dyn Backend` and model-owned
+`&dyn OwnOps`. Target modules register compiled entries and prepare them at
+instance creation; selection belongs to the backend, and unsupported
+operations refuse at prepare. Follow the
+[kernel contribution rules](docs/kernel-library.md#adding-an-op): required
+conformance cases must prepare and run, and no refused or unexercised case
+counts as a pass.
+
+### Chat frontend rules
+
+Implement the renderer in model-owned Rust with `frontend-format`, or
+implement the native frontend contract ([frontend export](#frontend-export)).
+Checkpoint chat templates are reference inputs, not executed server code.
+Declare `output_tokens` to bound the chat and Responses requests that set no
+output limit, and where a geometry lowers the context, lower those lengths
+with `runtime_frontend_contract::lower_output_tokens_v1`.
+
+Port the upstream template or encoder literally, citing source lines. Keep
+HF render, tokenization and streaming vectors as goldens and run
+`chopinfer bundle check-frontend` on the built package, covering reasoning,
+tools, role handling, media and every byte split of streaming output. Use
+the HF differential corpus (`python3 -m tools.refrun.frontend_corpus`) to
+tell real divergence from intentionally unsupported or lossy template
+behavior; a `no-round-trip` declaration must identify the actual union,
+delimiter or tokenizer loss. A missing shared tokenizer or media capability
+needs a model-neutral contract and tests, and a completion syntax absent
+from `frontend-format` needs a reusable parser family. Never regenerate a
+golden to hide a mismatch.
+
+A model declares bounded contributor fixtures and exact test selectors in
+`model.toml` ([contributor checks](docs/contributing.md#first-success-without-weights-or-cuda)),
+and its release gate in `qual.json` with a reference lock and model-owned
+reference adapter. A model with a drafter sets its per-concurrency draft
+depths with the depth tuner (`tools/tune`, `models/<model>/depth-tune.json`)
+and puts the selected schedule in the drafting profile's `depths`.
 
 ## Qualification
 

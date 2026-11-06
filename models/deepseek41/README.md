@@ -164,7 +164,7 @@ them. A non-default value is unqualified.
 | `prefill_norm_ceil_rows` | `false` | Candidate: Flash prefill steps of 33 to 8192 rows (`norm.input_range.prefill`) run each sublayer input norm as the fused prefill norm-ceil, as the 22 measured rows of `norm.input_admit.prefill` do, instead of the row norm, the widening of its rows and the serial input quantizer; normed, widened, codes, scales and row status are unchanged. On two GPUs on 2026-11-06 (300 W limit), the fused launch matched the chain bit for bit at every row count from 33 to 8192, and in the pair lab with an A/A control it took 51, 69 and 85 us per launch against 180, 186 and 201 us for the chain at 1500, 2300 and 3000 rows. In the 2026-11-06 live-shape mixed-step profile every serial input quantizer at those rows follows its row norm, and the unfused chain spans 148 to 179 us per site, about 100 sites per rank. Not adopted: no served A/B yet. |
 | `prefill_plan_cache_plans` | `16` | Kept short-prompt plans, from 1 to 64; evict the least recently used plan when full. |
 | `prefill_plan_cache_verify` | `false` | Lower each cache hit and each reused plan template again and refuse a differing plan. |
-| `prefill_streamed_lowering` | `false` | Candidate: an upper-skip prefill that no kept plan or template serves lowers its body while it issues the parts already lowered, with the same launches and results, and keeps its plan once launched. A lowering failure after its first launch poisons the instance. A DSpark step-shape record's `streamed_lowering` says whether its prefill was streamed. Not yet measured. |
+| `prefill_streamed_lowering` | `true` | Candidate: an upper-skip prefill that no kept plan or template serves lowers its body while it issues the parts already lowered, with the same launches and results, and keeps its plan once launched. A lowering failure after its first launch poisons the instance. A DSpark step-shape record's `streamed_lowering` says whether its prefill was streamed. Not yet measured. |
 | `prefill_upper_skip` | `true` | Use upper-skip prefill; requires nonzero guaranteed chunk ends. |
 | `shared_overlap_max_rows` | `4294967295` | Largest graph bucket that overlaps shared-expert and eligible window-KV work. Positive values only; the default covers every admitted bucket. |
 | `text_config.candidate_topk_blocks` | `2048` | Candidate block pool, checked with index top-k and the partial newest block. |
@@ -520,3 +520,29 @@ The capacities name the tuned verify rows at 4, 6, 8, 12, 16 and 32, and
 the shapes balanced planning serves at its depths: 6 rows at C1, 12 at C2,
 24 at C4 and 32 at C8. A missing capacity or a dropped row observation
 fails the check.
+
+## Served timing
+
+On 2026-11-06 a combined timing block on `tp4-dspark` compared four
+compositions in two ABBA pairs of server visits on an idle host, every GPU
+at its 300 W limit: the previous defaults (A), A with the DSpark prefill
+steps adopted together (C: the prepared verify-row gather, the early Engram
+begin and plan, and streamed lowering), C with the peer-copy event wait
+(B), and A with the prefill kernel routes (K). Each measured cell ran 20
+prefill steps at row counts no earlier step used, beside C8 verify phases
+after a 93,056-token prefix: 1,536 to 1,555 rows (live 1.5K) and 2,880 to
+2,899 rows (live 2.9K). Regression controls ran 1,024 to 1,043 rows beside
+C8, 8,000 to 8,019 rows beside C16 after a 98,304-token prefix, and the
+8192-row chunks of a cold 200,003-token prompt. Every arm produced the same
+token IDs and top-1 logprobs. Each gain below is the mean over both pairs of
+the reduction in the median prefill-step time.
+
+C against A: 11.3% at live 1.5K (349.0 to 313.6 ms), 9.3% at live 2.9K
+(453.9 to 415.2 ms), 11.6% at 1,024 rows, 5.8% beside C16 and 1.7% for the
+chunks; decode steps were unchanged within noise.
+
+On 2026-11-06 a fixed-batch job on `tp4-ar` compared streamed lowering on
+and off: prompts of 101,305, 40,000 and 8,703 tokens, each cold and again
+from the prefix cache, ran the same 114 serving steps with the same template
+counts (17 misses, 3 hits, 4 refused) and returned the same token IDs and
+top-5 logprobs, bit for bit.

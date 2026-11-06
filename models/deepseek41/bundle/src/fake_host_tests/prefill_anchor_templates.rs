@@ -22,6 +22,7 @@ fn create(host: &Rc<Host>, sequences: u32) -> BundleInstanceV1 {
         ("prefill_chunk_tokens", 8192.into()),
         ("prefill_upper_skip", true.into()),
         ("prefill_plan_cache_verify", true.into()),
+        ("prefill_streamed_lowering", false.into()),
     ] {
         record = crate::config::tests::with_option(record, name, value);
     }

@@ -187,7 +187,7 @@ pub fn declarations() -> [ModelOptionV1; 20] {
         ),
         (
             PREFILL_STREAMED_LOWERING,
-            OptionDefinitionV1::Boolean { default: false },
+            OptionDefinitionV1::Boolean { default: true },
         ),
         (
             SHARED_OVERLAP_MAX_ROWS,
@@ -387,7 +387,7 @@ mod tests {
             dspark_mixed_prepared_engram: true,
             dspark_early_prefill_engram: true,
             dspark_early_prefill_plan: true,
-            prefill_streamed_lowering: false,
+            prefill_streamed_lowering: true,
         };
         assert_eq!(Options::read(&defaults).unwrap(), expected);
         assert_eq!(Options::read(&BTreeMap::new()).unwrap(), expected);
@@ -417,7 +417,7 @@ mod tests {
             (DSPARK_MIXED_PREPARED_ENGRAM.into(), "false".into()),
             (DSPARK_EARLY_PREFILL_ENGRAM.into(), "false".into()),
             (DSPARK_EARLY_PREFILL_PLAN.into(), "false".into()),
-            (PREFILL_STREAMED_LOWERING.into(), "true".into()),
+            (PREFILL_STREAMED_LOWERING.into(), "false".into()),
         ]);
         let resolved = declaration.resolve(&overrides).unwrap();
         assert_eq!(
@@ -442,7 +442,7 @@ mod tests {
                 dspark_mixed_prepared_engram: false,
                 dspark_early_prefill_engram: false,
                 dspark_early_prefill_plan: false,
-                prefill_streamed_lowering: true,
+                prefill_streamed_lowering: false,
             }
         );
         assert!(!declaration.is_qualified(&resolved));

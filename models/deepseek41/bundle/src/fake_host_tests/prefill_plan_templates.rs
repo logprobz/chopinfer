@@ -131,14 +131,23 @@ fn host(dspark: bool) -> Rc<Host> {
 }
 
 /// An upper-skip instance on the 8192-token grid, lowering each reused
-/// template again when `verify`.
+/// template again when `verify`, and each miss whole before it issues, as
+/// `plan_timing` plans outside a step.
 fn create(host: &Rc<Host>, verify: bool) -> BundleInstanceV1 {
     super::prefill_skip::create_profile_with_options(
         host,
         8192,
         true,
-        &[(PREFILL_PLAN_CACHE_VERIFY, verify.into())],
+        &[
+            (PREFILL_PLAN_CACHE_VERIFY, verify.into()),
+            (PREFILL_STREAMED_LOWERING, false.into()),
+        ],
     )
+}
+
+/// [`create`] without the verify mode.
+fn create_batch(host: &Rc<Host>) -> BundleInstanceV1 {
+    create(host, false)
 }
 
 fn counts(instance: &BundleInstanceV1) -> Counts {
@@ -372,7 +381,7 @@ fn templates_patch_their_step_values_and_key_their_structure() {
 #[test]
 fn anchored_plans_share_templates_and_instances_keep_64() {
     let host = host(true);
-    let instance = super::prefill_skip::create_profile(&host, 8192, true);
+    let instance = create_batch(&host);
     let anchored = |request, slot| {
         BatchRequestV1::new(
             BatchWireVersionV1::V3,
@@ -394,7 +403,7 @@ fn anchored_plans_share_templates_and_instances_keep_64() {
     }
     let mut instance = instance;
     instance.destroy().unwrap();
-    let mut default = super::prefill_skip::create_profile(&host, 8192, true);
+    let mut default = create_batch(&host);
     let request = batch(&[chunk(1, 0, 200_000, 512)], &[], false).0;
     assert_eq!(outcome(&default, &request), Outcome::Kept);
     assert!(

@@ -16,7 +16,7 @@ use crate::fake_host_tests::prefill_engram::{
 use crate::instance::execute::plan_timing::restore_without_snapshot;
 use model_deepseek41_contract::execution_options::{
     DSPARK_EARLY_PREFILL_ENGRAM, DSPARK_EARLY_PREFILL_PLAN, DSPARK_GRAPH_HANDLES_PER_RANK,
-    DSPARK_MIXED_PREPARED_ENGRAM, PREFILL_PLAN_CACHE_VERIFY,
+    DSPARK_MIXED_PREPARED_ENGRAM, PREFILL_PLAN_CACHE_VERIFY, PREFILL_STREAMED_LOWERING,
 };
 use runtime_bundle_sdk::prefill::{Boundary, encode};
 
@@ -438,6 +438,7 @@ fn opted_out<'a>(options: &[(&'a str, serde_json::Value)]) -> Vec<(&'a str, serd
         (DSPARK_MIXED_PREPARED_ENGRAM, false.into()),
         (DSPARK_EARLY_PREFILL_ENGRAM, false.into()),
         (DSPARK_EARLY_PREFILL_PLAN, false.into()),
+        (PREFILL_STREAMED_LOWERING, false.into()),
     ]
     .into_iter()
     .chain(options.iter().cloned())

@@ -222,16 +222,29 @@ impl<'a> Executor<'a> {
         programs: &[impl AsRef<[PreparedLaunch]>],
         collectives: &[impl AsRef<[bool]>],
     ) -> Result<(), DispatchError> {
+        self.issue_in(&mut Unit::default(), programs, collectives)
+    }
+
+    /// `issue` as part of `unit`, which earlier calls may have started: a
+    /// refusal, before or between submissions, poisons once any submission
+    /// of the unit succeeded.
+    pub(super) fn issue_in(
+        &self,
+        unit: &mut Unit,
+        programs: &[impl AsRef<[PreparedLaunch]>],
+        collectives: &[impl AsRef<[bool]>],
+    ) -> Result<(), DispatchError> {
         let streams = self.streams;
-        if self.instance.collectives.is_poisoned() {
+        let poison = &self.instance.collectives;
+        if poison.is_poisoned() {
             return Err(BundleAbiError::Status(BundleStatusV1::InvalidState).into());
         }
         if programs.len() != streams.len() || self.instance.symbols.len() != streams.len() {
-            return Err(DispatchError::InvalidPlan);
+            return unit.record(poison, Err(DispatchError::InvalidPlan));
         }
         if let Err(error) = check_collectives(programs, collectives) {
             self.instance.log(&error);
-            return Err(DispatchError::InvalidPlan);
+            return unit.record(poison, Err(DispatchError::InvalidPlan));
         }
         let segments = programs
             .iter()
@@ -241,8 +254,8 @@ impl<'a> Executor<'a> {
         self.run(|| {
             let mut started = vec![false; streams.len()];
             launch_segments(
-                &self.instance.collectives,
-                &mut Unit::default(),
+                poison,
+                unit,
                 &mut started,
                 &segments,
                 |rank, launches| {
@@ -1216,8 +1229,9 @@ impl Instance {
                 return plan.execute(self, engram.as_ref());
             }
             Execution::PrefillEngram(plan) => {
+                // One unit for the whole prefill, as an upper-skip plan's.
                 return plan
-                    .execute(self, &run.programs, &run.collectives)
+                    .execute(self, &mut Unit::default(), &run.programs, &run.collectives)
                     .map_err(|error| self.dispatch_failed(error));
             }
             Execution::Standard => {}
@@ -1433,6 +1447,17 @@ impl Instance {
         collectives: &[impl AsRef<[bool]>],
     ) -> Result<(), DispatchError> {
         Executor::new(self, streams).issue(programs, collectives)
+    }
+
+    /// `launch_eager` as part of `unit` (`Executor::issue_in`).
+    pub(super) fn launch_eager_in(
+        &self,
+        unit: &mut Unit,
+        streams: &[BundleStreamHandleV1],
+        programs: &[impl AsRef<[PreparedLaunch]>],
+        collectives: &[impl AsRef<[bool]>],
+    ) -> Result<(), DispatchError> {
+        Executor::new(self, streams).issue_in(unit, programs, collectives)
     }
 
     /// Capture every rank before replay, with each fork/join region in one piece.

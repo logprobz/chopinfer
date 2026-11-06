@@ -8,7 +8,8 @@ use crate::instance::{Instance, dspark::PrefillFeatureRange};
 use crate::lower::Lowering;
 use crate::ops::Lowered;
 use crate::program::{Phase, Stage, Sublayer};
-use bundle_runtime::pipeline::PreparedLaunch;
+use bundle_runtime::dispatch::DispatchError;
+use bundle_runtime::pipeline::{PoisonOnUnwind, PreparedLaunch, Unit};
 use bundle_runtime::template::{self, Patch, Site};
 use bundle_runtime::upload::DeviceInputs;
 use model_deepseek41_contract::prefill_cone::{self, Item};
@@ -791,54 +792,67 @@ impl Plan {
         Ok(())
     }
 
+    /// Issues the prefill as one unit: the body, the row copies and the
+    /// head. Once any of it is submitted, the step's ring, KV and
+    /// compressor writes have begun, so a later refusal, failed copy or
+    /// panic poisons the instance instead of leaving the step to cancel.
     pub(super) fn execute(
         &self,
         instance: &Instance,
         gathers: Option<&crate::instance::prefill_engram::Plan>,
     ) -> Result<(), BundleAbiError> {
-        self.execute_body(instance, gathers)?;
-        self.compact_rows(instance)?;
-        self.execute_head(instance)
+        let _unwinding = PoisonOnUnwind(&instance.collectives);
+        let mut unit = Unit::default();
+        self.execute_body(instance, gathers, &mut unit)?;
+        self.compact_rows(instance, &mut unit)?;
+        self.execute_head(instance, &mut unit)
     }
 
     /// The body: through upper-skip DMA, between prepared gather joins, or
-    /// in one eager unit.
+    /// in one eager unit, all part of `unit`.
     fn execute_body(
         &self,
         instance: &Instance,
         gathers: Option<&crate::instance::prefill_engram::Plan>,
+        unit: &mut Unit,
     ) -> Result<(), BundleAbiError> {
         let streams: Vec<_> = instance.ranks.iter().map(|r| r.2).collect();
         if let Some(dma) = &self.dma {
-            dma.execute(instance, &self.body, gathers)
+            // The DMA body poisons on any failure; once it ran, so does
+            // every later failure of the unit.
+            dma.execute(instance, &self.body, gathers)?;
+            unit.record(&instance.collectives, Ok(()))
+                .map_err(|e: DispatchError| instance.dispatch_failed(e))
         } else {
             if let Some(gathers) = gathers {
-                gathers.execute(instance, &self.body.0, &self.body.1)
+                gathers.execute(instance, unit, &self.body.0, &self.body.1)
             } else {
-                instance.launch_eager(&streams, &self.body.0, &self.body.1)
+                instance.launch_eager_in(unit, &streams, &self.body.0, &self.body.1)
             }
             .map_err(|e| instance.dispatch_failed(e))
         }
     }
 
     /// Moves each scored row to its logits position for the head.
-    fn compact_rows(&self, instance: &Instance) -> Result<(), BundleAbiError> {
+    fn compact_rows(&self, instance: &Instance, unit: &mut Unit) -> Result<(), BundleAbiError> {
         for (rank, copies) in self.copies.iter().enumerate() {
             for &(destination, source) in copies {
-                instance.services.copy_device_to_device(
+                let copied = instance.services.copy_device_to_device(
                     instance.ranks[rank].2,
                     destination,
                     source,
-                )?;
+                );
+                unit.record(&instance.collectives, copied.map_err(DispatchError::from))
+                    .map_err(|e| instance.dispatch_failed(e))?;
             }
         }
         Ok(())
     }
 
-    fn execute_head(&self, instance: &Instance) -> Result<(), BundleAbiError> {
+    fn execute_head(&self, instance: &Instance, unit: &mut Unit) -> Result<(), BundleAbiError> {
         let streams: Vec<_> = instance.ranks.iter().map(|r| r.2).collect();
         instance
-            .launch_eager(&streams, &self.head.0, &self.head.1)
+            .launch_eager_in(unit, &streams, &self.head.0, &self.head.1)
             .map_err(|e| instance.dispatch_failed(e))
     }
 }

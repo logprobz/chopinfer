@@ -4,7 +4,7 @@ use crate::instance::Instance;
 use crate::instance::execute::Executor;
 use crate::program::Stage;
 use bundle_runtime::dispatch::DispatchError;
-use bundle_runtime::pipeline::{PreparedLaunch, check_collectives};
+use bundle_runtime::pipeline::{PreparedLaunch, Unit, check_collectives};
 use std::ops::Range;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -248,9 +248,12 @@ impl Plan {
         self.ranges[0].len() - 1
     }
 
+    /// Issues `programs` between this plan's joins as part of `unit`, the
+    /// prefill's one unit (`Instance::launch_layered_pieces_in`).
     pub(in crate::instance) fn execute(
         &self,
         instance: &Instance,
+        unit: &mut Unit,
         programs: &[Vec<PreparedLaunch>],
         flags: &[Vec<bool>],
     ) -> Result<(), DispatchError> {
@@ -263,9 +266,14 @@ impl Plan {
         }
         let executor = Executor::new(instance, &streams);
         executor.run(|| {
-            instance.launch_layered_pieces(&streams, &self.ranges, programs, flags, |layer| {
-                instance.join_prefill_engram(&streams, layer)
-            })
+            instance.launch_layered_pieces_in(
+                unit,
+                &streams,
+                &self.ranges,
+                programs,
+                flags,
+                |layer| instance.join_prefill_engram(&streams, layer),
+            )
         })
     }
 }

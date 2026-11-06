@@ -1105,7 +1105,7 @@ class VariantTests(unittest.TestCase):
     def test_no_configuration_has_a_declaration_file_beside_qual_json(self):
         """qual.json declares each configuration once, and no qual.VARIANT.json
         beside it: another checkpoint is an external variant, kept outside
-        the tree (tools/qual/README.md#external-variants)."""
+        the tree (docs/check-kinds.md#external-variants)."""
         import declaration
         self.assertEqual(declaration.variants("qwen38", ROOT), [])
 

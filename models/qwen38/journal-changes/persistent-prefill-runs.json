@@ -1,6 +1,6 @@
 {
  "schema": "chopinfer.journal-proof.layout.v1",
- "description": "Run Qwen drafter prefill-phase runs of prefilling rows through the persistent stages by default (CHOPINFER_QWEN38_CANONICAL_DRAFTER unset now means value 3). Only the context-parallel MTP prefill journals change: their prefill step's post-target drafter run (43 rows, already in the prefill phase) drops, on each rank, its launches of the 18 stages after the QSA key write and the inject projection of the attention sublayer's HcIn, and issues its 13 persistent stages' launches rank by rank instead of stage by stage. See persistent-prefill-runs.md.",
+ "description": "Run Qwen drafter prefill-phase runs of prefilling rows through the persistent stages by default (CHOPINFER_QWEN38_CANONICAL_DRAFTER unset now means value 3). Only the context-parallel MTP prefill journals change: their prefill step's post-target drafter run (43 rows, already in the prefill phase) drops, on each rank, its launches of the 18 stages after the QSA key write and the inject projection of the attention sublayer's HcIn, and issues its 13 persistent stages' launches rank by rank instead of stage by stage.",
  "operations": {
   "fake_host_tests::context_parallel::dcp2_journals_are_pinned_per_package_and_phase#tests/fake_host_tests.context_parallel.dcp2_journals_are_pinned_per_package_and_phase/device-3.jsonl": [
    {

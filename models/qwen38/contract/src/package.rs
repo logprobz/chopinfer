@@ -11,7 +11,7 @@ pub const RANK_IMAGE_ALIGNMENT: u64 = 256;
 
 /// The most sequences an MTP package serves until wider MTP serving has
 /// GPU accuracy receipts. The bundle's bounded checkpoint pool serves 256;
-/// the TP4 accuracy gate covers C32 to C128 (docs/serving-profiles.md).
+/// the TP4 accuracy gate covers C32 to C128.
 pub const MTP_QUALIFIED_SEQUENCES: u32 = 128;
 
 pub use model_compiler_sdk::device::DEVICE_BYTES;

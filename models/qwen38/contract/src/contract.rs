@@ -1,6 +1,6 @@
 //! Qwen geometry shared by package declarations and the native module.
 //! The selected Geometry owns model dimensions; Shape derives per-rank
-//! layouts for the topology (docs/serving-profiles.md#qwen-evidence).
+//! layouts for the topology (models/qwen38/README.md#serving-profiles).
 
 use crate::geometry::{FLASH, GEOMETRIES, Geometry};
 use bundle_runtime::config::Topology;
@@ -572,7 +572,7 @@ pub const CONTEXT_TOKENS: u64 = crate::geometry::FLASH.context_tokens();
 /// Policy: prefill launches cap scheduler chunks.
 pub const PREFILL_TOKENS: u32 = 8192;
 /// The package maximum: most sequences an instance serves and most items in
-/// one step (docs/serving-profiles.md). An instance serves a
+/// one step (docs/developer-preview.md#selecting-a-profile). An instance serves a
 /// runtime `Items` count up to it, from the host's `--max-sequences`.
 /// Policy: the runtime bounds served items.
 pub const DECODE_BATCH: u32 = bundle_runtime::geometry::MAX_ITEMS;

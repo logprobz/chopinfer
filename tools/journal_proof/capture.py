@@ -12,7 +12,7 @@ aliases, must be exactly the bundle sources' literal pin tuples.
 The bodies, the device traces (aux/) and a sealed
 v3 index (index.json) form the capture. A capture's journals, aux/ and
 index.json depend only on the revision and the helper, not on the runner
-or the number of jobs. See README.md.
+or the number of jobs.
 """
 import argparse
 import datetime

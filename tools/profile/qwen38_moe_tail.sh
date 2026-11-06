@@ -6,7 +6,7 @@
 #
 # `bench` also runs the correctness check first and refuses a GPU that has
 # another compute process. Receipts go to qwen38_moe_tail/ under the kernel-lab
-# receipts directory (see crates/kernel-lab/README.md).
+# receipts directory.
 set -Eeuo pipefail
 
 if [[ $# -ne 2 || ! $1 =~ ^(check|bench)$ || ! $2 =~ ^[0-9]+$ ]]; then

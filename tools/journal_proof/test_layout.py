@@ -636,7 +636,7 @@ class LayoutTests(unittest.TestCase):
         self.assertEqual(layout.parse(bare.replace('chop_', 'family_chop_').encode()), expected)
 
     def test_committed_declarations_parse(self):
-        # Each model's declarations (README, Layout declarations).
+        # Each model's committed layout declarations.
         repo = Path(__file__).resolve().parents[2]
         committed = set(git(repo, 'ls-tree', '-r', '--name-only', 'HEAD', 'models').decode().splitlines())
         declarations = {p.relative_to(repo).as_posix(): p

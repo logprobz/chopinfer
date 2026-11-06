@@ -21,7 +21,7 @@ under `greedy`.
 
 The workload is copied to `<stem>.workload.json` beside the fixture with the
 media tensor files it names, the canonical path the gates read
-(tools/qual/README.md, reference cache bindings), and the fixture is bound
+(tools/refrun/README.md, cache and fixture bindings), and the fixture is bound
 to that copy (`cache.bind`); the refset is written to the cache.
 
 This module does not import torch.
@@ -175,7 +175,7 @@ def arguments(parser):
                         help="the checkpoint lock, in the repository or under --lock-root")
     parser.add_argument("--lock-root", type=Path, default=keys.ROOT,
                         help="the root the binding names the lock under (default the repository; an external "
-                             "variant's root, tools/qual/README.md#external-variants)")
+                             "variant's root, docs/check-kinds.md#external-variants)")
     parser.add_argument("--lock-variant", help="the lock's checkpoint variant")
     parser.add_argument("--modes", required=True, help="run labels to bind, each LABEL or LABEL=VARIANT")
     parser.add_argument("--fields", default=",".join(FIELDS), help="score columns each variant copies")

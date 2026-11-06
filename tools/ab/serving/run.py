@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Counterbalanced serving A/B of two installs of one model (see tools/ab/serving/README.md).
+"""Counterbalanced serving A/B of two installs of one model.
 
 Usage: run.py RUN.json (--dry-run | --out NEW_DIR)
 Exit 0: every configured evidence gate passed; 1: a gate or the run failed

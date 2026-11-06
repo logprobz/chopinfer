@@ -198,8 +198,8 @@ class AuxiliaryTests(unittest.TestCase):
 
     def test_an_added_or_removed_allocation_cannot_be_declared(self):
         # No rule adds or removes a device allocation: the issued IDs must
-        # pair one to one beyond declared modules and resolves. The README
-        # names this refusal as the trigger for a declared allocation rule.
+        # pair one to one beyond declared modules and resolves. This refusal
+        # is the trigger for a declared allocation rule.
         a,_=trace(self.base)
         plain,_=trace(self.head,True)
         more,_=trace(self.head,True)

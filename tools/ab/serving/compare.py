@@ -2,9 +2,9 @@
 """Validate fixed coverage on both sides, then compare gated outputs by IEEE bits.
 
 Usage: compare.py BEFORE_DIR AFTER_DIR [OUT.json] --spec SPEC.json
-Each directory holds the capture `capture.json`. The spec (schema version 2, see
-tools/ab/serving/README.md) declares every phase, its request and token counts,
-prompt-token bounds and teacher layout. Exit 0: valid complete captures and
+Each directory holds the capture `capture.json`. The spec (schema version 2)
+declares every phase, its request and token counts, prompt-token bounds and
+teacher layout. Exit 0: valid complete captures and
 identical gated phases; 1: failed evidence; 2: invalid arguments or
 specification, or report I/O failure.
 """

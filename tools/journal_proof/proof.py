@@ -6,7 +6,7 @@ Usage: proof.py --repo REPO --model ID --base REV --head REV --spec SPEC
        [--require identity] [--declaration-revision REV]
 
 Exit 0: PROVEN (with --require identity, also every item of the
-byte-identical checklist); 1: NOT PROVEN; 2: invalid input. See README.md.
+byte-identical checklist); 1: NOT PROVEN; 2: invalid input.
 """
 import argparse
 import collections

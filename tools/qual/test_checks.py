@@ -548,10 +548,12 @@ class CheckRunRescoreTests(unittest.TestCase):
                 "timeout_seconds": 60, "files": ["record"], "rules": [self.RULE],
                 "input_rules": {"record": rules or [dict(self.RULE, path=["arm"], value="ram")]}}
 
-    def check_run(self, root, config, name, inputs, printed=None, server=None, model="mechanics", receipts=None):
+    def check_run(self, root, config, name, inputs, printed=None, server=None, model="mechanics", receipts=None,
+                  offline=None):
         """`checks.py check` of `name` under `config` against a faked server
-        (`server`, or an exception it raises), its worker printing
-        `printed`: the run's check.json."""
+        (`server`, or an exception it raises), or with `offline` the served
+        name of an offline run, its worker printing `printed`: the run's
+        check.json."""
         path = root / "declaration.json"
         path.write_text(json.dumps(config))
         (root / "inputs.json").write_text(json.dumps(inputs))
@@ -568,22 +570,25 @@ class CheckRunRescoreTests(unittest.TestCase):
             return copy.deepcopy(server or self.SERVER)
 
         args = SimpleNamespace(model=model, id=name, inputs=root / "inputs.json", with_receipt=[],
-                               receipts=receipts, cohort="full", url="http://unused", served_model=None)
+                               receipts=receipts, cohort="full", url=None if offline else "http://unused",
+                               served_model=offline, offline=offline is not None)
         with patch.object(checks, "load", return_value=(config, path)), \
+                patch.object(checks, "offline_module", return_value=True), \
                 patch.object(checks, "Client", lambda *a, **k: SimpleNamespace(identity=identity)), \
                 patch.object(gate.subprocess, "check_output", return_value="revision\n"), \
                 patch.object(gate.subprocess, "run", side_effect=worker), contextlib.redirect_stdout(io.StringIO()):
             checks.check_command(args)
         return next(receipts.glob("*/check.json"))
 
-    def rescore(self, config, *paths, limits="current", selected=None):
+    def rescore(self, config, *paths, limits="current", selected=None, served=None):
         """rescore's exit status and rows under the current `config`."""
         with tempfile.TemporaryDirectory() as scratch, \
                 patch.object(checks, "load", return_value=(config, Path(scratch) / "declaration.json")):
             (Path(scratch) / "declaration.json").write_text(json.dumps(config))
             report = Path(scratch) / "report.json"
             status, _ = command("rescore", "--model", "mechanics", "--limits", limits, "--json", report,
-                                *(["--check", selected] if selected else []), *paths)
+                                *(["--check", selected] if selected else []),
+                                *(["--served-model", served] if served else []), *paths)
             return status, json.loads(report.read_text())["checks"] if report.is_file() else None
 
     @staticmethod
@@ -652,6 +657,40 @@ class CheckRunRescoreTests(unittest.TestCase):
             self.assertEqual(self.rescore({**config, "variant": "demo"}, run)[0], 2)
             (run.parent / "policy.json").write_text((run.parent / "policy.json").read_text() + " ")
             self.assertEqual(self.rescore(config, run)[0], 2)
+
+    def test_an_offline_run_s_input_rules_read_the_served_name_it_was_given(self):
+        rule = dict(self.RULE, path=["server", "model"], value="{model}")
+        check = {"id": "layouts", "module": "kv_layout_equality", "args": ["compare", "{native}"],
+                 "stdout_json": True, "timeout_seconds": 60, "files": ["native"], "rules": [self.RULE],
+                 "input_rules": {"native": [rule]}}
+        printed = {"passed": True, "errors": [], "skipped": [], "mechanics_only": False, "rows": [{"equal": True}]}
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            config = self.config(check)
+            native = self.record(root, "native", server={"model": "served"})
+            run = self.check_run(root, config, "layouts", {"native": str(native)}, printed, offline="served")
+            recorded = json.loads(run.read_text())
+            self.assertEqual((recorded["status"], recorded["server"], recorded["served_model"]), ("pass", None, "served"))
+            self.assertEqual(self.rescore(config, run)[0], 0)
+            # A run recorded before check.json held the name leaves the rule
+            # unjudged unless the name it was given is supplied.
+            run.write_text(json.dumps({key: value for key, value in recorded.items() if key != "served_model"}))
+            status, rows = self.rescore(config, run)
+            self.assertEqual((status, rows[0]["status"]), (3, "insufficient"))
+            self.assertIn("an input rule names 'model'", rows[0]["error"])
+            self.assertEqual(self.rescore(config, run, served="served")[0], 0)
+            status, rows = self.rescore(config, run, served="another")
+            self.assertEqual((status, rows[0]["status"]), (1, "fail"))
+            self.assertIn("native: input predicate failed", rows[0]["error"])
+            # A name other than the one recorded, or for a run that recorded its server, is refused.
+            run.write_text(json.dumps(recorded))
+            self.assertEqual(self.rescore(config, run, served="another")[0], 2)
+            (root / "online").mkdir()
+            printing = self.config(self.printing("prefix_exact"))
+            online = self.check_run(root / "online", printing, "prefix_exact",
+                                    {"record": str(self.record(root, "record", arm="ram"))},
+                                    printed_receipt("prefix_exact"))
+            self.assertEqual(self.rescore(printing, online, served="served")[0], 2)
 
     def determinism(self, rule, files=("ar", "spec", "approval"), receipt="{spec}"):
         """A determinism check of the spec record against the ar record, the
@@ -815,7 +854,8 @@ class CheckRunRescoreTests(unittest.TestCase):
             # The determinism run was refused under a rule the declaration
             # no longer states.
             refusing = copy.deepcopy(config)
-            next(check for check in refusing["checks"] if check["id"] == "determinism")["input_rules"][reference].append(
+            former = next(check for check in refusing["checks"] if check["id"] == "determinism")
+            former["input_rules"][reference].append(
                 {"path": ["server", "model"], "op": "eq", "value": "another", "source": "a former rule"})
             run = self.check_run(root, refusing, "determinism", inputs, None, {"model": served}, name,
                                  spec / "checks/determinism")

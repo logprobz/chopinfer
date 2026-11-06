@@ -171,7 +171,12 @@ input its arguments name must be recorded, every file it reads must keep
 its recorded digest (else `insufficient`), its recorded server must report
 qualified model options, and the row is then judged as the gate writes it,
 the module not having run. Its report names the refusal as `unjudged`. A
-refused run whose receipt its module writes stays `fail`.
+refused run whose receipt its module writes stays `fail`. An input rule's
+`{model}` is the served model the run recorded: its server's, or for an
+offline check run the `--served-model` name it was given (`served_model`).
+For an offline run recorded without that field, `rescore --served-model
+NAME` supplies the name its command recorded, as the correctness runner's
+replay does; without it such a rule is `insufficient`.
 
 A single stored receipt is judged as the check its `check` field names
 (after a declared rename), else as the check whose `records/<ID>.json` it
@@ -266,9 +271,10 @@ receipt, and a missing prerequisite, an unreachable server or a worker that
 exits nonzero is a failure (1) recorded in `check.json`. Usage and
 validation errors (2) are an undeclared check ID, an unreadable or invalid
 declaration, a malformed `--inputs` file or `--with` value, a PATH that is
-neither a gate run, a check run nor a check receipt, and a check run of
+neither a gate run, a check run nor a check receipt, a check run of
 another model, variant or check than `--model` and `--check` name, or whose
-recorded `policy.json` is missing or changed. With `--require-recorded`,
+recorded `policy.json` is missing or changed, and a `--served-model` other
+than an offline check run's recorded one. With `--require-recorded`,
 `rescore` exits 1 unless every verdict, metric and gate result equals the
 recorded one.
 

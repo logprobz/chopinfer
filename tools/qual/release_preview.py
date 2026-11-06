@@ -1949,6 +1949,9 @@ def judged_check(run, context, check, declared, arm_dir, arm, label, inputs):
     env = dict(context['env'], CHOPINFER_EVAL=str(run.install / 'bin/chopinfer'))
     started = time.monotonic()
     code = run_call(run, command, directory / 'checks.log', declared['timeout_seconds'] + 300, env)
+    # An offline check's input rules read {model} as the served name it was
+    # given, which only the recorded command holds for an older check run.
+    served = recorded_option(directory / 'checks.log', '--served-model') if run.replay and arm == OFFLINE else None
     try:
         check_run = one_receipt(directory, '*/check.json')
         result = read(check_run)
@@ -1956,7 +1959,7 @@ def judged_check(run, context, check, declared, arm_dir, arm, label, inputs):
         if run.replay and unjudged(code, result, check):
             # A run refused before its judge is judged from the inputs it
             # recorded when they hold its receipt; otherwise it stays failed.
-            rescored = rescore_check(check_run, run.facts['model'], config, check)
+            rescored = rescore_check(check_run, run.facts['model'], config, check, served_model=served)
             status = rescored['status']
             row = {'receipt': rescored.get('receipt'), 'predicates': rescored.get('predicates')}
             receipt = read(row['receipt']) if status in PASSING and row['receipt'] else None
@@ -1965,7 +1968,7 @@ def judged_check(run, context, check, declared, arm_dir, arm, label, inputs):
             if run.replay and (status in ('pass', 'waived', 'not_applicable')
                                or (status == 'fail' and row.get('error') == 'threshold predicate failed')):
                 # Only a judged verdict is judged again; a failed run stays failed.
-                rescored = rescore_check(check_run, run.facts['model'], config, check)
+                rescored = rescore_check(check_run, run.facts['model'], config, check, served_model=served)
                 status = rescored['status']
     except (ValueError, KeyError, TypeError, OSError, subprocess.SubprocessError) as error:
         return run.row(config, arm, label, 'fail', error=str(error), exit=code,
@@ -1982,6 +1985,20 @@ def judged_check(run, context, check, declared, arm_dir, arm, label, inputs):
                    differing_metrics=rescored.get('differing_metrics'),
                    **({'unjudged': rescored['unjudged']} if rescored.get('unjudged') else {}),
                    seconds=round(time.monotonic() - started, 1))
+
+
+def recorded_option(log, option):
+    """The value of `option` in the command a child's log records on its
+    first line (call), or None."""
+    try:
+        with Path(log).open() as stream:
+            command = json.loads(stream.readline()).get('command')
+    except (OSError, ValueError, AttributeError):
+        return None
+    if not isinstance(command, list) or option not in command[:-1]:
+        return None
+    value = command[command.index(option) + 1]
+    return value if isinstance(value, str) else None
 
 
 def unjudged(code, result, check):
@@ -2605,19 +2622,21 @@ def rescore_run(root, out=None):
     return run.rows
 
 
-def rescore_check(check_run, model, config, check):
+def rescore_check(check_run, model, config, check, served_model=None):
     """A declared check's stored check run (its check.json), re-judged by
     checks.py rescore against the current declaration as `check`, the check
     it ran: its receipt (a log, for a check whose module prints it) and its
     recorded inputs held to the digests the run recorded, and a run refused
-    before its judge judged from its recorded inputs. A passing status holds
-    only with exit 0, and any exit but 0, 1 or 3 (insufficient) refuses."""
+    before its judge judged from its recorded inputs; `served_model` is the
+    served name an offline run was given. A passing status holds only with
+    exit 0, and any exit but 0, 1 or 3 (insufficient) refuses."""
     import tempfile
     with tempfile.TemporaryDirectory() as temporary:
         output = Path(temporary) / 'rescore.json'
         done = subprocess.run([sys.executable, '-B', str(TOOLS / 'checks.py'), 'rescore', '--model',
                                declaration_name(model, config), '--check', check, '--json', str(output),
-                               str(check_run)], cwd=ROOT, capture_output=True, text=True, timeout=3600)
+                               *(['--served-model', served_model] if served_model else []), str(check_run)],
+                              cwd=ROOT, capture_output=True, text=True, timeout=3600)
         require(done.returncode in (0, 1, 3) and output.is_file(),
                 f'checks.py rescore exited {done.returncode}: {done.stderr.strip()[-300:]}')
         rows = read(output)['checks']

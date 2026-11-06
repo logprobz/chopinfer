@@ -5,7 +5,7 @@
         [--served-model NAME] [--inputs FILE] [--with ID=RECEIPT]... [--with-raw ID=DIR]...
         [--receipts DIR]
     python3 tools/qual/checks.py rescore --model M [--limits current|recorded]
-        [--check ID] [--json FILE] [--require-recorded] PATH...
+        [--check ID] [--served-model NAME] [--json FILE] [--require-recorded] PATH...
 
 Each command takes `--variant-dir DIR` (default $CHOPINFER_QUAL_VARIANTS)
 to read `--model MODEL.VARIANT` as an external variant, DIR/MODEL/VARIANT.json.
@@ -124,6 +124,7 @@ def check_command(args):
                "raw": str(directory / "checks"), "run": str(directory), "check_raw": earlier_raw}
     result = {"schema": CHECK_RUN, "at": stamp, "model": config["model"], "check": args.id,
               "kind": kinds.of(check["module"]).name, "cohort": args.cohort, "mechanics_only": mechanics,
+              "served_model": args.served_model,
               "config_sha256": release_gate.digest(policy), "config_source": str(config_path), "inputs": inputs,
               "earlier": earlier, "earlier_raw": dict(earlier_raw), "variant_source": None, "status": "fail"}
     rows = []
@@ -305,6 +306,9 @@ def input_verdict(row, check, value, named, summary):
     context = dict(inputs)
     if (summary.get("server") or {}).get("model"):
         context["model"] = summary["server"]["model"]
+    elif summary.get("server", True) is None and "served_model" in summary:
+        # An offline check run's preflight read the served name it was given.
+        context["model"] = summary["served_model"] or ""
     for key, key_rules in rules.items():
         if check.get("json_file") == f"{{{key}}}":
             record = value
@@ -466,15 +470,23 @@ def unjudged_row(run, check):
     return row
 
 
-def rescore_check_run(path, run, model, limits, check_id=None):
+def rescore_check_run(path, run, model, limits, check_id=None, served_model=None):
     """A check run (its check.json at `path`) rescored as the one row of a
     gate run (rescore_row), its input rules judged against the inputs and
     digests the run recorded, by the current declaration of `model` or
     (`limits` recorded) the run's own policy and source revision. A run
     refused before its judge is judged from its recorded inputs when its
     receipt and reference record are among them (unjudged_row); any other
-    such run stays failed. `check_id` (--check) must be the run's check."""
+    such run stays failed. `check_id` (--check) must be the run's check.
+    `served_model` (--served-model) is the served name an offline run was
+    given, which its input rules read as {model}, for a run recorded
+    before check.json held it."""
     policy = check_run_policy(path, run)
+    if served_model is not None:
+        if run.get("server", True) is not None or run.get("served_model", served_model) != served_model:
+            raise ValueError(f"{path}: --served-model {served_model} is not the served name of an offline check "
+                             "run that recorded none or the same")
+        run = {**run, "served_model": served_model}
     if limits == "recorded":
         config, config_path = declaration.load(policy), policy
         renamed, revision = {}, run.get("revision")
@@ -570,7 +582,10 @@ def rescore_command(args):
     config = load(args.model)[0]
     model = config["model"]
     rows, gates = [], []
+    served_model = getattr(args, "served_model", None)
     for path, schema, summary in stored_runs(args.paths):
+        if schema != CHECK_RUN and served_model is not None:
+            raise ValueError(f"{path}: --served-model names the served model of an offline check run")
         if schema == RECEIPT:
             rows.append(rescore_receipt(path, summary, args.model, args.limits, args.check))
             continue
@@ -582,7 +597,7 @@ def rescore_command(args):
             name = ran[0] if ran[1] is None else f"{ran[0]}.{ran[1]}"
             raise ValueError(f"{path}: a {'gate' if schema == SUMMARY else 'check'} run of {name}, not {args.model}")
         if schema == CHECK_RUN:
-            rows.append(rescore_check_run(path, summary, args.model, args.limits, args.check))
+            rows.append(rescore_check_run(path, summary, args.model, args.limits, args.check, served_model))
             continue
         gate = rescore_gate(path, summary, args.model, args.limits)
         statuses = [row["status"] for row in gate if row["selected"]]
@@ -647,6 +662,8 @@ def main():
     rescore.add_argument("--check", metavar="ID",
                          help="the declared check a single receipt is judged as (a gate row's check), or a "
                               "check run's check")
+    rescore.add_argument("--served-model", metavar="NAME",
+                         help="the served name an offline check run was given, for a run recorded without it")
     rescore.add_argument("--json", type=Path, help="write the rescore report here")
     rescore.add_argument("--require-recorded", action="store_true",
                          help="exit 1 unless every verdict and metric equals the recorded one")

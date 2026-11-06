@@ -3070,7 +3070,7 @@ class RescoreTests(FakeRunTests):
         code, result = fake.run('--suite', 'quick')
         return fake, code, result
 
-    def replay(self, fake, judged=lambda check_run, model, config, check: {'status': 'pass'}):
+    def replay(self, fake, judged=lambda check_run, model, config, check, served_model=None: {'status': 'pass'}):
         with patch.object(runner, 'call', fake.call), patch.object(runner, 'rescore_check', judged), \
                 patch.dict(os.environ, {fake.facts['checkpoint']: str(fake.checkpoint)}):
             return self.rescore(fake.base / 'run')
@@ -3214,7 +3214,8 @@ class RescoreTests(FakeRunTests):
             self.assertEqual([row['id'] for row in rows], [row['id'] for row in result['rows']])
             self.assertEqual([row['recorded'] for row in rows], [row['status'] for row in result['rows']])
             # A check judged again under rules that now fail it fails.
-            code, rows = self.replay(fake, lambda check_run, model, config, check: {'status': 'fail', 'error': 'rule'})
+            code, rows = self.replay(fake, lambda check_run, model, config, check, served_model=None: {
+                'status': 'fail', 'error': 'rule'})
             self.assertEqual(code, 1)
             self.assertEqual({row['status'] for row in rows if row['id'].endswith('/teacher')}, {'fail'})
 
@@ -3294,7 +3295,7 @@ class RescoreTests(FakeRunTests):
             runner.write(receipt, {'passed': True, 'mean_abs_dlogprob': 0.05})
             seen = []
 
-            def judged(check_run, model, config, check):
+            def judged(check_run, model, config, check, served_model=None):
                 seen.append((Path(check_run), check))
                 if check != 'teacher':
                     return {'status': 'pass'}
@@ -3313,7 +3314,7 @@ class RescoreTests(FakeRunTests):
             # Evidence checks.py finds insufficient, or a run whose receipt
             # its module writes, is not a pass here either.
             for status in ('insufficient', 'fail'):
-                code, rows = self.replay(fake, lambda check_run, model, config, check: {
+                code, rows = self.replay(fake, lambda check_run, model, config, check, served_model=None: {
                     'status': status if check == 'teacher' else 'pass', 'error': 'spec: changed'})
                 self.assertEqual(code, 1)
                 self.assertEqual({(row['status'], row['error']) for row in rows if row['id'].endswith('/teacher')},
@@ -3342,6 +3343,30 @@ class RescoreTests(FakeRunTests):
             self.assertEqual(code, 0, [row for row in rows if row['status'] not in runner.PASSING])
             self.assertEqual({row['id']: (row['status'], row['reason']) for row in rows if row['id'] in recorded},
                              {name: ('informational', row['reason']) for name, row in recorded.items()})
+
+    def test_an_offline_check_is_rescored_with_the_served_name_its_command_recorded(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            receipt = Path(temporary) / 'layouts.json'
+            runner.write(receipt, {'passed': True})
+            seen = []
+            for arm, served in ((runner.OFFLINE, 'Recorded-Name'), ('spec', None)):
+                directory = Path(temporary) / arm / 'checks/layouts'
+                runner.write(directory / 'run/check.json', {'check': 'layouts', 'status': 'pass', 'row': {
+                    'id': 'layouts', 'passed': True, 'receipt': str(receipt)}})
+                (directory / 'checks.log').write_text(json.dumps({'command': [
+                    'python3', 'checks.py', 'check', 'layouts', '--served-model', 'Recorded-Name'],
+                    'timeout_seconds': 60}) + '\nchild output\n')
+                (directory / 'checks.log.exit').write_text('0\n')
+                run = SimpleNamespace(replay=True, facts={'model': model()}, used_features=set(),
+                                      install=Path(temporary), row=lambda *a, **fields: fields)
+                context = {'config_name': 'default', 'facts': {'name': 'Current-Name'}, 'suite': 'full',
+                           'checks': {}, 'check_raw': {}, 'fill': {'url': 'http://127.0.0.1:1'}, 'env': {}}
+                with patch.object(runner, 'rescore_check', lambda *a, served_model=None: seen.append(
+                        served_model) or {'status': 'pass'}):
+                    runner.judged_check(run, context, 'layouts', {'timeout_seconds': 60}, Path(temporary) / arm,
+                                        arm, 'layouts', {})
+            # Only an offline check reads the name; an online one has its server's.
+            self.assertEqual(seen, ['Recorded-Name', None])
 
     @staticmethod
     def snapshot(root):

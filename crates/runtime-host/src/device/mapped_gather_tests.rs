@@ -415,28 +415,36 @@ fn large_gathers_read_through_descriptors_and_zero_restores_the_mapping() {
         let large = || {
             let snapshot = crate::host_rows::fetch::snapshot();
             let count = |key: &str| snapshot[key].as_u64().unwrap();
-            (count("large_gathers"), count("large_rows"))
+            (
+                count("large_gathers"),
+                count("large_rows"),
+                count("parallel_fanouts"),
+            )
         };
         let before = large();
         let ids = large_ids();
         let outputs = gather_ranks(&planes, &ids).unwrap();
         let after = large();
         let counted = (after.0 - before.0, after.1 - before.1);
+        let parallel = after.2 - before.2;
         // Checked before the expected bytes, which read the mapping.
         let touched = mapped_first_page(codes);
-        if mode == "large" {
-            // Rank 0's codes and scales are one batch and the shifted plane
-            // another; the other ranks copy rank 0's bytes.
-            assert_eq!(counted, (2, 3 * LARGE as u64));
-            assert!(!touched, "large reads touched the mapping");
-        } else {
+        if mode == "mapped" {
             assert_eq!(counted, (0, 0));
+            assert_eq!(parallel, 0);
             assert!(touched, "the mapped copy must read the mapping");
+        } else {
+            // Rank 0's codes and scales are one batch and the shifted plane
+            // another; the other ranks copy rank 0's bytes, on four threads
+            // with copiers and on the gather's own without.
+            assert_eq!(counted, (2, 3 * LARGE as u64));
+            assert_eq!(parallel, u64::from(mode == "copiers"), "{mode:?}");
+            assert!(!touched, "large reads touched the mapping");
         }
         check_ranks(&planes, &ids, &outputs);
         return;
     }
-    for mode in ["large", "mapped"] {
+    for mode in ["large", "copiers", "mapped"] {
         let mut command = std::process::Command::new(std::env::current_exe().unwrap());
         command
             .args([
@@ -452,6 +460,11 @@ fn large_gathers_read_through_descriptors_and_zero_restores_the_mapping() {
             command.env("CHOPINFER_MAPPED_LARGE_GATHER_FETCH", "0");
         } else {
             command.env_remove("CHOPINFER_MAPPED_LARGE_GATHER_FETCH");
+        }
+        if mode == "copiers" {
+            command.env("CHOPINFER_MAPPED_FANOUT_COPIERS", "4");
+        } else {
+            command.env_remove("CHOPINFER_MAPPED_FANOUT_COPIERS");
         }
         let output = command.output().unwrap();
         assert!(

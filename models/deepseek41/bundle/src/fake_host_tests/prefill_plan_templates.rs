@@ -471,12 +471,10 @@ enum Then {
 /// served 512-row prompt ends at 100K and 200K, alone and beside decode or
 /// DSpark verify items, grid chunks past the cached range and, without
 /// DSpark, a step that fails once planned and before its launches. Returns
-/// the device journal, the template counts and the templates kept as lines
-/// (`skip::take_kept`). With `streamed` each plan no template serves is
-/// lowered while it issues.
-fn lifecycle(dspark: bool, verify: bool, streamed: bool) -> (Vec<String>, Counts, Vec<String>) {
+/// the device journal and the template counts. With `streamed` each plan
+/// no template serves is lowered while it issues.
+fn lifecycle(dspark: bool, verify: bool, streamed: bool) -> (Vec<String>, Counts) {
     let host = host(dspark);
-    skip::take_kept();
     let mut instance = super::prefill_skip::create_profile_with_options(
         &host,
         8192,
@@ -597,11 +595,10 @@ fn lifecycle(dspark: bool, verify: bool, streamed: bool) -> (Vec<String>, Counts
     }
     instance.retire_request(5).unwrap();
     let counts = counts(&instance);
-    let templates = skip::take_kept();
     instance.destroy().unwrap();
     assert_eq!(host.acquired.get(), host.released.get());
     let journal = host.device.journal.borrow().clone();
-    (journal, counts, templates)
+    (journal, counts)
 }
 
 /// The long-context lifecycle issues, with templates and with each reused
@@ -641,8 +638,9 @@ fn long_context_templates_issue_the_fresh_lowerings_journal() {
             let context =
                 format!("dspark={dspark} verify={verify} streamed={streamed} lead={lead}");
             let before = (skip::streamed_launches(), skip::lowerings());
-            let (journal, counts, templates) =
-                skip::with_lead(lead, || lifecycle(dspark, verify, streamed));
+            let ((journal, counts), templates) = skip::with_lead(lead, || {
+                skip::recording_kept(|| lifecycle(dspark, verify, streamed))
+            });
             let launched = skip::streamed_launches() - before.0;
             let lowered = skip::lowerings() - before.1;
             if streamed {

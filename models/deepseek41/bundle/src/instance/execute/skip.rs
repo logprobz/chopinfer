@@ -62,19 +62,36 @@ pub(crate) fn lowerings() -> u64 {
 }
 
 #[cfg(test)]
-thread_local! { static KEPT: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) }; }
+thread_local! { static KEPT: std::cell::RefCell<Option<Vec<String>>> = const { std::cell::RefCell::new(None) }; }
 
-/// Every template kept on this thread since the last take, as lines in
-/// order: its description when it was kept (`Plan::describe_template`),
-/// then its Engram plan once a step made it after the keep.
+/// Runs `run`, recording every template kept on this thread meanwhile as
+/// lines in order: its description when it was kept
+/// (`Plan::describe_template`), then its Engram plan once a step made it
+/// after the keep. Nothing is recorded outside such a run, so a long test
+/// keeps no description.
 #[cfg(test)]
-pub(crate) fn take_kept() -> Vec<String> {
-    KEPT.take()
+pub(crate) fn recording_kept<T>(run: impl FnOnce() -> T) -> (T, Vec<String>) {
+    struct Reset(Option<Vec<String>>);
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            KEPT.set(self.0.take());
+        }
+    }
+    let reset = Reset(KEPT.replace(Some(Vec::new())));
+    let result = run();
+    let lines = KEPT.take().unwrap_or_default();
+    drop(reset);
+    (result, lines)
 }
 
+/// Records the lines `lines` makes during `recording_kept`.
 #[cfg(test)]
-pub(super) fn record_kept(lines: Vec<String>) {
-    KEPT.with_borrow_mut(|kept| kept.extend(lines));
+pub(super) fn record_kept(lines: impl FnOnce() -> Vec<String>) {
+    KEPT.with_borrow_mut(|kept| {
+        if let Some(kept) = kept {
+            kept.extend(lines());
+        }
+    });
 }
 
 #[cfg(test)]
@@ -705,7 +722,7 @@ impl Plan {
         let Some(plan) = kept.get() else {
             let plan = fresh()?;
             #[cfg(test)]
-            record_kept(vec![format!("engram {plan:?}")]);
+            record_kept(|| vec![format!("engram {plan:?}")]);
             return Ok(kept.get_or_init(|| plan).clone());
         };
         let sites = self

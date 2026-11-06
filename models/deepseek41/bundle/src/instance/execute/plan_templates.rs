@@ -253,7 +253,7 @@ impl Templates {
             None => plan.keep_engram(),
         }
         #[cfg(test)]
-        skip::record_kept(plan.describe_template());
+        skip::record_kept(|| plan.describe_template());
         let plan = Rc::new(plan);
         let dropped = match self.kept.keep(key, Rc::clone(&plan)) {
             Some(old) if hold => {

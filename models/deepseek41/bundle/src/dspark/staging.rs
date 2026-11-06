@@ -505,6 +505,9 @@ impl Staging {
 /// Catch-up, drafting and readback end in device synchronizations, so they
 /// include their device time. Prefill target includes upload, submission and
 /// status waits; a device-resident decode target records its own phases.
+/// The phases are disjoint: an early prefill begin is part of `gather`
+/// (`dspark_early_prefill_engram`), and a prefill planned while the drafter
+/// runs is `prefill_plan`, outside `target` (`dspark_early_prefill_plan`).
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct PhaseTimes {
     pub catch_up_us: u64,
@@ -513,6 +516,7 @@ pub struct PhaseTimes {
     pub bulk_us: u64,
     pub bulk_passes: u32,
     pub draft_us: u64,
+    pub prefill_plan_us: u64,
     pub read_ids_us: u64,
     pub read_confidence_us: u64,
     pub gather_us: u64,
@@ -529,7 +533,8 @@ impl PhaseTimes {
                 "\"instance_id\":\"{}\",\"step_id\":\"{}\",\"items\":{},\"drafting\":{},",
                 "\"catch_up_items\":{},\"catch_up_rows\":{},\"bulk_passes\":{},",
                 "\"undrafted_ready\":{},\"undrafted_status_packets\":{},",
-                "\"micros\":{{\"catch_up\":{},\"bulk\":{},\"draft\":{},\"read_ids\":{},",
+                "\"micros\":{{\"catch_up\":{},\"bulk\":{},\"draft\":{},\"prefill_plan\":{},",
+                "\"read_ids\":{},",
                 "\"read_confidence\":{},\"gather\":{},\"upload\":{},\"target\":{},",
                 "\"target_lower\":{},\"target_upload\":{},\"target_submit\":{},\"target_wait\":{}}}}}"
             ),
@@ -545,6 +550,7 @@ impl PhaseTimes {
             self.catch_up_us,
             self.bulk_us,
             self.draft_us,
+            self.prefill_plan_us,
             self.read_ids_us,
             self.read_confidence_us,
             self.gather_us,
@@ -709,7 +715,12 @@ impl<P: Program> Host for Adapter<'_, P> {
             return Ok(());
         }
         if begins {
-            self.program.begin_prefill_engram(&phase.hashed)?;
+            let program = &mut *self.program;
+            timed(
+                &mut self.times,
+                |t| &mut t.gather_us,
+                || program.begin_prefill_engram(&phase.hashed),
+            )?;
         }
         self.staging.early = Some((prefill, phase));
         Ok(())
@@ -728,7 +739,12 @@ impl<P: Program> Host for Adapter<'_, P> {
     fn plan_prefill(&mut self) -> Result<(), String> {
         match &self.staging.early {
             Some((_, phase)) if self.program.plans_prefill_early() => {
-                self.program.plan_prefill(&phase.hashed)
+                let program = &mut *self.program;
+                timed(
+                    &mut self.times,
+                    |t| &mut t.prefill_plan_us,
+                    || program.plan_prefill(&phase.hashed),
+                )
             }
             _ => Ok(()),
         }

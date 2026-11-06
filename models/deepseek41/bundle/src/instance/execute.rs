@@ -1839,9 +1839,12 @@ impl Instance {
             measure(times.as_deref_mut().map(|t| &mut t.submit_us), || {
                 self.launch(run)
             })?;
-            // The templates its planning dropped are freed while it runs.
+            // The templates its planning dropped are freed while it runs,
+            // charged to the target's lowering.
             if run.phase.prefill() {
-                self.plans.release_dropped();
+                measure(times.as_deref_mut().map(|t| &mut t.lower_us), || {
+                    self.plans.release_dropped()
+                });
             }
             #[cfg(feature = "diagnostic-taps")]
             self.kv_taps(run, true)?;

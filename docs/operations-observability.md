@@ -1043,6 +1043,19 @@ In DeepSeek's DSpark phase timings in `chopinfer.step.v1`, legacy prefill
 planning is now charged to `upload` instead of `target_lower` because it
 runs inside the staging upload timer.
 
+The two early prefill candidates move work between those fields. With
+`dspark_early_prefill_engram`, the prefill rows' Engram hashing and the
+begin of their prepared gathers run before catch-up and count in `gather`;
+the begin leaves `target_upload`. A DSpark step refused after that begin
+settles its gathers before it returns, so they count in the refused step.
+With `dspark_early_prefill_plan`, a prefill planned while the drafter runs
+counts in `prefill_plan`, between `draft` and `read_ids` and outside
+`target`; `target_lower` keeps the target's own planning and the freeing of
+the templates the step's planning dropped, which now runs after the
+prefill's launch. A step after a failed one frees that step's held
+templates at its entry, outside every field. The phase fields stay
+disjoint, and the target's four fields stay within `target`.
+
 The served A/B tuner records per-window clocks, per-visit major faults and
 job/visit enforced power limits. A changing limit voids the whole job.
 Its [cold Engram workload](depth-tuning.md#cold-engram-workload) pairs an

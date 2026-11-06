@@ -247,13 +247,8 @@ impl Program for Work<'_> {
             .step
             .as_mut()
             .ok_or("DSpark prefill has no packed step")?;
-        let instance = &*self.instance;
-        // Charged to the target's lowering, which it replaces.
-        let staged = crate::dspark::timing::measure(
-            self.target_times.as_mut().map(|times| &mut times.lower_us),
-            || instance.stage_early_prefill(&mut step.prefill, hashed),
-        );
-        self.prefill_engram = Some(staged);
+        // Timed as `prefill_plan`, outside the target (`Adapter`).
+        self.prefill_engram = Some(self.instance.stage_early_prefill(&mut step.prefill, hashed));
         self.planned_early = true;
         Ok(())
     }

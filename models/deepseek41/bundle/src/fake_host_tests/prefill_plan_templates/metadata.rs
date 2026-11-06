@@ -5,9 +5,14 @@
 //! envelope, packed, anchored and unscored items, AR with device and
 //! host-mapped Engram tables, and DSpark, each with DMA on and off. The
 //! pins were recorded before the lowering became incremental and hold it
-//! to the plans it made before.
+//! to the plans it made before. Each shape also runs as a step lowered
+//! while it issues (`prefill_streamed_lowering`), whose plan holds the
+//! same pin.
 use super::*;
 use crate::instance::execute::skip;
+use model_deepseek41_contract::execution_options::{
+    PREFILL_PLAN_CACHE_VERIFY, PREFILL_STREAMED_LOWERING,
+};
 
 /// The committed tokens before each single item.
 const PREFIX: u64 = 100_032;
@@ -63,6 +68,115 @@ fn shapes() -> Vec<(String, Vec<u8>)> {
     shapes
 }
 
+/// The grid start before `PREFIX`.
+const GRID: u64 = 98_304;
+
+/// A pinned shape as a served step (`served`).
+struct ServedShape {
+    name: String,
+    original: Vec<u8>,
+    envelope: Vec<u8>,
+    /// Whether the envelope carries cuts, as an anchored item's does.
+    cuts: bool,
+    /// Request 1's committed tokens.
+    prefix: u64,
+    /// Whether the step's plan is the pinned one's.
+    pinned: bool,
+}
+
+/// Every pinned shape as a step a scheduler may send, and the cached
+/// attention ranges of `templates_patch_their_step_values_...`. A single
+/// item that crosses the 8192-token grid after `PREFIX` (8,191 and 8,192
+/// rows) has no envelope there: it is served after `GRID` instead. Neither
+/// those nor the cached ranges are pinned.
+fn served() -> Vec<ServedShape> {
+    let cached = [
+        ("cached-r8192-after-8192", chunk(1, 0, 8192, 8192)),
+        ("cached-r8192-after-16384", chunk(1, 0, 16_384, 8192)),
+        (
+            "cached-r8192-after-8192-other-pages",
+            Chunk {
+                pages: 2 * SLOT_PAGES,
+                ..chunk(1, 0, 8192, 8192)
+            },
+        ),
+    ];
+    let cached = cached.into_iter().map(|(name, c)| {
+        let (original, envelope) = batch(&[c], &[], false);
+        ServedShape {
+            name: name.into(),
+            original,
+            envelope: envelope.expect("a chunk on the grid"),
+            cuts: false,
+            prefix: c.prefix,
+            pinned: false,
+        }
+    });
+    shapes()
+        .into_iter()
+        .map(|(name, original)| {
+            if name == "anchored-r789" {
+                let boundary = Boundary {
+                    request_id: 5,
+                    prompt_tokens: 789,
+                    chunk_end: 789,
+                    chunk_tokens: 8192,
+                };
+                let envelope =
+                    runtime_bundle_sdk::prefill::encode_with_cuts(&original, &[boundary]).unwrap();
+                return ServedShape {
+                    name,
+                    original,
+                    envelope,
+                    cuts: true,
+                    prefix: PREFIX,
+                    pinned: true,
+                };
+            }
+            let decoded = BatchRequestV1::decode(&original).unwrap();
+            let chunks: Vec<_> = decoded
+                .items()
+                .iter()
+                .zip(decoded.appends())
+                .zip(decoded.state_slots().expect("state slots"))
+                .map(|((item, append), &slot)| Chunk {
+                    request: item.request_id(),
+                    slot,
+                    pages: slot * SLOT_PAGES,
+                    prefix: append.previous_tokens(),
+                    rows: u64::from(item.phase_tokens()),
+                    scored: item.expects_logits(),
+                    salt: 0,
+                })
+                .collect();
+            if let (original, Some(envelope)) = batch(&chunks, &[], false) {
+                return ServedShape {
+                    name,
+                    original,
+                    envelope,
+                    cuts: false,
+                    prefix: PREFIX,
+                    pinned: true,
+                };
+            }
+            let chunks: Vec<_> = chunks
+                .into_iter()
+                .map(|c| Chunk { prefix: GRID, ..c })
+                .collect();
+            let (original, envelope) = batch(&chunks, &[], false);
+            ServedShape {
+                name: format!("{name}-after-{GRID}"),
+                original,
+                envelope: envelope.expect("a chunk from the grid start"),
+                cuts: false,
+                prefix: GRID,
+                pinned: false,
+            }
+        })
+        .chain(cached)
+        .collect()
+}
+
 #[derive(Clone, Copy, Debug)]
 enum Model {
     /// AR with its Engram tables in the device image.
@@ -111,6 +225,122 @@ fn check(model: Model, dma: bool, pins: &[(&str, (usize, u64))]) {
         "{model:?} dma={dma}:\n{}",
         mismatches.join("\n")
     );
+}
+
+/// A fresh instance on `model` with request 1 holding slot 0 at `prefix`
+/// tokens and request 2 slot 1 at 40,960, lowering each plan no template
+/// serves while it issues when `streamed`.
+fn restored(model: Model, prefix: u64, streamed: bool) -> BundleInstanceV1 {
+    let host = host(matches!(model, Model::DSpark));
+    if matches!(model, Model::ArMapped) {
+        host.drafter.set(true);
+    }
+    let instance = super::super::prefill_skip::create_profile_with_options(
+        &host,
+        8192,
+        true,
+        &[
+            (PREFILL_PLAN_CACHE_VERIFY, false.into()),
+            (PREFILL_STREAMED_LOWERING, streamed.into()),
+        ],
+    );
+    for (request, slot, prefix) in [(1, 0, prefix), (2, 1, 40_960)] {
+        let ids: Vec<_> = (0..prefix).map(|p| token(0, p)).collect();
+        plan_timing::restore_without_snapshot(instance.handle(), request, slot, &ids).unwrap();
+    }
+    instance
+}
+
+/// Every shape served as a step lowered while it issues on `model`, each
+/// on a fresh instance, with DMA as `dma`: the streamed plan and its Engram
+/// plan (`skip::describing_streamed`) hold the shape's pin, or, for a
+/// shape no pin holds, describe as a fresh lowering does
+/// (`plan_timing::describe`). Mismatches are reported together, as
+/// `check` reports them.
+fn check_streamed(model: Model, dma: bool, pins: &[(&str, (usize, u64))]) {
+    let mut mismatches = Vec::new();
+    for shape in served() {
+        let name = &shape.name;
+        let mut instance = restored(model, shape.prefix, true);
+        let (executed, described) = skip::describing_streamed(|| {
+            skip::with_dma(dma, || {
+                if shape.cuts {
+                    instance.execute_prefill_cuts(&shape.envelope, &mut Sink::default())
+                } else {
+                    instance.execute_prefill(&shape.envelope, &mut Sink::default())
+                }
+            })
+        });
+        executed.unwrap_or_else(|e| panic!("{model:?} dma={dma} {name}: {e:?}"));
+        let _ = instance.cancel();
+        let _ = instance.destroy();
+        let [lines] = &described[..] else {
+            panic!(
+                "{model:?} dma={dma} {name}: {} streamed plans",
+                described.len()
+            );
+        };
+        let pin = if shape.pinned {
+            pins.iter()
+                .find(|(n, _)| n == name)
+                .unwrap_or_else(|| panic!("{name} is pinned"))
+                .1
+        } else {
+            let mut instance = restored(model, shape.prefix, false);
+            let fresh = skip::with_dma(dma, || {
+                plan_timing::describe(instance.handle(), &shape.original)
+            })
+            .unwrap_or_else(|e| panic!("{model:?} dma={dma} {name}: {e}"));
+            instance.destroy().unwrap();
+            bundle_runtime::fake_host::journal_digest(&fresh)
+        };
+        let (count, hash) = bundle_runtime::fake_host::journal_digest(lines);
+        if pin == (count, hash) {
+            continue;
+        }
+        if mismatches.is_empty() {
+            let file = format!("prefill-plan-metadata-streamed-{model:?}-{dma}-{name}");
+            let error = bundle_runtime::fake_host::check_journal(lines, pin, &file);
+            mismatches.push(format!("{name}: {}", error.unwrap_err()));
+        } else {
+            mismatches.push(format!("{name}: ({count}, {hash:#018x})"));
+        }
+    }
+    assert!(
+        mismatches.is_empty(),
+        "{model:?} dma={dma} streamed:\n{}",
+        mismatches.join("\n")
+    );
+}
+
+#[test]
+fn streamed_ar_plans_hold_their_pins_with_dma() {
+    check_streamed(Model::Ar, true, AR_DMA);
+}
+
+#[test]
+fn streamed_ar_plans_hold_their_pins_without_dma() {
+    check_streamed(Model::Ar, false, AR);
+}
+
+#[test]
+fn streamed_mapped_ar_plans_hold_their_pins_with_dma() {
+    check_streamed(Model::ArMapped, true, MAPPED_AR_DMA);
+}
+
+#[test]
+fn streamed_mapped_ar_plans_hold_their_pins_without_dma() {
+    check_streamed(Model::ArMapped, false, MAPPED_AR);
+}
+
+#[test]
+fn streamed_dspark_plans_hold_their_pins_with_dma() {
+    check_streamed(Model::DSpark, true, DSPARK_DMA);
+}
+
+#[test]
+fn streamed_dspark_plans_hold_their_pins_without_dma() {
+    check_streamed(Model::DSpark, false, DSPARK);
 }
 
 /// Two plans are the same only at the same sites and, where both are

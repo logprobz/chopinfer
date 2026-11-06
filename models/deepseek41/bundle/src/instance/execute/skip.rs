@@ -30,7 +30,7 @@ pub(super) use lower::sweep;
 pub(super) use stream::launch as launch_streamed;
 #[cfg(test)]
 pub(crate) use stream::{
-    Failure as StreamedFailure, launches as streamed_launches,
+    Failure as StreamedFailure, describing as describing_streamed, launches as streamed_launches,
     with_failure as with_streamed_failure, with_lead,
 };
 

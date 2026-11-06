@@ -61,6 +61,30 @@ pub(crate) fn launches() -> u64 {
     LAUNCHES.get()
 }
 
+#[cfg(test)]
+thread_local! {
+    static DESCRIBED: std::cell::RefCell<Option<Vec<Vec<String>>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Runs `run`, describing each plan a streamed launch completed meanwhile
+/// as `plan_timing::describe` describes a fresh lowering: the plan's lines
+/// (`Plan::describe`), then its Engram plan when it made one.
+#[cfg(test)]
+pub(crate) fn describing<T>(run: impl FnOnce() -> T) -> (T, Vec<Vec<String>>) {
+    struct Reset(Option<Vec<Vec<String>>>);
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            DESCRIBED.set(self.0.take());
+        }
+    }
+    let reset = Reset(DESCRIBED.replace(Some(Vec::new())));
+    let result = run();
+    let described = DESCRIBED.take().unwrap_or_default();
+    drop(reset);
+    (result, described)
+}
+
 /// Where a test fails a streamed launch as an error of its lowering or
 /// audits would (`with_failure`).
 #[cfg(test)]
@@ -162,7 +186,17 @@ pub(in crate::instance::execute) fn launch(
     }
     let launched = stream.finish()?;
     #[cfg(test)]
-    LAUNCHES.set(LAUNCHES.get() + 1);
+    {
+        LAUNCHES.set(LAUNCHES.get() + 1);
+        DESCRIBED.with_borrow_mut(|described| {
+            if let Some(described) = described {
+                let (plan, engram) = &launched;
+                let mut lines = plan.describe();
+                lines.extend(engram.iter().map(|engram| format!("engram {engram:?}")));
+                described.push(lines);
+            }
+        });
+    }
     Ok(launched)
 }
 

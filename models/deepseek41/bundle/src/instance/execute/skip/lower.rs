@@ -16,6 +16,9 @@ use crate::program::{Phase, Stage};
 use bundle_runtime::pipeline::PreparedLaunch;
 use bundle_runtime::template::Site;
 use bundle_runtime::upload::DeviceInputs;
+use model_deepseek41_contract::geometry::Geometry;
+#[cfg(test)]
+use runtime_bundle_abi::DeviceBufferSpanV1 as Span;
 use std::ops::Range;
 
 type Program = (Vec<PreparedLaunch>, Vec<bool>, Vec<Stage>);
@@ -182,11 +185,7 @@ impl Lowerer {
             Group::LastSource => {
                 // The final compressed and indexed source still consumes all
                 // rows.
-                for stage in prefix(cone.last_source).into_iter().chain(
-                    crate::program::attention(g, cone.last_source, run.phase)
-                        .into_iter()
-                        .filter(|&stage| compressed(stage)),
-                ) {
+                for stage in last_source_stages(g, cone.last_source, run.phase) {
                     push(
                         program,
                         stage,
@@ -232,11 +231,7 @@ impl Lowerer {
                     let phase = Phase::Prefill {
                         rows: range.end - range.start,
                     };
-                    for stage in prefix(layer.id).into_iter().chain([
-                        Stage::Project(layer.id, "attention.kv"),
-                        Stage::WindowKv(layer.id),
-                        Stage::WindowRingWrite(layer.id),
-                    ]) {
+                    for stage in key_stages(layer.id) {
                         push(
                             program,
                             stage,
@@ -268,22 +263,7 @@ impl Lowerer {
                     let phase = Phase::Prefill {
                         rows: range.end - range.start,
                     };
-                    for &stage in self
-                        .stages
-                        .iter()
-                        .filter(|stage| stage.layer() == Some(layer.id))
-                    {
-                        if compressed(stage)
-                            || matches!(
-                                stage,
-                                Stage::DsparkFeature(_)
-                                    | Stage::WindowKv(_)
-                                    | Stage::WindowRingWrite(_)
-                                    | Stage::Project(_, "attention.kv")
-                            )
-                        {
-                            continue;
-                        }
+                    for stage in output_stages(&self.stages, layer.id) {
                         let at = program.0.len();
                         push(
                             program,
@@ -380,13 +360,7 @@ impl Lowerer {
                 let phase = Phase::Prefill {
                     rows: run.head_rows,
                 };
-                for stage in [
-                    Stage::HeadCollapse,
-                    Stage::FinalNorm,
-                    Stage::GatherHeadRows,
-                    Stage::LmHead,
-                    Stage::GatherLogits,
-                ] {
+                for stage in HEAD {
                     push(
                         &mut program,
                         stage,
@@ -415,6 +389,146 @@ impl Lowerer {
             _freed: super::Freed,
         })
     }
+}
+
+/// Lowers on rank 0 every stage the lowerer lowers, from packed row zero,
+/// at each of `rows` rows: the full-width stages below the cone and the
+/// last source's, and, at most 4,096 rows, each cone layer's key and output
+/// stages as a part; then the head at each of `heads` scored rows. Returns
+/// how many lowerings it checked of each kind (full width, key part,
+/// output part, head), and each stage and row count that lowers to nothing
+/// or fails, so a test can show every stage has a route throughout the
+/// prefill envelope.
+#[cfg(test)]
+pub(in crate::instance::execute) fn sweep(
+    instance: &Instance,
+    run: &Run,
+    layout: &Layout,
+    rows: &[u32],
+    heads: &[u32],
+) -> Result<([usize; 4], Vec<String>), String> {
+    let g = instance.config.shape.geometry;
+    let cone = &layout.cone;
+    let stages = crate::program::stages(g, run.phase);
+    let full = DeviceInputs::within(instance.arenas[PREFILL][0], &run.layout);
+    let mut failures = Vec::new();
+    let mut checked = [0; 4];
+    let kinds = ["full", "key part", "output part", "head"];
+    let mut check = |kind: usize, stage: Stage, m: u32, lowered: Result<Option<_>, String>| {
+        checked[kind] += 1;
+        let what = kinds[kind];
+        match lowered {
+            Ok(Some(_)) => {}
+            Ok(None) => failures.push(format!("{what} {stage:?} at {m} rows: not lowered")),
+            Err(error) => failures.push(format!("{what} {stage:?} at {m} rows: {error}")),
+        }
+    };
+    for &m in rows {
+        let input = part(instance, 0, full, &(0..m))?;
+        let phase = Phase::Prefill { rows: m };
+        let positions = &run.inputs.positions[..m as usize];
+        let base = lowering(instance, run, 0, &input, None);
+        for &stage in stages
+            .iter()
+            .take_while(|stage| stage.layer().is_none_or(|id| id < cone.last_source))
+        {
+            let lowered = match stage {
+                Stage::EngramRows(id) if instance.dspark.is_some() => {
+                    instance.dspark_engram(&base, phase, id)
+                }
+                Stage::DsparkFeature(id) if instance.dspark.is_some() => {
+                    instance.dspark_feature(&base, phase, id).map(Some)
+                }
+                _ => base.stage_with_prefill_context(phase, stage, positions, run.cache),
+            };
+            check(0, stage, m, lowered);
+        }
+        for stage in last_source_stages(g, cone.last_source, phase) {
+            check(0, stage, m, base.stage(phase, stage));
+        }
+        if m > 4096 {
+            continue;
+        }
+        let part = lowering(instance, run, 0, &input, Some(0));
+        for layer in &cone.layers {
+            for stage in key_stages(layer.id) {
+                check(
+                    1,
+                    stage,
+                    m,
+                    part.stage_with_positions(phase, stage, positions),
+                );
+            }
+            for stage in output_stages(&stages, layer.id) {
+                let lowered = part.stage_with_prefill_context(phase, stage, positions, run.cache);
+                check(2, stage, m, lowered);
+            }
+        }
+    }
+    for &h in heads {
+        // The run's layout holds its own scored rows' indices; a run
+        // scoring `h` rows holds `h` of them at the same place.
+        let indices = full.row_indices;
+        let input = DeviceInputs {
+            live_tokens: count(instance, 0, h)?,
+            row_indices: Span::new(indices.buffer, indices.offset, 4 * u64::from(h)),
+            ..full
+        };
+        let head = Lowering {
+            head_rows: h,
+            ..lowering(instance, run, 0, &input, None)
+        };
+        let phase = Phase::Prefill { rows: h };
+        for stage in HEAD {
+            check(3, stage, h, head.stage(phase, stage));
+        }
+    }
+    Ok((checked, failures))
+}
+
+/// The head's stages, in order.
+const HEAD: [Stage; 5] = [
+    Stage::HeadCollapse,
+    Stage::FinalNorm,
+    Stage::GatherHeadRows,
+    Stage::LmHead,
+    Stage::GatherLogits,
+];
+
+/// The last source's stages at full width, in order: its attention prefix
+/// and compressed stages.
+fn last_source_stages(g: &Geometry, layer: u32, phase: Phase) -> impl Iterator<Item = Stage> {
+    prefix(layer).into_iter().chain(
+        crate::program::attention(g, layer, phase)
+            .into_iter()
+            .filter(|&stage| compressed(stage)),
+    )
+}
+
+/// The stages a cone layer lowers on each part of its keys, in order.
+fn key_stages(layer: u32) -> impl Iterator<Item = Stage> {
+    prefix(layer).into_iter().chain([
+        Stage::Project(layer, "attention.kv"),
+        Stage::WindowKv(layer),
+        Stage::WindowRingWrite(layer),
+    ])
+}
+
+/// The stages a cone layer lowers on each part of its outputs, in order:
+/// its stages but the compressed ones, its feature and those of its key
+/// parts.
+fn output_stages(stages: &[Stage], layer: u32) -> impl Iterator<Item = Stage> + '_ {
+    stages.iter().copied().filter(move |&stage| {
+        stage.layer() == Some(layer)
+            && !compressed(stage)
+            && !matches!(
+                stage,
+                Stage::DsparkFeature(_)
+                    | Stage::WindowKv(_)
+                    | Stage::WindowRingWrite(_)
+                    | Stage::Project(_, "attention.kv")
+            )
+    })
 }
 
 /// After a layer's window write into the slots, writes the same key rows

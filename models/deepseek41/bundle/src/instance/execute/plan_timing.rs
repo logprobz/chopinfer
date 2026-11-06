@@ -192,6 +192,31 @@ pub(crate) fn lower_in_groups(
     })
 }
 
+/// The lowerings checked of each kind, and every stage and row count of
+/// `rows` and `heads` at which the upper-skip lowering finds no route,
+/// lowered on rank 0 with the inputs of the original batch `request`,
+/// which holds at least `rows`' largest count (`skip::sweep`).
+pub(crate) fn sweep(
+    handle: BundleHandleV1,
+    request: &[u8],
+    rows: &[u32],
+    heads: &[u32],
+) -> Result<([usize; 4], Vec<String>), String> {
+    with(handle, |instance| {
+        instance.skip_prefill = true;
+        let step = instance.pack(request).map_err(|e| format!("pack: {e:?}"))?;
+        let hashed = match (&instance.dspark, &instance.engram) {
+            (Some(_), Some(engram)) => Some(engram.hash(&step.prefill)?),
+            _ => None,
+        };
+        let run = instance
+            .plan_run(step.prefill, None, hashed)
+            .map_err(|e| format!("plan: {e:?}"))?;
+        let layout = skip::Layout::of(instance, &run)?;
+        skip::sweep(instance, &run, &layout, rows, heads)
+    })
+}
+
 /// The median host time of `repeats` plans of `request` (`plan`), and of
 /// the same upper-skip plans lowered in full each time.
 pub(crate) fn time(handle: BundleHandleV1, request: &[u8], repeats: usize) -> (Duration, Duration) {

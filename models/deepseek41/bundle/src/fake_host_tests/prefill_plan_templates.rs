@@ -10,6 +10,7 @@ use model_deepseek41_contract::execution_options::PREFILL_PLAN_CACHE_VERIFY;
 use runtime_bundle_sdk::prefill::{Boundary, encode};
 use runtime_bundle_sdk::{BatchAppendV1, BatchItemV1, BatchRequestV1, BatchWireVersionV1};
 
+mod envelope;
 mod failures;
 mod groups;
 mod metadata;

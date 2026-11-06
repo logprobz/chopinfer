@@ -24,6 +24,8 @@ mod lower;
 #[cfg(test)]
 pub(crate) use dma::with_enabled as with_dma;
 use lower::Lowerer;
+#[cfg(test)]
+pub(super) use lower::sweep;
 
 #[cfg(test)]
 thread_local! { static PATCHES: std::cell::Cell<bool> = const { std::cell::Cell::new(true) }; }

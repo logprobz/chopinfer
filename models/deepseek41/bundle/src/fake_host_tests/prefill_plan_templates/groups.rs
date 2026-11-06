@@ -4,6 +4,7 @@
 //! time at the live row counts: `cargo test --release -p bundle-deepseek41
 //! --lib prefill_plan_templates::groups -- --nocapture`.
 use super::*;
+use crate::instance::execute::skip;
 
 #[test]
 fn each_group_lowers_whole_layers_on_every_rank() {
@@ -60,6 +61,36 @@ fn each_group_lowers_whole_layers_on_every_rank() {
                     ms(finish)
                 );
             }
+        }
+        instance.destroy().unwrap();
+    }
+}
+
+/// The DMA plan of a body lowered in groups prepares each block once the
+/// groups holding its call and consumers are lowered, and ends as the
+/// whole body's plan.
+#[test]
+fn dma_blocks_are_prepared_as_their_groups_are_lowered() {
+    for dspark in [false, true] {
+        let host = host(dspark);
+        host.drafter.set(true);
+        let mut instance = create(&host, false);
+        let ids: Vec<_> = (0..100_032).map(|p| token(0, p)).collect();
+        plan_timing::restore_without_snapshot(instance.handle(), 1, 0, &ids).unwrap();
+        for rows in [512, 1500, 3000, 8192] {
+            let what = format!("dspark={dspark} rows={rows}");
+            let request = batch(&[chunk(1, 0, 100_032, rows)], &[], false).0;
+            let (ready, same) = skip::with_dma(true, || {
+                plan_timing::dma_in_groups(instance.handle(), &request)
+            })
+            .unwrap_or_else(|e| panic!("{what}: {e}"));
+            assert!(same, "{what}: {ready:?}");
+            assert!(ready.is_sorted(), "{what}: {ready:?}");
+            // The embedding's call is ready once layer 0 is lowered, and
+            // every call but those of the last groups before the end.
+            let blocks = *ready.last().unwrap();
+            assert!(ready[1] >= 1, "{what}: {ready:?}");
+            assert!(ready[ready.len() - 3] + 2 >= blocks, "{what}: {ready:?}");
         }
         instance.destroy().unwrap();
     }

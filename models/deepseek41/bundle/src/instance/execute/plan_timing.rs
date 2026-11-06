@@ -229,6 +229,27 @@ pub(crate) fn sweep(
     })
 }
 
+/// The DMA blocks prepared after each group of the upper-skip lowering of
+/// the original batch `request`, then in all, and whether they equal the
+/// whole body's (`skip::Plan::dma_in_groups`).
+pub(crate) fn dma_in_groups(
+    handle: BundleHandleV1,
+    request: &[u8],
+) -> Result<(Vec<usize>, bool), String> {
+    with(handle, |instance| {
+        instance.skip_prefill = true;
+        let step = instance.pack(request).map_err(|e| format!("pack: {e:?}"))?;
+        let hashed = match (&instance.dspark, &instance.engram) {
+            (Some(_), Some(engram)) => Some(engram.hash(&step.prefill)?),
+            _ => None,
+        };
+        let run = instance
+            .plan_run(step.prefill, None, hashed)
+            .map_err(|e| format!("plan: {e:?}"))?;
+        skip::Plan::dma_in_groups(instance, &run)
+    })
+}
+
 /// The median host time of `repeats` plans of `request` (`plan`), and of
 /// the same upper-skip plans lowered in full each time.
 pub(crate) fn time(handle: BundleHandleV1, request: &[u8], repeats: usize) -> (Duration, Duration) {

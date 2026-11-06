@@ -490,6 +490,29 @@ impl Plan {
         })
     }
 
+    /// Prepares `run`'s DMA plan as its body is lowered one group at a time
+    /// (`dma::Builder`): the blocks prepared after each group, and whether
+    /// the plan equals the one prepared from the whole body.
+    #[cfg(test)]
+    pub(super) fn dma_in_groups(
+        instance: &Instance,
+        run: &Run,
+    ) -> Result<(Vec<usize>, bool), String> {
+        let layout = Layout::of(instance, run)?;
+        let mut lowerer = Lowerer::new(instance, run, &layout)?;
+        let mut builder = dma::Builder::new(instance, run).ok_or("the run takes no DMA")?;
+        let mut ready = Vec::new();
+        while lowerer.lower_next(instance, run, &layout)? {
+            builder.advance(instance, lowerer.body(), false)?;
+            ready.push(builder.blocks());
+        }
+        builder.advance(instance, lowerer.body(), true)?;
+        ready.push(builder.blocks());
+        let streamed = builder.finish(lowerer.body()).ok_or("no DMA block")?;
+        let whole = dma::Plan::prepare(instance, run, lowerer.body())?.ok_or("no DMA block")?;
+        Ok((ready, streamed.same(&whole)?))
+    }
+
     /// Rank `rank`'s body launches as (symbol, stage), then its head's
     /// symbols.
     #[cfg(test)]

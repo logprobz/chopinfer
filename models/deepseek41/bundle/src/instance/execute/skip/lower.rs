@@ -10,7 +10,7 @@ use super::{
 };
 use crate::buffers::row_range;
 use crate::instance::Instance;
-use crate::instance::execute::{PREFILL, Run};
+use crate::instance::execute::{PREFILL, Programs, Run};
 use crate::lower::Lowering;
 use crate::program::{Phase, Stage};
 use bundle_runtime::pipeline::PreparedLaunch;
@@ -37,13 +37,6 @@ enum Group {
     Packs,
 }
 
-/// One rank's body so far.
-#[derive(Default)]
-struct Body {
-    program: Program,
-    sites: Vec<Site<Selection>>,
-}
-
 pub(super) struct Lowerer {
     /// The phase's stages; those below the cone's last source are lowered
     /// at full width.
@@ -52,7 +45,9 @@ pub(super) struct Lowerer {
     next: usize,
     /// The request state's window-ring buffer, which anchor spares copy.
     ring_buffer: usize,
-    ranks: Vec<Body>,
+    /// Each rank's body lowered so far, and its sites.
+    body: Programs,
+    sites: Vec<Vec<Site<Selection>>>,
 }
 
 impl Lowerer {
@@ -86,7 +81,12 @@ impl Lowerer {
             groups,
             next: 0,
             ring_buffer,
-            ranks: instance.buffers.iter().map(|_| Body::default()).collect(),
+            body: (
+                instance.buffers.iter().map(|_| Vec::new()).collect(),
+                instance.buffers.iter().map(|_| Vec::new()).collect(),
+                instance.buffers.iter().map(|_| Vec::new()).collect(),
+            ),
+            sites: instance.buffers.iter().map(|_| Vec::new()).collect(),
         })
     }
 
@@ -101,18 +101,31 @@ impl Lowerer {
         let Some(group) = self.groups.get(self.next).cloned() else {
             return Ok(false);
         };
-        for rank in 0..self.ranks.len() {
-            self.lower_group(instance, run, layout, rank, &group)?;
+        for rank in 0..self.sites.len() {
+            let mut program = (
+                std::mem::take(&mut self.body.0[rank]),
+                std::mem::take(&mut self.body.1[rank]),
+                std::mem::take(&mut self.body.2[rank]),
+            );
+            let lowered = self.lower_group(instance, run, layout, rank, &group, &mut program);
+            (self.body.0[rank], self.body.1[rank], self.body.2[rank]) = program;
+            lowered?;
         }
         self.next += 1;
         Ok(true)
+    }
+
+    /// Each rank's body lowered so far.
+    #[cfg(test)]
+    pub(super) fn body(&self) -> &Programs {
+        &self.body
     }
 
     /// Each rank's body launches lowered so far, and the layer of the group
     /// lowered last: none for the embedding and the feature packs.
     #[cfg(test)]
     pub(super) fn lowered(&self, layout: &Layout) -> (Vec<usize>, Option<u32>) {
-        let launches = self.ranks.iter().map(|body| body.program.0.len()).collect();
+        let launches = self.body.0.iter().map(Vec::len).collect();
         let layer = match self.next.checked_sub(1).map(|at| &self.groups[at]) {
             Some(Group::Full(range)) => self.stages[range.start].layer(),
             Some(Group::LastSource) => Some(layout.cone.last_source),
@@ -129,13 +142,14 @@ impl Lowerer {
         layout: &Layout,
         rank: usize,
         group: &Group,
+        program: &mut Program,
     ) -> Result<(), String> {
         let g = instance.config.shape.geometry;
         let (cone, features) = (&layout.cone, &layout.features);
         let full = DeviceInputs::within(instance.arenas[PREFILL][rank], &run.layout);
         let base = lowering(instance, run, rank, &full, None);
         let ring_buffer = self.ring_buffer;
-        let Body { program, sites } = &mut self.ranks[rank];
+        let sites = &mut self.sites[rank];
         match group {
             Group::Full(range) => {
                 for &stage in &self.stages[range.clone()] {
@@ -325,16 +339,11 @@ impl Lowerer {
     ) -> Result<Plan, String> {
         while self.lower_next(instance, run, layout)? {}
         let cone = &layout.cone;
-        let mut body = (Vec::new(), Vec::new(), Vec::new());
-        let mut sites = Vec::new();
+        let body = self.body;
+        let sites = self.sites.into_iter().flatten().collect();
         let mut head = (Vec::new(), Vec::new(), Vec::new());
         let mut copies = Vec::new();
-        for (rank, (lowered, buffers)) in self.ranks.into_iter().zip(&instance.buffers).enumerate()
-        {
-            body.0.push(lowered.program.0);
-            body.1.push(lowered.program.1);
-            body.2.push(lowered.program.2);
-            sites.extend(lowered.sites);
+        for (rank, buffers) in instance.buffers.iter().enumerate() {
             let full = DeviceInputs::within(instance.arenas[PREFILL][rank], &run.layout);
             let mut program = (Vec::new(), Vec::new(), Vec::new());
             let mut rank_copies = Vec::new();

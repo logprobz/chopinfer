@@ -17,7 +17,17 @@ struct Reduction {
     end: usize,
 }
 
-fn reductions(instance: &Instance, body: &Programs, rank: usize) -> Result<Vec<Reduction>, String> {
+/// Rank `rank`'s reductions in the stage runs of its body from `from`, the
+/// first launch of a run, and where the scan stopped: a run that reaches
+/// the end of the body is scanned only once the body is `complete`, as the
+/// next group of a lowering in groups may extend it.
+fn reductions(
+    instance: &Instance,
+    body: &Programs,
+    rank: usize,
+    from: usize,
+    complete: bool,
+) -> Result<(Vec<Reduction>, usize), String> {
     let mut found = Vec::new();
     let (programs, flags, stages) = body;
     if programs[rank].len() != flags[rank].len() || programs[rank].len() != stages[rank].len() {
@@ -25,7 +35,7 @@ fn reductions(instance: &Instance, body: &Programs, rank: usize) -> Result<Vec<R
     }
     let partial = instance.buffers[rank].scratch.partial;
     let row_bytes = u64::from(instance.config.shape.dims().hidden) * 4;
-    let mut at = 0;
+    let mut at = from;
     while at < stages[rank].len() {
         let stage = stages[rank][at];
         let end = at
@@ -33,6 +43,9 @@ fn reductions(instance: &Instance, body: &Programs, rank: usize) -> Result<Vec<R
                 .iter()
                 .take_while(|&&s| s == stage)
                 .count();
+        if end == stages[rank].len() && !complete {
+            break;
+        }
         if matches!(stage, Stage::EmbeddingReduce | Stage::Reduce(..)) {
             let collective = (at..end)
                 .find(|&i| flags[rank][i])
@@ -98,7 +111,7 @@ fn reductions(instance: &Instance, body: &Programs, rank: usize) -> Result<Vec<R
         }
         at = end;
     }
-    Ok(found)
+    Ok((found, at))
 }
 
 struct Block {
@@ -209,103 +222,11 @@ impl Plan {
         run: &Run,
         body: &Programs,
     ) -> Result<Option<Self>, String> {
-        if !applies(instance, run) {
+        let Some(mut builder) = Builder::new(instance, run) else {
             return Ok(None);
-        }
-        if body.0.len() != 4 || body.1.len() != 4 || body.2.len() != 4 {
-            return Err("sparse DMA requires all four rank programs".into());
-        }
-        let ranks = (0..4)
-            .map(|rank| reductions(instance, body, rank))
-            .collect::<Result<Vec<_>, _>>()?;
-        if ranks.iter().any(|rank| rank.len() != ranks[0].len()) {
-            return Err("sparse DMA rank reduction counts differ".into());
-        }
-        let mut cursors = [0; 4];
-        let mut blocks = Vec::new();
-        let mut reads = vec![Vec::new(); 4];
-        for (index, reference) in ranks[0].iter().enumerate() {
-            if ranks.iter().any(|rank| {
-                let r = &rank[index];
-                (r.stage, r.first, r.rows) != (reference.stage, reference.first, reference.rows)
-            }) {
-                return Err("sparse DMA ranks disagree on original rows".into());
-            }
-            let collectives = (0..4)
-                .map(|rank| body.0[rank][ranks[rank][index].collective].symbol.as_str())
-                .collect::<Vec<_>>();
-            let Some(reduce) = Call::prepare(
-                instance,
-                reference.first,
-                reference.rows,
-                reference.stage == Stage::EmbeddingReduce,
-                &collectives,
-            )?
-            else {
-                continue;
-            };
-            for (rank, read) in reads.iter_mut().enumerate() {
-                let r = &ranks[rank][index];
-                read.push(
-                    r.collective.saturating_sub(1)
-                        ..(r.end + Consumers::LAUNCHES).min(body.0[rank].len()),
-                );
-            }
-            let following = (0..4)
-                .map(|rank| &body.0[rank][ranks[rank][index].end..])
-                .collect::<Vec<_>>();
-            let flags = (0..4)
-                .map(|rank| &body.1[rank][ranks[rank][index].end..])
-                .collect::<Vec<_>>();
-            let consume = Consumers::prepare(instance, &reduce, &following, &flags)?;
-            let taken = if consume.is_some() {
-                Consumers::LAUNCHES
-            } else {
-                0
-            };
-            // The producer is the last launch of each rank's compute span.
-            let produce = if (0..4).all(|rank| ranks[rank][index].collective > cursors[rank]) {
-                let launches = (0..4)
-                    .map(|rank| &body.0[rank][ranks[rank][index].collective - 1])
-                    .collect::<Vec<_>>();
-                let flags = (0..4)
-                    .map(|rank| body.1[rank][ranks[rank][index].collective - 1])
-                    .collect::<Vec<_>>();
-                Producers::prepare(instance, &reduce, &launches, &flags)?
-            } else {
-                None
-            };
-            let given = usize::from(produce.is_some());
-            let compute = cursors
-                .iter_mut()
-                .enumerate()
-                .map(|(rank, cursor)| {
-                    let r = &ranks[rank][index];
-                    let span = *cursor..r.collective - given;
-                    *cursor = r.end + taken;
-                    span
-                })
-                .collect();
-            blocks.push(Block {
-                compute,
-                reduce,
-                consume,
-                produce,
-            });
-        }
-        let tail = cursors
-            .into_iter()
-            .enumerate()
-            .map(|(rank, at)| at..body.0[rank].len())
-            .collect();
-        if blocks.is_empty() {
-            return Ok(None);
-        }
-        Ok(Some(Self {
-            blocks,
-            tail,
-            reads,
-        }))
+        };
+        builder.advance(instance, body, true)?;
+        Ok(builder.finish(body))
     }
 
     pub(super) fn execute(
@@ -363,6 +284,162 @@ impl Plan {
             instance.collectives.poison();
         }
         result.map_err(|error| instance.dispatch_failed(error))
+    }
+}
+
+/// The DMA plan of a body as its launches are lowered: each block is
+/// prepared once every rank lowered its call and the launches after the
+/// call its consumers read, in body order, as `Plan::prepare` prepares
+/// them from the whole body.
+pub(super) struct Builder {
+    /// Each rank's reductions found so far, and where its scan stopped.
+    found: Vec<Vec<Reduction>>,
+    scanned: Vec<usize>,
+    /// The next reduction to prepare a block for.
+    next: usize,
+    cursors: [usize; 4],
+    blocks: Vec<Block>,
+    reads: Vec<Vec<Range<usize>>>,
+}
+
+impl Builder {
+    /// The builder of `run`'s DMA plan; none when its body takes no DMA.
+    pub(super) fn new(instance: &Instance, run: &Run) -> Option<Self> {
+        applies(instance, run).then(|| Self {
+            found: (0..4).map(|_| Vec::new()).collect(),
+            scanned: vec![0; 4],
+            next: 0,
+            cursors: [0; 4],
+            blocks: Vec::new(),
+            reads: vec![Vec::new(); 4],
+        })
+    }
+
+    /// The blocks prepared so far.
+    #[cfg(test)]
+    pub(super) fn blocks(&self) -> usize {
+        self.blocks.len()
+    }
+
+    /// Prepares the blocks `body`, lowered so far, holds: each whose call
+    /// and consumers' launches every rank lowered, or every block once
+    /// `complete`.
+    pub(super) fn advance(
+        &mut self,
+        instance: &Instance,
+        body: &Programs,
+        complete: bool,
+    ) -> Result<(), String> {
+        if body.0.len() != 4 || body.1.len() != 4 || body.2.len() != 4 {
+            return Err("sparse DMA requires all four rank programs".into());
+        }
+        for rank in 0..4 {
+            let (found, at) = reductions(instance, body, rank, self.scanned[rank], complete)?;
+            self.found[rank].extend(found);
+            self.scanned[rank] = at;
+        }
+        let ranks = &self.found;
+        if complete && ranks.iter().any(|rank| rank.len() != ranks[0].len()) {
+            return Err("sparse DMA rank reduction counts differ".into());
+        }
+        let available = ranks.iter().map(Vec::len).min().unwrap_or(0);
+        while self.next < available {
+            let index = self.next;
+            // The consumers read the launches after each rank's call.
+            if !complete
+                && (0..4)
+                    .any(|rank| ranks[rank][index].end + Consumers::LAUNCHES > body.0[rank].len())
+            {
+                break;
+            }
+            self.next += 1;
+            let reference = &ranks[0][index];
+            if ranks.iter().any(|rank| {
+                let r = &rank[index];
+                (r.stage, r.first, r.rows) != (reference.stage, reference.first, reference.rows)
+            }) {
+                return Err("sparse DMA ranks disagree on original rows".into());
+            }
+            let collectives = (0..4)
+                .map(|rank| body.0[rank][ranks[rank][index].collective].symbol.as_str())
+                .collect::<Vec<_>>();
+            let Some(reduce) = Call::prepare(
+                instance,
+                reference.first,
+                reference.rows,
+                reference.stage == Stage::EmbeddingReduce,
+                &collectives,
+            )?
+            else {
+                continue;
+            };
+            for (rank, read) in self.reads.iter_mut().enumerate() {
+                let r = &ranks[rank][index];
+                read.push(
+                    r.collective.saturating_sub(1)
+                        ..(r.end + Consumers::LAUNCHES).min(body.0[rank].len()),
+                );
+            }
+            let following = (0..4)
+                .map(|rank| &body.0[rank][ranks[rank][index].end..])
+                .collect::<Vec<_>>();
+            let flags = (0..4)
+                .map(|rank| &body.1[rank][ranks[rank][index].end..])
+                .collect::<Vec<_>>();
+            let consume = Consumers::prepare(instance, &reduce, &following, &flags)?;
+            let taken = if consume.is_some() {
+                Consumers::LAUNCHES
+            } else {
+                0
+            };
+            // The producer is the last launch of each rank's compute span.
+            let produce = if (0..4).all(|rank| ranks[rank][index].collective > self.cursors[rank]) {
+                let launches = (0..4)
+                    .map(|rank| &body.0[rank][ranks[rank][index].collective - 1])
+                    .collect::<Vec<_>>();
+                let flags = (0..4)
+                    .map(|rank| body.1[rank][ranks[rank][index].collective - 1])
+                    .collect::<Vec<_>>();
+                Producers::prepare(instance, &reduce, &launches, &flags)?
+            } else {
+                None
+            };
+            let given = usize::from(produce.is_some());
+            let compute = self
+                .cursors
+                .iter_mut()
+                .enumerate()
+                .map(|(rank, cursor)| {
+                    let r = &ranks[rank][index];
+                    let span = *cursor..r.collective - given;
+                    *cursor = r.end + taken;
+                    span
+                })
+                .collect();
+            self.blocks.push(Block {
+                compute,
+                reduce,
+                consume,
+                produce,
+            });
+        }
+        Ok(())
+    }
+
+    /// The plan of the complete `body`, once `advance` prepared every
+    /// block: none without a block.
+    pub(super) fn finish(self, body: &Programs) -> Option<Plan> {
+        let tail = self
+            .cursors
+            .into_iter()
+            .enumerate()
+            .map(|(rank, at)| at..body.0[rank].len())
+            .collect();
+        (!self.blocks.is_empty()).then_some(Plan {
+            blocks: self.blocks,
+            tail,
+            reads: self.reads,
+        })
     }
 }
 

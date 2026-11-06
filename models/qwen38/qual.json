@@ -161,7 +161,7 @@
           ],
           "op": "eq",
           "value": "74a79eebe1535a7b16ab26f7984224ef1f0a285a2a8a3b57d094c79f738fe473",
-          "source": "fixtures/qwen38/README.md#teacher-gate-reference"
+          "source": "models/qwen38/README.md#teacher-gate-reference"
         },
         {
           "path": [
@@ -169,7 +169,7 @@
           ],
           "op": "eq",
           "value": "1c8f2f0282d8869ad8201a18004139e4acad6f440796af5b8f7fcbac939b44c9",
-          "source": "fixtures/qwen38/README.md#teacher-gate-reference"
+          "source": "models/qwen38/README.md#teacher-gate-reference"
         }
       ],
       "constants": {
@@ -289,7 +289,7 @@
           ],
           "op": "eq",
           "value": "74a79eebe1535a7b16ab26f7984224ef1f0a285a2a8a3b57d094c79f738fe473",
-          "source": "fixtures/qwen38/README.md#teacher-gate-reference"
+          "source": "models/qwen38/README.md#teacher-gate-reference"
         },
         {
           "path": [
@@ -297,7 +297,7 @@
           ],
           "op": "eq",
           "value": "31dbb9c0d1035d6aed10499d1a69620f792f2282987248294555893894dff122",
-          "source": "fixtures/qwen38/README.md#long-context-reference"
+          "source": "models/qwen38/README.md#long-context-reference"
         }
       ],
       "constants": {
@@ -417,7 +417,7 @@
           ],
           "op": "eq",
           "value": "74a79eebe1535a7b16ab26f7984224ef1f0a285a2a8a3b57d094c79f738fe473",
-          "source": "fixtures/qwen38/README.md#teacher-gate-reference"
+          "source": "models/qwen38/README.md#teacher-gate-reference"
         },
         {
           "path": [
@@ -425,7 +425,7 @@
           ],
           "op": "eq",
           "value": "e3d931c2c6c3d5d84cc571194f097e15292288e88b9ccdea271b41547bb5cfa0",
-          "source": "docs/serving-profiles.md#long-context-qualification"
+          "source": "models/qwen38/README.md#long-context-reference"
         }
       ],
       "constants": {
@@ -1672,7 +1672,7 @@
             ],
             "op": "eq",
             "value": "74a79eebe1535a7b16ab26f7984224ef1f0a285a2a8a3b57d094c79f738fe473",
-            "source": "docs/serving-profiles.md#qwen-evidence"
+            "source": "models/qwen38/README.md#qualification"
           },
           {
             "path": [
@@ -1684,7 +1684,7 @@
             ],
             "op": "eq",
             "value": 4,
-            "source": "docs/serving-profiles.md#qwen-evidence"
+            "source": "models/qwen38/README.md#qualification"
           },
           {
             "path": [
@@ -1696,7 +1696,7 @@
             ],
             "op": "eq",
             "value": "bf16",
-            "source": "docs/serving-profiles.md#qwen-evidence"
+            "source": "models/qwen38/README.md#qualification"
           },
           {
             "path": [
@@ -1708,7 +1708,7 @@
             ],
             "op": "eq",
             "value": 2,
-            "source": "docs/serving-profiles.md#qwen-evidence"
+            "source": "models/qwen38/README.md#qualification"
           },
           {
             "path": [
@@ -1742,7 +1742,7 @@
             ],
             "op": "eq",
             "value": "74a79eebe1535a7b16ab26f7984224ef1f0a285a2a8a3b57d094c79f738fe473",
-            "source": "docs/serving-profiles.md#qwen-evidence"
+            "source": "models/qwen38/README.md#qualification"
           },
           {
             "path": [
@@ -1754,7 +1754,7 @@
             ],
             "op": "eq",
             "value": 4,
-            "source": "docs/serving-profiles.md#qwen-evidence"
+            "source": "models/qwen38/README.md#qualification"
           },
           {
             "path": [
@@ -1766,7 +1766,7 @@
             ],
             "op": "eq",
             "value": "bf16",
-            "source": "docs/serving-profiles.md#qwen-evidence"
+            "source": "models/qwen38/README.md#qualification"
           },
           {
             "path": [
@@ -1778,7 +1778,7 @@
             ],
             "op": "eq",
             "value": 2,
-            "source": "docs/serving-profiles.md#qwen-evidence"
+            "source": "models/qwen38/README.md#qualification"
           },
           {
             "path": [
@@ -2117,7 +2117,7 @@
               ],
               "op": "eq",
               "value": 4,
-              "source": "docs/serving-profiles.md#qwen-evidence"
+              "source": "models/qwen38/README.md#qualification"
             },
             {
               "path": [
@@ -2129,7 +2129,7 @@
               ],
               "op": "eq",
               "value": "bf16",
-              "source": "docs/serving-profiles.md#qwen-evidence"
+              "source": "models/qwen38/README.md#qualification"
             },
             {
               "path": [
@@ -2141,7 +2141,7 @@
               ],
               "op": "eq",
               "value": 2,
-              "source": "docs/serving-profiles.md#qwen-evidence"
+              "source": "models/qwen38/README.md#qualification"
             }
           ]
         },
@@ -2157,7 +2157,7 @@
               ],
               "op": "eq",
               "value": 4,
-              "source": "docs/serving-profiles.md#qwen-evidence"
+              "source": "models/qwen38/README.md#qualification"
             },
             {
               "path": [
@@ -2169,7 +2169,7 @@
               ],
               "op": "eq",
               "value": "bf16",
-              "source": "docs/serving-profiles.md#qwen-evidence"
+              "source": "models/qwen38/README.md#qualification"
             },
             {
               "path": [
@@ -2181,7 +2181,7 @@
               ],
               "op": "eq",
               "value": 2,
-              "source": "docs/serving-profiles.md#qwen-evidence"
+              "source": "models/qwen38/README.md#qualification"
             }
           ]
         },
@@ -2207,7 +2207,7 @@
               ],
               "op": "eq",
               "value": 4,
-              "source": "docs/serving-profiles.md#qwen-evidence"
+              "source": "models/qwen38/README.md#qualification"
             },
             {
               "path": [
@@ -2219,7 +2219,7 @@
               ],
               "op": "eq",
               "value": "bf16",
-              "source": "docs/serving-profiles.md#qwen-evidence"
+              "source": "models/qwen38/README.md#qualification"
             },
             {
               "path": [
@@ -2231,7 +2231,7 @@
               ],
               "op": "eq",
               "value": 2,
-              "source": "docs/serving-profiles.md#qwen-evidence"
+              "source": "models/qwen38/README.md#qualification"
             }
           ],
           "spec_candidate": [
@@ -2255,7 +2255,7 @@
               ],
               "op": "eq",
               "value": 4,
-              "source": "docs/serving-profiles.md#qwen-evidence"
+              "source": "models/qwen38/README.md#qualification"
             },
             {
               "path": [
@@ -2267,7 +2267,7 @@
               ],
               "op": "eq",
               "value": "bf16",
-              "source": "docs/serving-profiles.md#qwen-evidence"
+              "source": "models/qwen38/README.md#qualification"
             },
             {
               "path": [
@@ -2279,7 +2279,7 @@
               ],
               "op": "eq",
               "value": 2,
-              "source": "docs/serving-profiles.md#qwen-evidence"
+              "source": "models/qwen38/README.md#qualification"
             }
           ]
         },
@@ -2305,7 +2305,7 @@
               ],
               "op": "eq",
               "value": 4,
-              "source": "docs/serving-profiles.md#qwen-evidence"
+              "source": "models/qwen38/README.md#qualification"
             },
             {
               "path": [
@@ -2317,7 +2317,7 @@
               ],
               "op": "eq",
               "value": "bf16",
-              "source": "docs/serving-profiles.md#qwen-evidence"
+              "source": "models/qwen38/README.md#qualification"
             },
             {
               "path": [
@@ -2329,7 +2329,7 @@
               ],
               "op": "eq",
               "value": 2,
-              "source": "docs/serving-profiles.md#qwen-evidence"
+              "source": "models/qwen38/README.md#qualification"
             }
           ],
           "verify_candidate": [
@@ -2353,7 +2353,7 @@
               ],
               "op": "eq",
               "value": 4,
-              "source": "docs/serving-profiles.md#qwen-evidence"
+              "source": "models/qwen38/README.md#qualification"
             },
             {
               "path": [
@@ -2365,7 +2365,7 @@
               ],
               "op": "eq",
               "value": "bf16",
-              "source": "docs/serving-profiles.md#qwen-evidence"
+              "source": "models/qwen38/README.md#qualification"
             },
             {
               "path": [
@@ -2377,7 +2377,7 @@
               ],
               "op": "eq",
               "value": 2,
-              "source": "docs/serving-profiles.md#qwen-evidence"
+              "source": "models/qwen38/README.md#qualification"
             }
           ]
         },
@@ -2403,7 +2403,7 @@
               ],
               "op": "eq",
               "value": 4,
-              "source": "docs/serving-profiles.md#qwen-evidence"
+              "source": "models/qwen38/README.md#qualification"
             },
             {
               "path": [
@@ -2415,7 +2415,7 @@
               ],
               "op": "eq",
               "value": "bf16",
-              "source": "docs/serving-profiles.md#qwen-evidence"
+              "source": "models/qwen38/README.md#qualification"
             },
             {
               "path": [
@@ -2427,7 +2427,7 @@
               ],
               "op": "eq",
               "value": 2,
-              "source": "docs/serving-profiles.md#qwen-evidence"
+              "source": "models/qwen38/README.md#qualification"
             }
           ]
         },
@@ -2453,7 +2453,7 @@
               ],
               "op": "eq",
               "value": 4,
-              "source": "docs/serving-profiles.md#qwen-evidence"
+              "source": "models/qwen38/README.md#qualification"
             },
             {
               "path": [
@@ -2465,7 +2465,7 @@
               ],
               "op": "eq",
               "value": "bf16",
-              "source": "docs/serving-profiles.md#qwen-evidence"
+              "source": "models/qwen38/README.md#qualification"
             },
             {
               "path": [
@@ -2477,7 +2477,7 @@
               ],
               "op": "eq",
               "value": 2,
-              "source": "docs/serving-profiles.md#qwen-evidence"
+              "source": "models/qwen38/README.md#qualification"
             }
           ],
           "preemption_candidate": [
@@ -2501,7 +2501,7 @@
               ],
               "op": "eq",
               "value": 4,
-              "source": "docs/serving-profiles.md#qwen-evidence"
+              "source": "models/qwen38/README.md#qualification"
             },
             {
               "path": [
@@ -2513,7 +2513,7 @@
               ],
               "op": "eq",
               "value": "bf16",
-              "source": "docs/serving-profiles.md#qwen-evidence"
+              "source": "models/qwen38/README.md#qualification"
             },
             {
               "path": [
@@ -2525,7 +2525,7 @@
               ],
               "op": "eq",
               "value": 2,
-              "source": "docs/serving-profiles.md#qwen-evidence"
+              "source": "models/qwen38/README.md#qualification"
             }
           ]
         },
@@ -2551,7 +2551,7 @@
               ],
               "op": "eq",
               "value": 4,
-              "source": "docs/serving-profiles.md#qwen-evidence"
+              "source": "models/qwen38/README.md#qualification"
             },
             {
               "path": [
@@ -2563,7 +2563,7 @@
               ],
               "op": "eq",
               "value": "bf16",
-              "source": "docs/serving-profiles.md#qwen-evidence"
+              "source": "models/qwen38/README.md#qualification"
             },
             {
               "path": [
@@ -2575,7 +2575,7 @@
               ],
               "op": "eq",
               "value": 2,
-              "source": "docs/serving-profiles.md#qwen-evidence"
+              "source": "models/qwen38/README.md#qualification"
             }
           ],
           "preemption_candidate_c1": [
@@ -2599,7 +2599,7 @@
               ],
               "op": "eq",
               "value": 4,
-              "source": "docs/serving-profiles.md#qwen-evidence"
+              "source": "models/qwen38/README.md#qualification"
             },
             {
               "path": [
@@ -2611,7 +2611,7 @@
               ],
               "op": "eq",
               "value": "bf16",
-              "source": "docs/serving-profiles.md#qwen-evidence"
+              "source": "models/qwen38/README.md#qualification"
             },
             {
               "path": [
@@ -2623,7 +2623,7 @@
               ],
               "op": "eq",
               "value": 2,
-              "source": "docs/serving-profiles.md#qwen-evidence"
+              "source": "models/qwen38/README.md#qualification"
             }
           ]
         },
@@ -2639,7 +2639,7 @@
               ],
               "op": "eq",
               "value": 4,
-              "source": "docs/serving-profiles.md#qwen-evidence"
+              "source": "models/qwen38/README.md#qualification"
             },
             {
               "path": [
@@ -2651,7 +2651,7 @@
               ],
               "op": "eq",
               "value": "bf16",
-              "source": "docs/serving-profiles.md#qwen-evidence"
+              "source": "models/qwen38/README.md#qualification"
             },
             {
               "path": [
@@ -2663,7 +2663,7 @@
               ],
               "op": "eq",
               "value": 2,
-              "source": "docs/serving-profiles.md#qwen-evidence"
+              "source": "models/qwen38/README.md#qualification"
             }
           ]
         }
@@ -2705,7 +2705,7 @@
         "tensor_parallel_size": 2,
         "profile_name": "tp2-mtp"
       },
-      "source": "docs/serving-profiles.md#qwen-evidence",
+      "source": "models/qwen38/README.md#qualification",
       "media": false,
       "keep_references": [
         "teacher"
@@ -2723,7 +2723,7 @@
               ],
               "op": "eq",
               "value": 2,
-              "source": "docs/serving-profiles.md#qwen-evidence"
+              "source": "models/qwen38/README.md#qualification"
             }
           ]
         },
@@ -2739,7 +2739,7 @@
               ],
               "op": "eq",
               "value": 2,
-              "source": "docs/serving-profiles.md#qwen-evidence"
+              "source": "models/qwen38/README.md#qualification"
             }
           ],
           "stored_teacher": [
@@ -2750,7 +2750,7 @@
               ],
               "op": "eq",
               "value": "{model}",
-              "source": "docs/serving-profiles.md#qwen-evidence",
+              "source": "models/qwen38/README.md#qualification",
               "unless_present": true
             },
             {
@@ -2763,7 +2763,7 @@
               ],
               "op": "eq",
               "value": 2,
-              "source": "docs/serving-profiles.md#qwen-evidence"
+              "source": "models/qwen38/README.md#qualification"
             }
           ],
           "teacher": [
@@ -2774,7 +2774,7 @@
               ],
               "op": "eq",
               "value": "{model}",
-              "source": "docs/serving-profiles.md#qwen-evidence",
+              "source": "models/qwen38/README.md#qualification",
               "unless_present": true
             },
             {
@@ -2787,7 +2787,7 @@
               ],
               "op": "eq",
               "value": 2,
-              "source": "docs/serving-profiles.md#qwen-evidence"
+              "source": "models/qwen38/README.md#qualification"
             }
           ]
         },
@@ -2802,7 +2802,7 @@
               ],
               "op": "eq",
               "value": 2,
-              "source": "docs/serving-profiles.md#qwen-evidence"
+              "source": "models/qwen38/README.md#qualification"
             }
           ],
           "spec_ar": [
@@ -2813,7 +2813,7 @@
               ],
               "op": "eq",
               "value": "{model}",
-              "source": "docs/serving-profiles.md#qwen-evidence",
+              "source": "models/qwen38/README.md#qualification",
               "unless_present": true
             },
             {
@@ -2826,7 +2826,7 @@
               ],
               "op": "eq",
               "value": 2,
-              "source": "docs/serving-profiles.md#qwen-evidence"
+              "source": "models/qwen38/README.md#qualification"
             }
           ],
           "spec_candidate": [
@@ -2837,7 +2837,7 @@
               ],
               "op": "eq",
               "value": "{model}",
-              "source": "docs/serving-profiles.md#qwen-evidence",
+              "source": "models/qwen38/README.md#qualification",
               "unless_present": true
             },
             {
@@ -2850,7 +2850,7 @@
               ],
               "op": "eq",
               "value": 2,
-              "source": "docs/serving-profiles.md#qwen-evidence"
+              "source": "models/qwen38/README.md#qualification"
             }
           ]
         },
@@ -2866,7 +2866,7 @@
               ],
               "op": "eq",
               "value": 2,
-              "source": "docs/serving-profiles.md#qwen-evidence"
+              "source": "models/qwen38/README.md#qualification"
             },
             {
               "path": [
@@ -2877,7 +2877,7 @@
               ],
               "op": "eq",
               "value": 2,
-              "source": "docs/serving-profiles.md#qwen-evidence"
+              "source": "models/qwen38/README.md#qualification"
             }
           ],
           "verify_ar": [
@@ -2888,7 +2888,7 @@
               ],
               "op": "eq",
               "value": "{model}",
-              "source": "docs/serving-profiles.md#qwen-evidence",
+              "source": "models/qwen38/README.md#qualification",
               "unless_present": true
             },
             {
@@ -2901,7 +2901,7 @@
               ],
               "op": "eq",
               "value": 2,
-              "source": "docs/serving-profiles.md#qwen-evidence"
+              "source": "models/qwen38/README.md#qualification"
             }
           ],
           "verify_candidate": [
@@ -2912,7 +2912,7 @@
               ],
               "op": "eq",
               "value": "{model}",
-              "source": "docs/serving-profiles.md#qwen-evidence",
+              "source": "models/qwen38/README.md#qualification",
               "unless_present": true
             },
             {
@@ -2925,7 +2925,7 @@
               ],
               "op": "eq",
               "value": 2,
-              "source": "docs/serving-profiles.md#qwen-evidence"
+              "source": "models/qwen38/README.md#qualification"
             }
           ]
         },
@@ -2939,7 +2939,7 @@
               ],
               "op": "eq",
               "value": 2,
-              "source": "docs/serving-profiles.md#qwen-evidence"
+              "source": "models/qwen38/README.md#qualification"
             }
           ],
           "prefix_record": [
@@ -2950,7 +2950,7 @@
               ],
               "op": "eq",
               "value": "{model}",
-              "source": "docs/serving-profiles.md#qwen-evidence",
+              "source": "models/qwen38/README.md#qualification",
               "unless_present": true
             },
             {
@@ -2963,7 +2963,7 @@
               ],
               "op": "eq",
               "value": 2,
-              "source": "docs/serving-profiles.md#qwen-evidence"
+              "source": "models/qwen38/README.md#qualification"
             }
           ]
         }
@@ -3002,7 +3002,7 @@
         "profile_name": "tp2-mtp",
         "speculation_tokens": 0
       },
-      "source": "docs/serving-profiles.md#qwen-evidence",
+      "source": "models/qwen38/README.md#qualification",
       "media": false,
       "keep_references": [
         "teacher"
@@ -3020,7 +3020,7 @@
               ],
               "op": "eq",
               "value": 2,
-              "source": "docs/serving-profiles.md#qwen-evidence"
+              "source": "models/qwen38/README.md#qualification"
             },
             {
               "path": [
@@ -3033,7 +3033,7 @@
               ],
               "op": "eq",
               "value": 0,
-              "source": "docs/serving-profiles.md#qwen-evidence"
+              "source": "models/qwen38/README.md#qualification"
             }
           ]
         },
@@ -3049,7 +3049,7 @@
               ],
               "op": "eq",
               "value": 2,
-              "source": "docs/serving-profiles.md#qwen-evidence"
+              "source": "models/qwen38/README.md#qualification"
             },
             {
               "path": [
@@ -3062,7 +3062,7 @@
               ],
               "op": "eq",
               "value": 0,
-              "source": "docs/serving-profiles.md#qwen-evidence"
+              "source": "models/qwen38/README.md#qualification"
             }
           ],
           "stored_teacher": [
@@ -3073,7 +3073,7 @@
               ],
               "op": "eq",
               "value": "{model}",
-              "source": "docs/serving-profiles.md#qwen-evidence",
+              "source": "models/qwen38/README.md#qualification",
               "unless_present": true
             },
             {
@@ -3086,7 +3086,7 @@
               ],
               "op": "eq",
               "value": 2,
-              "source": "docs/serving-profiles.md#qwen-evidence"
+              "source": "models/qwen38/README.md#qualification"
             },
             {
               "path": [
@@ -3099,7 +3099,7 @@
               ],
               "op": "eq",
               "value": 0,
-              "source": "docs/serving-profiles.md#qwen-evidence"
+              "source": "models/qwen38/README.md#qualification"
             }
           ],
           "teacher": [
@@ -3110,7 +3110,7 @@
               ],
               "op": "eq",
               "value": "{model}",
-              "source": "docs/serving-profiles.md#qwen-evidence",
+              "source": "models/qwen38/README.md#qualification",
               "unless_present": true
             },
             {
@@ -3123,7 +3123,7 @@
               ],
               "op": "eq",
               "value": 2,
-              "source": "docs/serving-profiles.md#qwen-evidence"
+              "source": "models/qwen38/README.md#qualification"
             },
             {
               "path": [
@@ -3136,7 +3136,7 @@
               ],
               "op": "eq",
               "value": 0,
-              "source": "docs/serving-profiles.md#qwen-evidence"
+              "source": "models/qwen38/README.md#qualification"
             }
           ]
         }

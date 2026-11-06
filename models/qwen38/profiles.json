@@ -33,9 +33,9 @@
       "graph_memory_reserve_mib": 320,
       "status": "qualified",
       "evidence": [
-        "docs/serving-profiles.md#tp4-concurrency-qualification-2026-10-04",
+        "models/qwen38/README.md#qualification",
         "docs/numerics.md#prefix-cache-accuracy",
-        "docs/serving-profiles.md#selecting-a-profile"
+        "docs/developer-preview.md#selecting-a-profile"
       ]
     },
     "tp4-mtp": {
@@ -68,9 +68,9 @@
       "graph_memory_reserve_mib": 384,
       "status": "qualified",
       "evidence": [
-        "docs/serving-profiles.md#tp4-concurrency-qualification-2026-10-04",
+        "models/qwen38/README.md#qualification",
         "docs/numerics.md#prefix-cache-accuracy",
-        "docs/serving-profiles.md#selecting-a-profile"
+        "docs/developer-preview.md#selecting-a-profile"
       ]
     },
     "tp4-ar-dcp2": {
@@ -104,7 +104,7 @@
       "graph_memory_reserve_mib": 320,
       "status": "experimental",
       "evidence": [
-        "docs/serving-profiles.md#qwen-evidence",
+        "models/qwen38/README.md#qualification",
         "docs/numerics.md#context-parallelism"
       ]
     },
@@ -139,7 +139,7 @@
       "graph_memory_reserve_mib": 384,
       "status": "experimental",
       "evidence": [
-        "docs/serving-profiles.md#qwen-evidence",
+        "models/qwen38/README.md#qualification",
         "docs/numerics.md#context-parallelism"
       ]
     },
@@ -171,8 +171,8 @@
       "graph_memory_reserve_mib": 320,
       "status": "experimental",
       "evidence": [
-        "docs/serving-profiles.md#qwen-evidence",
-        "docs/serving-profiles.md#selecting-a-profile"
+        "models/qwen38/README.md#qualification",
+        "docs/developer-preview.md#selecting-a-profile"
       ]
     },
     "tp2-mtp": {
@@ -203,8 +203,8 @@
       "graph_memory_reserve_mib": 384,
       "status": "experimental",
       "evidence": [
-        "docs/serving-profiles.md#qwen-evidence",
-        "docs/serving-profiles.md#selecting-a-profile"
+        "models/qwen38/README.md#qualification",
+        "docs/developer-preview.md#selecting-a-profile"
       ]
     }
   }

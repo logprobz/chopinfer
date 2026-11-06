@@ -34,7 +34,7 @@ pub const PREFILL_TOKENS: u32 = 8192;
 /// Policy: bound logits workspace.
 pub const SCORED_ROWS: u32 = 512;
 /// The package maximum: most sequences an instance serves and most items in
-/// one step (docs/serving-profiles.md). An instance serves a
+/// one step (docs/developer-preview.md#selecting-a-profile). An instance serves a
 /// runtime `Items` count up to it, from the host's `--max-sequences`.
 /// The shared runtime defines the maximum item count.
 pub const DECODE_BATCH: u32 = bundle_runtime::geometry::MAX_ITEMS;

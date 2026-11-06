@@ -520,8 +520,12 @@ pub(crate) fn early_stagings() -> u64 {
 /// The phases are disjoint: an early prefill begin is part of `gather`
 /// (`dspark_early_prefill_engram`), and a prefill planned while the drafter
 /// runs is `prefill_plan`, outside `target` (`dspark_early_prefill_plan`).
+/// The record also says whether the step's prefill began its gathers or
+/// planned early.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct PhaseTimes {
+    pub prefill_began_early: bool,
+    pub prefill_planned_early: bool,
     pub catch_up_us: u64,
     pub catch_up_items: u32,
     pub catch_up_rows: u32,
@@ -543,6 +547,7 @@ impl PhaseTimes {
             concat!(
                 "{{\"schema\":\"chopinfer.deepseek41.step-shape.v1\",",
                 "\"instance_id\":\"{}\",\"step_id\":\"{}\",\"items\":{},\"drafting\":{},",
+                "\"early_prefill_begin\":{},\"early_prefill_plan\":{},",
                 "\"catch_up_items\":{},\"catch_up_rows\":{},\"bulk_passes\":{},",
                 "\"undrafted_ready\":{},\"undrafted_status_packets\":{},",
                 "\"micros\":{{\"catch_up\":{},\"bulk\":{},\"draft\":{},\"prefill_plan\":{},",
@@ -554,6 +559,8 @@ impl PhaseTimes {
             context.step_id,
             items,
             drafting,
+            self.prefill_began_early,
+            self.prefill_planned_early,
             self.catch_up_items,
             self.catch_up_rows,
             self.bulk_passes,
@@ -735,6 +742,9 @@ impl<P: Program> Host for Adapter<'_, P> {
                 |t| &mut t.gather_us,
                 || program.begin_prefill_engram(&phase.hashed),
             )?;
+            if let Some(times) = self.times.as_mut() {
+                times.prefill_began_early = true;
+            }
         }
         #[cfg(test)]
         EARLY_STAGINGS.set(EARLY_STAGINGS.get() + 1);
@@ -760,7 +770,11 @@ impl<P: Program> Host for Adapter<'_, P> {
                     &mut self.times,
                     |t| &mut t.prefill_plan_us,
                     || program.plan_prefill(&phase.hashed),
-                )
+                )?;
+                if let Some(times) = self.times.as_mut() {
+                    times.prefill_planned_early = true;
+                }
+                Ok(())
             }
             _ => Ok(()),
         }

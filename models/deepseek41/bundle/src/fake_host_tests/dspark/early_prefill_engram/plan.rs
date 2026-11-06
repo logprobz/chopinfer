@@ -150,6 +150,48 @@ fn long_context_and_eager_verify_early_plans_issue_the_default_journal() {
     }
 }
 
+/// With diagnostic step logs, each step-shape record says whether its
+/// step's prefill began its gathers early and whether it planned early:
+/// every prefill begins early with the begin option, and only the mixed
+/// step, which drafts, plans early with the plan option.
+#[test]
+fn step_shape_records_report_early_begins_and_plans() {
+    use Then::*;
+    use model_deepseek41_contract::execution_options::DIAGNOSTIC_STEP_LOGS;
+    let steps = [step(&[prefill(7, 8, 0, 512)], true, Commit)];
+    let schedule = Schedule {
+        verify_rows: 32,
+        widths: &[4; 8],
+        restored: &[],
+        steps: &steps,
+    };
+    for (begin, plan) in [(false, false), (true, false), (false, true), (true, true)] {
+        let mut options = vec![(DIAGNOSTIC_STEP_LOGS, true.into())];
+        if begin {
+            options.push((DSPARK_EARLY_PREFILL_ENGRAM, true.into()));
+        }
+        if plan {
+            options.push((DSPARK_EARLY_PREFILL_PLAN, true.into()));
+        }
+        let run = schedule.run(&options);
+        let records: Vec<_> = run
+            .logs
+            .iter()
+            .filter(|line| line.contains("\"early_prefill_begin\":"))
+            .collect();
+        let count = |text: &str| records.iter().filter(|line| line.contains(text)).count();
+        let arm = format!("early begin {begin}, early plan {plan}");
+        assert!(!records.is_empty(), "{arm}");
+        let began = if begin { records.len() } else { 0 };
+        assert_eq!(count("\"early_prefill_begin\":true"), began, "{arm}");
+        assert_eq!(
+            count("\"early_prefill_plan\":true"),
+            usize::from(plan),
+            "{arm}"
+        );
+    }
+}
+
 /// On an instance that also serves images, as every served instance does,
 /// text-only mixed steps take the prepared verify-row gathers
 /// (`dspark_mixed_prepared_engram` admits them per step). Beside those

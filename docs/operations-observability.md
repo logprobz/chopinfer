@@ -1054,7 +1054,10 @@ counts in `prefill_plan`, between `draft` and `read_ids` and outside
 the templates the step's planning dropped, which now runs after the
 prefill's launch. A step after a failed one frees that step's held
 templates at its entry, outside every field. The phase fields stay
-disjoint, and the target's four fields stay within `target`.
+disjoint, and the target's four fields stay within `target`. The record's
+`early_prefill_begin` and `early_prefill_plan` say whether the step's
+prefill began its gathers before catch-up and whether it planned while the
+drafter ran; both are false with the options off.
 
 The served A/B tuner records per-window clocks, per-visit major faults and
 job/visit enforced power limits. A changing limit voids the whole job.

@@ -9,7 +9,10 @@
 //! early, and a step refused after the early begin settles its gathers.
 use super::*;
 use crate::fake_host_tests::ar_engram::order;
-use crate::fake_host_tests::prefill_engram::create_backend_with_options;
+use crate::fake_host_tests::media::MediaHost;
+use crate::fake_host_tests::prefill_engram::{
+    create_backend_with_options, create_media_backend_with_options,
+};
 use crate::instance::execute::plan_timing::restore_without_snapshot;
 use model_deepseek41_contract::execution_options::{
     DSPARK_EARLY_PREFILL_ENGRAM, DSPARK_EARLY_PREFILL_PLAN, DSPARK_GRAPH_HANDLES_PER_RANK,
@@ -182,15 +185,38 @@ impl Schedule<'_> {
     /// too), the restores, then each step.
     fn run(&self, options: &[(&str, serde_json::Value)]) -> Run {
         let host = FakeHost::new(Shape::new(&FLASH, Ranks::TP4).unwrap(), KV_LAYOUTS[0]);
-        host.speculation.set(Some((5, self.verify_rows)));
-        host.kv_pages.set(24 * SLOT_PAGES);
-        let mut instance = create_backend_with_options(
+        self.serve(&host);
+        let instance = create_backend_with_options(
             &host,
             true,
             MappedHost::with_row_ids(Rc::clone(&host)),
             options,
         )
         .unwrap_or_else(|e| panic!("{e:?}: {:?}", host.logs.borrow()));
+        self.run_on(&host, instance)
+    }
+
+    /// [`Schedule::run`] on an instance that also serves images, as every
+    /// served instance does, on the served APIs.
+    fn run_serving_images(&self, options: &[(&str, serde_json::Value)]) -> Run {
+        let host = MediaHost::new(Shape::new(&FLASH, Ranks::TP4).unwrap(), KV_LAYOUTS[0]);
+        self.serve(&host);
+        let instance = create_media_backend_with_options(
+            &host,
+            MappedHost::with_row_ids(Rc::clone(&host)),
+            options,
+        )
+        .unwrap_or_else(|e| panic!("{e:?}: {:?}", host.logs.borrow()));
+        self.run_on(&host, instance)
+    }
+
+    /// Sizes `host` for the schedule's verify rows and slots.
+    fn serve(&self, host: &FakeHost) {
+        host.speculation.set(Some((5, self.verify_rows)));
+        host.kv_pages.set(24 * SLOT_PAGES);
+    }
+
+    fn run_on(&self, host: &FakeHost, mut instance: BundleInstanceV1) -> Run {
         let indices = crate::instance::prefill_engram::indices(instance.handle())
             .into_iter()
             .map(|(_, span)| span)
@@ -198,7 +224,7 @@ impl Schedule<'_> {
         let mut steps = Vec::new();
         let mut record = |instance: &mut BundleInstanceV1, kind: Kind, request: &[u8]| {
             let begin = host.journal.borrow().len();
-            let sink = run(instance, &host, request);
+            let sink = run(instance, host, request);
             steps.push(Recorded {
                 kind,
                 journal: host.journal.borrow()[begin..].to_vec(),
@@ -542,7 +568,7 @@ fn prompted(
 }
 
 #[track_caller]
-fn run(instance: &mut BundleInstanceV1, host: &Host, request: &[u8]) -> Sink {
+fn run(instance: &mut BundleInstanceV1, host: &FakeHost, request: &[u8]) -> Sink {
     let mut sink = Sink::default();
     instance
         .execute_prefill(request, &mut sink)

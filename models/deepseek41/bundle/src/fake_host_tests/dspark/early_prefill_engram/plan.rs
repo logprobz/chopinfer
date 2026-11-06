@@ -141,6 +141,75 @@ fn long_context_and_eager_verify_early_plans_issue_the_default_journal() {
     }
 }
 
+/// On an instance that also serves images, as every served instance does,
+/// text-only mixed steps take the prepared verify-row gathers
+/// (`dspark_mixed_prepared_engram` admits them per step). Beside those
+/// gathers the early begin moves only the prefill gathers' begin, the
+/// early plan plans every mixed step while its drafter runs and issues the
+/// default's journal, and both together issue the early begin's journal.
+#[test]
+fn early_candidates_beside_mixed_gathers_on_an_instance_serving_images() {
+    use Then::*;
+    let steps = [
+        step(&[prefill(7, 8, 0, 512)], true, Commit),
+        step(&[prefill(8, 9, 0, 512)], true, Commit),
+        step(&[prefill(9, 10, 0, 2048)], true, Commit),
+    ];
+    let schedule = Schedule {
+        verify_rows: 32,
+        widths: &[4; 8],
+        restored: &[],
+        steps: &steps,
+    };
+    let mixed = [(DSPARK_MIXED_PREPARED_ENGRAM, true.into())];
+    let begin = with(&mixed, &[(DSPARK_EARLY_PREFILL_ENGRAM, true.into())]);
+    let plan = [(DSPARK_EARLY_PREFILL_PLAN, true.into())];
+    // The prepared verify-row gathers each step launched, as the route
+    // records count them.
+    let prepared = |run: &Run| -> Vec<u64> {
+        run.logs
+            .iter()
+            .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+            .filter(|value| value["schema"] == "chopinfer.route.v1")
+            .filter_map(|value| {
+                value["entries"]["engram/prepared/dspark_mixed_target"]["launches"].as_u64()
+            })
+            .collect()
+    };
+    bundle_runtime::routes::with_logging(|| {
+        let (off, none) = planned_serving_images(&schedule, &mixed);
+        assert_eq!(none, 0);
+        let layers = u64::from(FLASH.engram_layers());
+        assert_eq!(prepared(&off).iter().sum::<u64>(), 3 * layers);
+        let (early, none) = planned_serving_images(&schedule, &begin);
+        assert_eq!(none, 0);
+        // Eight prompts and three mixed steps begin early.
+        assert_eq!(assert_moved_begins(&off, &early, "early begin"), 8 + 3);
+        for (name, base, options) in [
+            ("early plan", &off, with(&mixed, &plan)),
+            ("both", &early, with(&begin, &plan)),
+        ] {
+            let (on, plans) = planned_serving_images(&schedule, &options);
+            assert_eq!(plans, 3, "{name}");
+            assert_eq!(prepared(&on), prepared(base), "{name}");
+            assert_same_runs(base, &on, name);
+        }
+    });
+}
+
+/// [`planned`] on an instance that also serves images.
+fn planned_serving_images(
+    schedule: &Schedule<'_>,
+    options: &[(&str, serde_json::Value)],
+) -> (Run, u64) {
+    let before = crate::instance::execute::early_prefill_plans();
+    let run = schedule.run_serving_images(options);
+    (
+        run,
+        crate::instance::execute::early_prefill_plans() - before,
+    )
+}
+
 /// A reused template's stale Engram plan, which the verify mode refuses,
 /// planned while the drafter ran, refuses the step at its target as the
 /// default's lowering there does: the same journal, logs and state, with

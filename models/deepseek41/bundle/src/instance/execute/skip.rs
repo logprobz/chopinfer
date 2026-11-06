@@ -323,14 +323,25 @@ impl Plan {
         Lowerer::new(instance, run, layout)?.finish(instance, run, layout)
     }
 
-    /// Whether `other` issues the same launches, transport, copies and head.
+    /// Whether `other` issues the same launches, transport, copies and head
+    /// at the same index-selection sites, with the same Engram plan where
+    /// both are templates that made one.
     pub(super) fn same(&self, other: &Self) -> Result<bool, String> {
         let dma = match (&self.dma, &other.dma) {
             (None, None) => true,
             (Some(a), Some(b)) => a.same(b)?,
             _ => false,
         };
+        let engram = match (
+            self.engram.as_ref().and_then(OnceCell::get),
+            other.engram.as_ref().and_then(OnceCell::get),
+        ) {
+            (Some(a), Some(b)) => a == b,
+            _ => true,
+        };
         Ok(dma
+            && engram
+            && self.sites == other.sites
             && self.copies == other.copies
             && super::plan_cache::same_programs(&self.body, &other.body)?
             && super::plan_cache::same_programs(&self.head, &other.head)?)
@@ -469,6 +480,22 @@ impl Plan {
     /// DMA (`dma::admits`).
     pub(super) fn dma_admits(instance: &Instance, requests: usize) -> bool {
         dma::admits(instance, requests)
+    }
+
+    /// Moves the first site to the next layer, as a template of another
+    /// structure would hold it; whether there was one.
+    #[cfg(test)]
+    pub(super) fn move_first_site(&mut self) -> bool {
+        self.sites
+            .first_mut()
+            .map(|site| site.input.layer += 1)
+            .is_some()
+    }
+
+    /// Keeps `plan` as this template's Engram plan.
+    #[cfg(test)]
+    pub(super) fn keep_engram_plan(&mut self, plan: Engram) {
+        self.engram = Some(OnceCell::from(plan));
     }
 
     /// Keeps this template's first Engram plan for its later steps

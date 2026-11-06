@@ -90,6 +90,46 @@ pub(crate) fn describe(handle: BundleHandleV1, request: &[u8]) -> Result<Vec<Str
     })
 }
 
+/// Whether two fresh lowerings of the original batch `request` are the
+/// same plan (`skip::Plan::same`): as lowered, after the second's first
+/// site moves, both keeping the same Engram plan, and after the second's
+/// kept Engram plan moves its first DMA join.
+pub(crate) fn same(handle: BundleHandleV1, request: &[u8]) -> Result<[bool; 4], String> {
+    with(handle, |instance| {
+        instance.skip_prefill = true;
+        let step = instance.pack(request).map_err(|e| format!("pack: {e:?}"))?;
+        let hashed = match (&instance.dspark, &instance.engram) {
+            (Some(_), Some(engram)) => Some(engram.hash(&step.prefill)?),
+            _ => None,
+        };
+        let run = instance
+            .plan_run(step.prefill, None, hashed)
+            .map_err(|e| format!("plan: {e:?}"))?;
+        let mut a = skip::Plan::prepare(instance, &run)?;
+        let mut b = skip::Plan::prepare(instance, &run)?;
+        let lowered = a.same(&b)?;
+        let mut moved = skip::Plan::prepare(instance, &run)?;
+        if !moved.move_first_site() {
+            return Err("the plan has no sites".into());
+        }
+        let site = a.same(&moved)?;
+        let gathers = instance
+            .prefill_engram
+            .as_ref()
+            .ok_or("the instance has no prepared gathers")?;
+        let engram = a.engram(gathers, false)?;
+        a.keep_engram_plan(engram.clone());
+        b.keep_engram_plan(engram.clone());
+        let kept = a.same(&b)?;
+        let mut stale = engram;
+        if !stale.move_first_join() {
+            return Err("the Engram plan has no DMA join".into());
+        }
+        b.keep_engram_plan(stale);
+        Ok([lowered, site, kept, a.same(&b)?])
+    })
+}
+
 /// The median host time of `repeats` plans of `request` (`plan`), and of
 /// the same upper-skip plans lowered in full each time.
 pub(crate) fn time(handle: BundleHandleV1, request: &[u8], repeats: usize) -> (Duration, Duration) {

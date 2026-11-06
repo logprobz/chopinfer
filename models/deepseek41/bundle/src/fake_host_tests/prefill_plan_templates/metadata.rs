@@ -113,6 +113,21 @@ fn check(model: Model, dma: bool, pins: &[(&str, (usize, u64))]) {
     );
 }
 
+/// Two plans are the same only at the same sites and, where both are
+/// templates that made one, with the same Engram plan: a template's sites
+/// and Engram plan are what its later steps reuse.
+#[test]
+fn the_same_plan_has_the_same_sites_and_kept_engram_plan() {
+    let host = host(true);
+    let mut instance = create(&host, false);
+    let ids: Vec<_> = (0..PREFIX).map(|p| token(0, p)).collect();
+    plan_timing::restore_without_snapshot(instance.handle(), 1, 0, &ids).unwrap();
+    let request = batch(&[chunk(1, 0, PREFIX, 512)], &[], false).0;
+    let same = skip::with_dma(true, || plan_timing::same(instance.handle(), &request)).unwrap();
+    assert_eq!(same, [true, false, true, false]);
+    instance.destroy().unwrap();
+}
+
 #[test]
 fn ar_plans_hold_their_pins_with_dma() {
     check(Model::Ar, true, AR_DMA);

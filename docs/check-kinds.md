@@ -1,93 +1,153 @@
 # Check kinds: the qualification contract
 
-This is the contract of the six shared check kinds: `teacher_forced`,
-`media_forced`, `greedy_pin`, `determinism`, `api` and `structured`.
-`chopinfer eval` (`crates/runtime-eval`) implements their shared verification,
-scoring and judging. `eval run` captures the supported kinds against a
-server (media remains Python-only), and the Python suite
-(`tools/qual/kinds.py`, `tools/qual/checks.py`) scores them by calling `eval
-rescore` ([qualification tools](../tools/qual/README.md#release-gates)). The conformance vectors in `tests/qual-vectors/`
-pin the verdicts. Other checks (`receipt` kind) are judged by their declared
-predicates alone and are not part of this contract.
+This is the contract of a model's release gate and of the shared check
+kinds: `teacher_forced`, `media_forced`, `greedy_pin`, `determinism`, `api`,
+`structured` and `frontend_goldens`. `chopinfer eval` (`crates/runtime-eval`)
+implements their shared verification, scoring and judging. `eval run`
+captures the supported kinds against a server (media remains Python-only),
+and the Python suite (`tools/qual/kinds.py`, `tools/qual/checks.py`) scores
+them by calling `eval rescore`. The conformance vectors in
+`tests/qual-vectors/` pin the verdicts. Other checks (`receipt` kind) are
+judged by their declared predicates alone. Numerical limits live in
+[numerics](numerics.md#serving-qualification-gates); running the gate is in
+[contributing](contributing.md#correctness-runner).
 
 Each kind has a version (`teacher_forced.v1`, ...). A change of what a kind
 sends, requires, computes or decides is a new version with new vectors.
 
-## Preprocessing receipts
+## Release gates
+
+A model's `qual.json` (schema `chopinfer-qual-model/v1`) is the one source
+of its release gate: cohorts, named checks with their limits, required
+inputs, reference pins, capabilities and optional configurations.
+`chopinfer eval declaration` owns validation, and the Python loader calls
+it; unknown fields and mistyped constants are refused, and
+`tools/qual/modules.json` records the allowed modules and constant types.
+`preview` binds the runner to the serving profile and its speculation
+settings. No default model is inferred by model-neutral tools. Within v1,
+fields are only added, as optional fields whose absence keeps the previous
+behavior; any change of meaning (a field becoming required, removed,
+renamed, retyped, or changing how a gate judges or selects checks) takes a
+new schema version.
+
+The gate consumes an already-running server and prepared inputs. A quick
+cohort is a screen; full qualification requires every declared check and
+configuration that is not opt-in. Missing metrics, empty selections,
+nonfinite values, timeouts and child failures fail closed. Structured output
+must be valid without refusal or truncation. Inputs must belong to the
+candidate; an input path or a successful rescore does not prove which binary
+produced it. A missing input is insufficient, and a failed worker stays
+failed even if its partial receipt can be scored.
+
+A different topology, KV format, draft depth, checkpoint or build needs its
+own configuration and server. The configuration selects checks and
+overrides declared serving facts, pins and rules. Its waivers are its own,
+not inherited permission to waive the default's failures. Locks preserve
+member scopes; an unbound declaration cannot vouch for another
+declaration's inputs. A configuration declared `"opt_in": true` runs only
+when selected with `--config NAME`: a full run without `--config` leaves it
+out, and last good does not require it.
+
+### External variants
+
+An external checkpoint uses `DIR/MODEL/VARIANT.json` with its own
+checkpoint, reference and overlay locks outside the tree, selected with
+`--variant-dir` or `CHOPINFER_QUAL_VARIANTS`; `python3 -m tools.qual
+variant` supplies lock, pin, skeleton and adopt commands. Its overlay may
+narrow media and capabilities and select base checks, but cannot change
+limits, add waivers, change how the model serves or reuse an in-tree
+configuration name. Inherited references must still bind its own
+checkpoint, and nothing it owns is read unauthenticated. A full pass
+qualifies that checkpoint only and never advances the in-tree last-good
+baseline. Preserve the overlay and lock identities in receipts.
+
+## Capabilities and required evidence
+
+`capabilities` describes the served profile. It is optional for older v1
+files; when present every field below except `not_served` is required.
+Both loaders refuse missing coverage, including checks omitted from
+`cohorts.full.checks` and checks marked informational. Module names identify
+the required checks, so each model chooses its own IDs.
+
+| Capability field | Value and required hard check modules |
+|---|---|
+| `text` | Boolean; `teacher`. |
+| `frontend` | Boolean; `frontend_goldens`. |
+| `api` | Boolean; `api`. |
+| `structured` | Boolean; `structured`. |
+| `media` | Unique list of `image`, `audio`, `video`; each modality needs its own nonempty reference inventory. Case-format media declares `qualification.media.coverage`, mapping each modality to reference item IDs; image probes cover images only. |
+| `speculation` | `none`, `lookup`, `mtp`, `dflash` or `dspark`; enabled speculation requires `spec_verify` and `verify_exact` with distinct control and candidate inputs, mandatory predicates, positive coverage and observed drafting. |
+| `prefix_cache` | Boolean; `prefix_exact` scores bitwise equality. |
+| `preemption` | Boolean; `preempt_compare compare --exact`, without `--baseline`. |
+| `long_context` | Boolean; `needle` with the declared context lengths. |
+| `stability` | Boolean; a local `soak` with timed host-memory and device-memory samples, bounded growth and traffic in every enabled mix. A `--remote-only` soak cannot satisfy it. The media mix reads the `soak_media_fixtures` input when the declaration states one, else `media_fixtures`. |
+| `kv_offload` | Boolean. True requires model-level `kv_offload` facts and hard plain/pressure checks in the full suite. Serving offload remains off by default. |
+| `not_served` | Optional. Maps a boolean capability declared false, one the model does not serve, to its reason. The correctness runner reports each false boolean capability as a not-applicable row with its reason, never a pass, and fails one without a reason. |
+
+A capability the server does not serve is `not_applicable`, never a
+silently skipped check. Capability coverage is a declaration check; the gate
+run must still prove every predicate and input.
+
+### Soak receipts
+
+The soak must run the declared duration and concurrency, with samples
+spanning the interval (no gap over 60 seconds) and at most 512 MiB growth in
+both host and device memory. A server that fills a bounded cache while it
+warms up declares the soak check's constants `WARMUP_SECONDS` and
+`CACHE_ALLOWANCE_MIB` (host and device, the cache's bound): the growth from
+the first sample at or after the warm-up must stay within the limit, and
+the growth over the whole soak within the limit plus the allowance
+(`soak.memory_rule`; the warm-up is capped at a quarter of the duration).
+
+Host memory is VmRSS (`rss`) unless the constants declare
+`HOST_MEMORY_SCOPE` `rss_less_mapped_views` and `MAPPED_VIEW_FILES` (file
+names relative to the served checkpoint directory), for a server that maps
+large read-only checkpoint files: the limit then applies to VmRSS less the
+Rss of those files' shared, read-only, clean mappings that the serving tree
+held at the first sample and in every sample since, with the first sample's
+permissions and no Anonymous, Private_Dirty, Shared_Dirty or Swap pages,
+attributed per mapping from `/proc/PID/smaps`. A mapping first seen later, a
+retired one, a private, writable or dirty one, and every other mapping
+count. Each sample records the judged host memory, the exempt Rss, its bound
+and the exempt mappings, and the receipt names each declared file's
+identity in the serving process's namespace. The Python `soak` kind
+recomputes the judged series from each sample; a receipt judged under
+another warm-up, allowance, scope or files, or with missing, inconsistent or
+non-integer mapping evidence, is insufficient. A shorter saved soak is
+diagnostic only.
+
+### Preprocessing receipts
 
 The Python `media_preprocessing` kind admits the CPU exporter's nested
 `references` reports. Every adopted reference, case and stage must occur
 exactly once, with the pinned binding and frontend digest. The scorer checks
 shape and integer observations and recomputes the verdict from each recorded
-error and the unchanged reference-spread bound. The generic receipt kind still
-requires nonempty item coverage.
-
-Legacy preprocessing receipts do not preserve candidate tensors. Their tensor
-errors, shapes and integer equality remain recorded fields. Rejudging these
-fields is not a fresh tensor comparison and cannot establish strict numerical
-recovery of a failed run.
-
-## Soak receipts
-
-The Python `soak` kind re-scores a soak's memory samples with
-`soak.memory_rule` under the check's declared warm-up, cache allowance,
-host memory scope and mapped-view files. The receipt must record the same
-ones: a receipt without `warmup_seconds`, `cache_allowance_mib`,
-`host_memory_scope` or `mapped_view_files` counts as the defaults (no
-warm-up, no allowance, `rss`, no files), and one judged under others is
-insufficient. The `rss` scope judges VmRSS (`host_rss_mib`). The
-`rss_less_mapped_views` scope judges VmRSS less the exempt Rss
-(`host_exempt_rss_mib`): the Rss of the shared read-only mappings of the
-declared `MAPPED_VIEW_FILES` that the serving tree held at the first sample
-and in every sample since, with the first sample's permissions and no
-Anonymous, Private_Dirty, Shared_Dirty or Swap pages, attributed per mapping
-from `/proc/PID/smaps`. Each sample lists those mappings
-(`host_exempt_mappings`: PID, process start time, address range as
-`[start, end]`, device as `[major, minor]`, inode, offset, permissions, and
-Size, Rss, Anonymous, Private_Dirty, Shared_Dirty and Swap in kB, every
-number an integer), and the receipt names each declared file's path, device
-(`[major, minor]`) and inode in the serving process's namespace
-(`mapped_view_file_identities`). The kind recomputes the judged series from
-each sample's VmRSS and exempt Rss. A receipt is insufficient when it lacks
-the file identities; when a sample lacks its list or a finite non-negative
-VmRSS, exempt Rss, bound (`host_exempt_bound_mib`) or judged value
-(`host_judged_mib`); when a listed mapping is private or writable, holds
-Anonymous, Private_Dirty, Shared_Dirty or Swap pages, gives a number in
-another form than an integer, is of no declared file, of a Size other than
-its address range or with Rss beyond its Size, or was not listed, with the
-same permissions, by the first sample and every sample since; when two
-listed mappings share an identity, or an address within one process, or
-one process has two start times; or when the exempt Rss and bound are not
-the listed mappings' Rss and Size summed, the exempt Rss exceeds VmRSS, or
-the judged value is not VmRSS less the exempt Rss. One case is beyond what
-the samples show: a mapping unmapped and replaced within one 30-second
-sampling interval by one with the identical identity that is also shared,
-read-only with the same permissions, and clean. That is the same file's
-clean shared page cache at the same address, so it cannot hide anonymous
-or dirty memory. Under that scope the metrics add the scope, the files,
-and the largest exempt Rss and bound sampled.
+error and the unchanged reference-spread bound. Rejudging a legacy receipt's
+recorded fields is not a fresh tensor comparison.
 
 ## Common rules
 
 ### The receipt envelope
 
 Every kind writes one JSON object (`chopinfer-qualification/v1`) with these
-fields:
+fields and the kind's own:
 
 | Field | Type | Meaning |
 |---|---|---|
 | `schema` | `"chopinfer-qualification/v1"` | |
 | `check` | string | the receipt ID: `teacher`, `multimodal`, `greedy-equality-<arm>`, `determinism-<arm>`, `api`, `structured` |
 | `at` | string | UTC stamp `YYYYMMDDTHHMMSSffffffZ`; also the file name prefix, `<at>-<check>.json` |
-| `server` | object | identity: `model`, `url`, `health`, `models`, and `checkpoint` (`checkpoint_identity`, ...) when the server reports it |
+| `server` | object | identity: `model`, `url`, `health`, `models`, and `checkpoint` when the server reports it |
 | `mechanics_only` | bool | a mechanics run; never qualifies and is not coverage-checked |
 | `passed` | bool | the kind's own verdict |
 | `errors` | list | one entry per failed item; nonempty fails the check |
 | `skipped` | list | coverage the run skipped; nonempty fails the check outside a mechanics run |
-| `host_load` | object | host load samples that bound the check's timed work and their verdict (tools/qual/README.md, `common.HOST_LOAD_RULE`); `timing` `informational` marks throughput and latency figures as not performance evidence and never changes the verdict |
+| `host_load` | object | host load samples that bound the check's timed work and their verdict (`common.HOST_LOAD_RULE`); `timing` `informational` marks throughput and latency figures as not performance evidence and never changes the verdict |
 
-and the kind's fields below. Field order is free; JSON numbers are IEEE 754
-doubles.
+Field order is free; JSON numbers are IEEE 754 doubles. Receipts and vectors
+are standard JSON, which has no NaN or infinity; a reader that accepts such
+tokens must treat them as non-finite values, which make a receipt or
+reference `insufficient`.
 
 ### Verdict procedure
 
@@ -100,30 +160,44 @@ A stored receipt is judged in four steps (`kinds.rescore`):
    and its counts agree with each other and with the reference. Otherwise
    the status is `insufficient`. A mechanics-only receipt skips this step.
 3. Score: the metrics are the kind's metric fields and every field a
-   declared predicate reads, nested as in the receipt. The fields marked
-   "recomputed" are computed again from the receipt's rows and the reference;
-   the others are read as recorded and listed in the report's
-   `recorded_fields`.
+   declared predicate reads. The fields marked recomputed are computed again
+   from the receipt's rows and the reference; the others are read as
+   recorded and listed in the report's `recorded_fields`.
 4. Judge: the status is `pass` when every declared predicate holds over the
    metrics, else `waived` when the check's declared waivers cover every
-   failure (below), else `fail`. A predicate whose path the metrics lack
-   fails. `greedy_pin` and `determinism` have fixed rules instead of
-   predicates.
+   failure, else `fail`. A predicate whose path the metrics lack fails.
+   `greedy_pin` and `determinism` have fixed rules instead of predicates.
 
-Statuses: `pass`, `fail`, `waived` (failed only where declared waivers
-cover it; counts as passing and qualifies, and the report lists each applied
+Statuses: `pass`, `fail`, `waived` (failed only where declared waivers cover
+it; counts as passing and qualifies, and the report lists each applied
 waiver), `informational` (a declared `informational_reason`: the check is
 neither run nor judged; or `greedy_pin` under rule `informational`),
 `insufficient`, `not_run` (a gate stopped before the check) and
-`not_applicable` (validated unserved media, never a pass).
+`not_applicable` (validated unserved media, never a pass). A gate passes
+when no selected check fails and at least one passes or is waived.
+
+A live run (`release_gate.py`, `checks.py check`) applies steps 1, 3 and 4
+to the receipt its own module just wrote; `checks.py rescore` applies all
+four to stored receipts. In a stored gate run, a check whose worker exited
+nonzero is `fail` whatever its receipt holds; the receipt's own verdict is
+reported as `receipt_status`. A single stored receipt is judged as the check
+its `check` field names (after a declared rename), else as the check whose
+`records/<ID>.json` it is, else as the one check whose receipt pattern its
+file name matches; `rescore --check ID` may name the check only within those
+constraints, and anything else is a usage error.
+
+A partial media receipt must declare the server's served modalities,
+checkpoint identity and startup nonce. Its `not_applicable` reasons and
+every unserved row must agree with that identity and the pinned reference's
+coverage; a failing served row remains `fail`.
 
 ### Waivers
 
 A check may declare `waivers` (a configuration declares its own under
 `configurations.NAME.waivers.CHECK`; the base check's waivers are the
-default configuration's alone). Each is a recorded decision with a
-`reason` and a `decision` (who decided, when, where it is recorded), and
-covers one of:
+default configuration's alone). Each is a recorded decision with a `reason`
+and a `decision` (who decided, when, where it is recorded), and covers one
+of:
 
 - a predicate: `predicate` names a declared rule by `path` and `op`, and
   `ceiling` is a value the rule refuses (looser than its bound, or for `eq`
@@ -133,78 +207,24 @@ covers one of:
 - a teacher category: `category`, `metric` (one of the spread metrics) and a
   positive `ceiling`, on a check that declares `passed` true. A failed
   teacher verdict is covered when the pooled scores are within their limits
-  and every failed category fails only its waived metric (a metric the
-  paired fallback passed is not failing), at most the ceiling; the `passed`
-  and `failed_categories` predicates are then covered.
+  and every failed category fails only its waived metric, at most the
+  ceiling; the `passed` and `failed_categories` predicates are then covered.
 
 One validator (runtime-eval's `declaration::validate_waivers`) refuses a
-waiver of an undeclared rule, a ceiling the rule already accepts, a
-category waiver of a check without categories, an empty list, and a waiver
-whose reason or decision is empty or blank. Every path that can make a
-check `waived` applies it first: the declaration loader; `eval rescore`,
-for every check it is sent and through its `waivers` call; eval's judge
-(`kind::waive`), where waivers the validator refuses cover nothing; and in
-tools/qual, `kinds.validated_waivers`, which every judge and
-`release_gate.validate` (each `chopinfer-release-gates/v1` config, a
-compiled declaration or another) call, refusing the check. Each applied
-waiver is recorded on the predicate it covers (`waiver`: the measured value,
-ceiling, reason and decision) and listed in the report's `waivers`. A gate
-passes when no selected check fails and at least one passes or is waived.
-
-A live run (`release_gate.py`, `checks.py check`) applies steps 1, 3 and 4 to
-the receipt its own module just wrote; `checks.py rescore` applies all four
-to stored receipts. In a stored gate run, a check whose worker exited
-nonzero is `fail` whatever its receipt holds, whether the row links the
-receipt or the receipt was left in the run; the receipt's own verdict is
-reported as `receipt_status`.
-
-A stored `checks.py check` run (its `check.json`, `chopinfer-check-run/v1`)
-is judged as the one row of a gate run, under the policy it recorded beside
-it with `--limits recorded`. Its receipt is the file the row names, the log
-for a check whose module prints its receipt (`stdout_json`), and must keep
-the row's digest; each input its input rules read must keep the digest the
-run recorded. A receipt or input that is missing or changed is
-`insufficient`. A run refused before its judge (`"row": null`, such as by an
-input rule) is judged from its recorded inputs when its receipt
-(`json_file`) and reference record (`reference_file`) are inputs: every
-input its arguments name must be recorded, every file it reads must keep
-its recorded digest (else `insufficient`), its recorded server must report
-qualified model options, and the row is then judged as the gate writes it,
-the module not having run. Its report names the refusal as `unjudged`. A
-refused run whose receipt its module writes stays `fail`. An input rule's
-`{model}` is the served model the run recorded: its server's, or for an
-offline check run the `--served-model` name it was given (`served_model`).
-For an offline run recorded without that field, `rescore --served-model
-NAME` supplies the name its command recorded, as the correctness runner's
-replay does; without it such a rule is `insufficient`.
-
-A single stored receipt is judged as the check its `check` field names
-(after a declared rename), else as the check whose `records/<ID>.json` it
-is, else as the one check whose receipt pattern its file name matches.
-`rescore --check ID` names the check instead, as the correctness runner's
-replay does for a recorded row: two checks may share a receipt pattern (GLM's
-NVFP4 `evals_compare` and `gsm8k_regression` both write `evals-compare`), or
-names the check of a capture nothing else identifies. The receipt's own
-identity is resolved first, in the order above, and the named check must be
-one it names when it names any. A declared (or renamed) check ID in the
-receipt, then its `records/<ID>.json` name, takes priority: such a receipt is
-judged as that check whatever its file name. Only when neither names the
-receipt does its file name constrain the choice: the named check must be one
-whose receipt pattern matches it (so a check without a receipt pattern cannot
-take a receipt another check's pattern names), and when no pattern matches,
-only a check without a receipt pattern can be named. Anything else is a
-usage error.
-
-A partial media receipt must declare the server's served modalities, checkpoint
-identity and startup nonce. Its sorted `not_applicable` reasons and every
-unserved row must agree with that identity and the pinned reference's coverage.
-The scorer recomputes served rows before returning `not_applicable`; a failing
-served row remains `fail`. Missing or inconsistent evidence is `insufficient`.
+waiver of an undeclared rule, a ceiling the rule already accepts, a category
+waiver of a check without categories, an empty list, and a waiver whose
+reason or decision is empty or blank. Every path that can make a check
+`waived` applies it first: the declaration loader, `eval rescore`, eval's
+judge (`kind::waive`) and, in tools/qual, `kinds.validated_waivers`, which
+every judge and `release_gate.validate` call. Each applied waiver is
+recorded on the predicate it covers (`waiver`: the measured value, ceiling,
+reason and decision) and listed in the report's `waivers`.
 
 ### Predicates
 
-A declared predicate is `{path, op, value, source}`. `path` selects values:
-each key descends one level; `*` takes every child of an object or list.
+A declared predicate is `{path, op, value, source}`; `source` cites the rule
+or evidence its limit comes from. `path` selects values: each key descends
+one level; `*` takes every child of an object or list.
 
 | `op` | Holds when |
 |---|---|
@@ -222,37 +242,52 @@ A reference is a file the declaration pins (`references.<name>` in
 (`checkpoint_keys`, default repository, revision and served model name) and
 `variants`. A kind reads a reference only when its bytes have the pinned
 `sha256`, its `schema` and provenance equal the pin's, and every pinned
-variant is present for every item. A fixture with a `binding` block must
-verify against the reference cache (`tools/refrun/cache.py`): its lock and
-workload are recomputed from the repository. Numerical gate inputs require
-a verified binding. The cache reader can report an absent binding as
-`unbound`; that status cannot qualify a numerical gate.
+variant is present for every item; a reference with other bytes, even
+reformatted, is refused. A fixture with a `binding` block must verify
+against the reference cache ([fixture bindings](../tools/refrun/README.md#cache-and-fixture-bindings)).
+Numerical gate inputs require a verified binding; an `unbound` reference
+cannot qualify a numerical gate. A reference pinned without a spread variant
+(a floor-only reference) is verified whole, workload included, on each read.
 
-Reference scores: except for the explicit floor-only teacher policy below,
-the kind needs the gate variant and at least one spread
-variant, and for every item every pinned variant's scores of its tokens, one
-entry per position, in either layout (`tools/qual/exact_reference.py`):
-`logprob`, `top1`, `margin` and `top5` (five `[token ID, logprob]` pairs), or
-the reference runner's `logprob`, `top1`, `margin`, `topk_ids`,
-`topk_logits` and `topk_logprobs`. Every logprob is finite and at most 1e-9;
-the top-k rows hold five distinct token IDs in non-increasing order; `top1`
-is the first; `margin` is the first gap (of logprobs, or of logits in the
-runner layout) within 1e-9; the token's `logprob` is at most the first
-top-k logprob and equals its own top-k entry when listed. A reference that
-breaks any of this, or lacks a pinned variant on an item, leaves the
-receipt `insufficient`.
+Reference scores: except for the explicit floor-only teacher policy, the
+kind needs the gate variant and at least one spread variant, and for every
+item every pinned variant's scores of its tokens, one entry per position, in
+either layout (`tools/qual/exact_reference.py`): `logprob`, `top1`, `margin`
+and `top5` (five `[token ID, logprob]` pairs), or the reference runner's
+`logprob`, `top1`, `margin`, `topk_ids`, `topk_logits` and `topk_logprobs`.
+Every logprob is finite and at most 1e-9; the top-k rows hold five distinct
+token IDs in non-increasing order; `top1` is the first; `margin` is the
+first gap within 1e-9; the token's `logprob` is at most the first top-k
+logprob and equals its own top-k entry when listed. A reference that breaks
+any of this, or lacks a pinned variant on an item, leaves the receipt
+`insufficient`. A receipt records the reference it scored
+(`reference_sha256` or `exact_reference_sha256`), and a stored receipt whose
+reference digest differs from the reference read for it is `insufficient`.
+`rescore --limits recorded` reads the references at the gate run's recorded
+source revision.
 
-`tests/qual-vectors/references.json` pins the reading rules with fixture
-bytes: each vector's `pin` (`sha256`, `schema`, `variants`), `checkpoint`
-(taken as verified against its lock) and `fixture` (the exact file text)
-are read as `common.pinned_reference` and `pinned_binding` read them, and
-`expected` is `accepted` with the binding status, or `refused` with the
-reason.
+`qualification.checkpoint` pins the checkpoint: lock, repository, revision,
+served model name, source-lock digest and the direct-load
+`checkpoint_identity`, the SHA-256 of the safetensors names, lengths and
+headers that `serve` logs. Every tool that scores a server binds it through
+its `/health` identity: it must name the pinned checkpoint identity and a
+startup nonce and serve the pinned model name, and the tool refuses the run
+if `/health` changed or any response's `x-chopinfer-checkpoint-identity` or
+`x-chopinfer-startup-nonce` named another process. The identity covers file
+names, lengths and headers, not tensor bytes; `chopinfer verify --model`
+checks those.
 
-A receipt records the reference it scored (`reference_sha256` or
-`exact_reference_sha256`). A stored receipt whose reference digest differs
-from the reference read for it is `insufficient`. `rescore --limits recorded`
-reads the references at the gate run's recorded source revision.
+`models/<model>/qual-references.lock.json` (with each configuration's own
+entries under `configurations`; an external variant's lock beside its
+overlay) pins the bytes gates read. `python3 -B -m tools.qual refs verify`
+authenticates every declared input, `status` also prints the lock digest,
+and `adopt` records new or changed inputs (a refresh requires the old lock
+digest; `--entry KEY` refreshes only the named entries). A directory entry's
+`scope` selects only the files gates read. Adoption verifies a bound
+reference's runner binding, workload and preprocessing records before
+pinning their bytes, and every numerical reference needs a runner binding,
+which `adopt` and gate admission require. Never invent pins, and never
+remove a binding to make a check pass.
 
 ### Exit statuses
 
@@ -286,33 +321,20 @@ are never equal.
 
 ### Conformance vectors
 
-`tests/qual-vectors/<kind>.json` (`chopinfer-qual-vectors/v1`) lists vectors:
-`name`, `check` (the declared predicates, or `{"rule": ...}` for
+`tests/qual-vectors/<kind>.json` (`chopinfer-qual-vectors/v1`) lists
+vectors: `name`, `check` (the declared predicates, or `{"rule": ...}` for
 `greedy_pin`), `reference` (the reference as the kind reads it, the baseline
 record for `greedy_pin`, the other arm's record for `determinism`, or null),
 `receipt` and `expected`: `status`, `metrics` when scoring completed, and
 `error`. An implementation passes a vector when its status equals
-`expected.status` and its metrics equal `expected.metrics`, with floats equal
-within a relative 1e-12. `tools/qual/vectors.py` writes them;
-`cargo test -p runtime-eval` checks the implementation against them
-exactly (floats bit for bit), and `tools/qual/test_qual_vectors.py` checks
-the Python suite's calls into it. Each
-vector's `covers` names the contract clauses it pins; every boundary has a
-vector on each side: the decimal step of `rounded_up`, the inclusive limits,
-both near-tie limits, the walk's outcomes, both score layouts, a missing
-variant, invalid reference scores and impossible receipt scores, and for the
-near-tie rule: a flip at exactly 0.3 nats and one just above, a served token
-outside the stored top-k, the decisive, near-tie and total rate bounds (the
-latter two at their inclusive edges), each raised by a spread variant, the
-total cap at a variant's exact rate (21 of 200 passes, 22 fails), at a
-near-tie-heavy shape that passes and a decisive-heavy one that fails,
-recorded flip verdicts recomputed, recorded
-served tokens checked against the served rows, served rows bound by digest,
-and receipts without their flips or served rows.
-
-Receipts and vectors are standard JSON, which has no NaN or infinity. A
-reader that accepts such tokens (Python's `json` does) must treat them as
-non-finite values, which make a receipt or reference `insufficient`.
+`expected.status` and its metrics equal `expected.metrics`, with floats
+equal within a relative 1e-12. `tools/qual/vectors.py` writes them;
+`cargo test -p runtime-eval` checks the implementation against them exactly
+(floats bit for bit), and `tools/qual/test_qual_vectors.py` checks the
+Python suite's calls into it. Each vector's `covers` names the contract
+clauses it pins, and every boundary has a vector on each side.
+`tests/qual-vectors/references.json` pins the reference reading rules with
+fixture bytes the same way.
 
 ### The spread rule (variant-spread.v2)
 
@@ -350,34 +372,27 @@ served rows flip with that verdict and the bf16 variant does not, and
 sqrt(test_only + reference_only)` (`limits.paired_top1`, the constant
 `limits.CATEGORY_SIGMAS`). Without a bf16 variant every metric is held to
 its limit. The mean limit never falls back. Each category and case row
-records `spread_rule`, `passed_by` (per top-1 metric `limit`,
-`paired_reference` or null), `power` (per metric `rate`, `limit`,
-`positions`, `standard_error`, `has_power`) and, where the fallback was
-tried, `paired_reference` (per metric `test_only`, `baseline_only`,
-`margin`, `passed`, and the `variant`).
+records `spread_rule`, `passed_by`, `power` and, where the fallback was
+tried, `paired_reference`.
 
 `rounded_up(x, step)` reads both binary64 numbers as their shortest
 round-trip decimal strings (Python's `repr`) and rounds up, in decimal, to a
 multiple of `step`: 0.15 stays 0.15, 0.15000000000000002 becomes 0.2. The
-spread values are computed in binary64 first: |-0.75 - -0.5| is 0.25 and
-gives a 0.25 limit, while |-0.55 - -0.3| is 0.25000000000000006 and gives
-0.3. A scored set is within its limits when its mean |dlogprob|, decisive
-rate, near-tie rate and total top-1 disagreement are each at most (`<=`)
-their limit, compared in binary64. The floors and the steps are the module constants a declaration may
-override (`constants`). The product `spread * factor` is a binary64 product,
-so a factor of 1 leaves every limit unchanged; a factor above 1 keeps a
-headroom proportional to the spread where rounding alone could leave the
-limit at the spread itself (GLM's chat check declares 1.25,
-[numerics](numerics.md#serving-qualification-gates)).
+spread values are computed in binary64 first. A scored set is within its
+limits when its mean |dlogprob|, decisive rate, near-tie rate and total
+top-1 disagreement are each at most (`<=`) their limit, compared in
+binary64. The floors and the steps are the module constants a declaration
+may override (`constants`). The product `spread * factor` is a binary64
+product, so a factor of 1 leaves every limit unchanged.
 
 A summary of positions is `scored` (count), `mean_abs_dlogprob` (mean of
 |served logprob - reference logprob| of the scored token),
 `max_abs_dlogprob`, `top1_disagreements` (positions whose served top-1 token
 differs from the reference's, the flips) and `top1_disagreement` (that count
-divided by `scored`), `top1_near_ties` and `top1_decisive_flips` (the flips of
-each verdict under the near-tie rule) and their rates `top1_near_tie` and
-`top1_decisive`. The top-1 token of a served row is the entry with the lowest
-`rank`, then the highest logprob, then the lowest token ID.
+divided by `scored`), `top1_near_ties` and `top1_decisive_flips` (the flips
+of each verdict under the near-tie rule) and their rates `top1_near_tie` and
+`top1_decisive`. The top-1 token of a served row is the entry with the
+lowest `rank`, then the highest logprob, then the lowest token ID.
 
 ### The near-tie rule (top1-near-tie.v1)
 
@@ -393,37 +408,31 @@ the same rule against the gate variant. A receipt records each flip as
 `top1_flips` entries (`offset` among the set's scored positions, `served`,
 `gap`, `decisive`), and keeps the served rows the flips come from:
 `served_rows`, per scored position the server's prompt-logprob row as
-[token ID, logprob, rank] entries (rank null when the server gave none) in
-top-1 order, and `served_rows_sha256`, the SHA-256 of `served_rows` as
-compact JSON (`common.rows_digest`: `json.dumps` with `(",", ":")`
-separators). The kinds check the digest, that each row is well formed and
-holds the scored token, take each position's served top-1 from its row (the
-entry with the lowest rank, then the highest logprob, then the lowest token
-ID), and require the recorded flips to be exactly the positions and tokens
-where it differs from the gate variant's top-1. They judge those flips
-again (`gap`, `decisive`) and recompute the counts and rates from them. A
-receipt without its flips or served rows is insufficient.
+[token ID, logprob, rank] entries in top-1 order, and `served_rows_sha256`,
+the SHA-256 of `served_rows` as compact JSON (`common.rows_digest`). The
+kinds check the digest, that each row is well formed and holds the scored
+token, take each position's served top-1 from its row, and require the
+recorded flips to be exactly the positions and tokens where it differs from
+the gate variant's top-1. They judge those flips again and recompute the
+counts and rates from them. A receipt without its flips or served rows is
+insufficient.
 
 ## teacher_forced (teacher_forced.v1)
 
 Inputs: the pinned `teacher` reference. Per text: `name`, `category`,
 `prompt_token_ids`, `score_from` (the first scored position) and, per
-pinned variant, one entry per scored position
-(`len(prompt_token_ids) - score_from` entries) in either layout of the
-media reference below; the kind reads `logprob`, `top1` and the top-k gaps
-of the gate variant. The gate variant is `exact`; the others set the spread (both
-models: the reference runner's `bf16` and `f64` runs). The text order is the
+pinned variant, one entry per scored position in either score layout. The
+gate variant is `exact`; the others set the spread. The text order is the
 frozen `teacher-texts.json` order.
 
 A check may explicitly set `teacher.ALLOW_FLOOR_ONLY` to `true` for a
 floor-limited F32-only long-context reference. It requires exactly the
 `exact` variant, authenticated producer and workload bindings to F32 with
 exact dequantization, complete finite scores, and at least 1,000 scored
-positions. Capture, admission and offline scoring enforce the same policy.
-For the approved 1,024-position check, the unchanged limits are mean 0.10,
-decisive and near-tie rates 0.08, and total disagreement 0.10. Missing or
-malformed evidence fails; it never selects this policy. Every existing check
-keeps the default requirement for a spread variant.
+positions; the limits stay mean 0.10, decisive and near-tie rates 0.08, and
+total disagreement 0.10. Missing or malformed evidence fails; it never
+selects this policy. Every other check keeps the requirement for a spread
+variant.
 
 Request, one per text, in order: `POST /v1/completions` with `prompt` the
 token IDs, `echo: true`, `logprobs: 5`, `prompt_logprobs: 5`,
@@ -432,152 +441,81 @@ token IDs, `echo: true`, `logprobs: 5`, `prompt_logprobs: 5`,
 logprob must be null. The served logprob of position `p` is the row
 `prompt_logprobs[p]` entry of token `prompt_token_ids[p]`.
 
-Receipt fields:
+Receipt fields: `rows` (per text: `name`, `prompt_tokens`, `scored`,
+`latency_seconds`, `served_rows` and `served_rows_sha256`), the pooled
+summary against the gate variant and `vs_<variant>` for each spread variant,
+`top1_flips` (with `text` and `category`), `by_category` (per category its
+summary, `limits` and `passed`), `limits`, `reference_spread`,
+`failed_categories`, `reference_sha256`, `reference_binding` and `server`.
 
-- `rows`: one per reference text, in order: `name`, `prompt_tokens` (the
-  text's token count), `scored` (its scored positions), `latency_seconds`,
-  `served_rows` and `served_rows_sha256` (its scored positions' served rows,
-  above).
-- the pooled summary (`scored`, `mean_abs_dlogprob`, `max_abs_dlogprob`,
-  `top1_disagreements`, `top1_disagreement`, `top1_near_ties`,
-  `top1_near_tie`, `top1_decisive_flips`, `top1_decisive`) against the gate
-  variant, and `vs_<variant>` for each spread variant;
-- `top1_flips`: every flip against the gate variant, with `text`,
-  `category`, `offset` (among the text's scored positions), `served`, `gap`
-  and `decisive`, and `near_tie_nats`;
-- `by_category`: per reference category its summary, `limits` and `passed`;
-- `limits`, `reference_spread`, `failed_categories`, `reference_sha256`,
-  `reference_binding`, `server`; older receipts may also hold an
-  `informational` block, which is not scored.
+Coverage: the rows name the reference's texts in order with their counts;
+the pooled and category summaries are consistent and add up; each
+`vs_<variant>` scores the pooled count; each row's served rows match their
+digest and hold the scored tokens; `top1_flips` holds exactly the flips of
+the served rows; and every reference text has valid token IDs,
+`score_from`, a category and valid scores for every pinned variant.
 
-Coverage: the rows name the reference's texts in order, each with the text's
-`prompt_tokens` and `scored`; the pooled `scored` is their sum; the
-categories are exactly the reference's, each with its positions; every
-summary is consistent (`top1_disagreement == top1_disagreements / scored`
-within 1e-9 relative, mean at most max); the category summaries add up to
-the pooled one (counts exactly, the mean weighted by `scored` within 1e-9
-relative, the max exactly); each `vs_<variant>` scores the pooled count;
-each row's served rows match their digest, are well formed and hold the
-scored tokens; `top1_flips` names reference texts with their categories and
-holds, per text, exactly the offsets and served tokens where the served
-rows' top-1 differs from the gate variant's, as many per category and pooled
-as the recorded `top1_disagreements`; and every reference text has valid
-token IDs, `score_from`, a category and valid scores for every pinned variant
-(see references above).
+Metrics recomputed from the served rows and the reference: the flips and
+their verdicts, the pooled and per-category near-tie, decisive and total
+counts and rates, `limits`, `reference_spread`, each category's `limits` and
+`passed`, `failed_categories` and `passed` (pooled within its limits and no
+failed category). Recorded: the served summaries.
 
-Metrics: the receipt's fields above. Recomputed from the served rows and
-the reference: the flips, each flip's `gap` and `decisive` (the near-tie
-rule), the pooled and per-category near-tie, decisive and total counts and
-rates from them, `limits` (the spread rule
-over all texts), `reference_spread`, each category's `limits` and `passed`
-(the spread rule over its texts),
-`failed_categories` and `passed` (pooled within its limits and no failed
-category; a receipt with `diagnostic_passed` keeps `passed` false and
-recomputes `diagnostic_passed`). Recorded: the served summaries, since the
-receipt keeps no served logprobs of the scored tokens beyond its rows'
-entries, which this version does not re-sum.
-
-Verdict: the declared predicates. Both models declare `passed` true, pooled
-`mean_abs_dlogprob` within the pooled limit for their position count,
-`top1_decisive` and `top1_near_tie` each at most 0.08, `top1_disagreement`
-at most 0.10, `failed_categories`
-empty, `scored` at least the reference's positions, the pinned checkpoint
-identity and the pinned `reference_sha256`.
-
-`chopinfer eval run` captures the check against an exact reference only. A
-receipt of the retired prompt-logprobs mode (`vs_vllm`, a gate whose
-`teacher_reference_kind` is `prompt-logprobs`) names no exact reference, so
-rescoring it is insufficient.
+Verdict: the declared predicates. Declarations require `passed` true,
+pooled `mean_abs_dlogprob` within the pooled limit, `top1_decisive` and
+`top1_near_tie` each at most 0.08, `top1_disagreement` at most 0.10,
+`failed_categories` empty, `scored` at least the reference's positions, the
+pinned checkpoint identity and the pinned `reference_sha256`. A receipt of
+the retired prompt-logprobs mode names no exact reference, so rescoring it
+is insufficient.
 
 ## media_forced (media_forced.v1)
 
 Inputs: the pinned media reference (`references.media`) and the capture it
-scores (`fixtures/mimo26/multimodal/reference.json`), whose manifest pins
-both files and the media fixtures. Per item, in order: `id`, `kind`
-(`image`, `video`, `audio`, `text`), `prompt_token_ids`,
-`forced_prompt_token_ids`, `answer_token_start`, `answer` (the reference
-answer text) and, per pinned variant, one entry per answer position
-(`forced_prompt_token_ids` from `answer_token_start` on) in one of two
-layouts (`tools/qual/exact_reference.py`): `logprob`, `top1`, `margin` and
-`top5` ([token ID, logprob] pairs), or the reference runner's `logprob`,
-`top1`, `margin`, `topk_ids`, `topk_logits` and `topk_logprobs`, ranked by
-logit. The gate variant is `exact`.
+scores, whose manifest pins both files and the media fixtures. Per item, in
+order: `id`, `kind` (`image`, `video`, `audio`, `text`),
+`prompt_token_ids`, `forced_prompt_token_ids`, `answer_token_start`,
+`answer` and, per pinned variant, one entry per answer position in either
+score layout. The gate variant is `exact`.
 
 Requests, per item: `POST /v1/chat/completions` with the item's messages,
 `chat_template_kwargs` disabling thinking, `temperature: 0`,
 `max_tokens: 256`, `return_token_ids: true` (where the frontend refuses
-disabled thinking, `reasoning.allow_disabled: false`, no thinking switch and
-`max_tokens: 4096`, so the answer can follow the reasoning); then the same
+disabled thinking, no thinking switch and `max_tokens: 4096`); then the same
 messages plus an assistant message holding the reference answer, with
 `continue_final_message: true`, `max_tokens: 1`, `prompt_logprobs: 20` and
 `return_token_ids: true` (teacher-forced). The forced response's
 `prompt_token_ids` must equal the item's `forced_prompt_token_ids`.
 
-Receipt fields: `rows`, one per reference item in order: `id`, `kind`,
-`answer`, `reference_answer`, `fixture_expectation_match` (the answer
-contains the fixture's expected clauses in order, or the item has none),
-`prompt_tokens`, `reference_prompt_tokens`, `token_count_match`,
-`logprobs` (the item's summary over its answer positions: `scored`,
-`mean_abs_dlogprob`, `max_abs_dlogprob`, `top1_disagreements`,
-`top1_disagreement`, `top1_near_ties`, `top1_near_tie`,
-`top1_decisive_flips`, `top1_decisive`, `top1_flips` (`offset`, `served`,
-`gap`, `decisive` per flip), `served_rows` and `served_rows_sha256` (the
-answer positions' served rows, see the near-tie rule), `limits`, `passed`;
-or `{passed: false, error}`), `greedy` (`passed`, `exact`,
-`near_tie_limit`, `reference_margin`, and on divergence `divergence`,
-`served_token_id`, `reference_token_id`, `reason`) and `passed`; then
-`limits` (the floors and near-tie
-limits), `reference_sha256` (the capture), `exact_reference_sha256`,
-`reference_binding`, `server`.
+Receipt fields: `rows`, one per reference item in order, with the answer,
+expectation and token-count matches, `logprobs` (the item's summary,
+`top1_flips`, served rows and their digest, `limits`, `passed`), `greedy`
+(`passed`, `exact`, `near_tie_limit`, `reference_margin`, and on divergence
+`divergence`, `served_token_id`, `reference_token_id`, `reason`) and
+`passed`; then `limits`, `reference_sha256`, `exact_reference_sha256`,
+`reference_binding` and `server`.
 
 Greedy walk: from the first answer position, each served token must be in
 the gate variant's top 5 at that position, and its gap, the top-1's logprob
-minus its own computed in binary64, must be at most (`<=`) the near-tie
-limit (`limits.near_tie`): `NEAR_TIE_LIMIT = limits.NEAR_TIE_NATS` (the
-binary64 value 0.3) or, for audio, 2.3. The walk ends at the first served token that differs from the
-reference answer, or passes at the reference answer's end; a served answer
-that ends inside the reference answer fails. A served answer equal to the
-reference answer after whitespace normalization is walked on the reference
-tokens. The receipt records the walk: no `divergence` when the served
-answer followed the whole reference answer; `divergence` and
-`served_token_id` where it departed; `divergence` alone where it ended; and
-`reason: "missing generated token IDs"` or an `error` when there was nothing
-to walk (a failure). `reference_margin` is the largest gap walked, up to and
-including a gap beyond the limit; a token outside the top 5 adds none.
+minus its own in binary64, must be at most (`<=`) the near-tie limit:
+`limits.NEAR_TIE_NATS` (0.3) or, for audio, 2.3. The walk ends at the first
+served token that differs from the reference answer, or passes at the
+reference answer's end; a served answer that ends inside the reference
+answer fails. A served answer equal to the reference answer after whitespace
+normalization is walked on the reference tokens. `reference_margin` is the
+largest gap walked.
 
-Coverage: one row per reference item in order with its `kind`; each row has
-`logprobs`, `greedy` (with a boolean `passed`), `fixture_expectation_match`
-and `token_count_match` as booleans; a row whose `logprobs` has an `error`
-fails; any other scored exactly the item's answer positions, with finite
-`0 <= mean_abs_dlogprob <= max_abs_dlogprob` (1e-9 tolerance) and a
-`top1_disagreement` in [0, 1] that is a whole number of positions divided by
-`scored` (within 1e-9), with served rows that match their digest, are well
-formed and hold the answer tokens, and with that many `top1_flips`, exactly
-the answer offsets and served tokens where the served rows' top-1 differs
-from the gate variant's; a
-recorded `divergence` lies inside the answer, and a
-`served_token_id` comes with its `divergence`; the receipt's
-`exact_reference_sha256` is the reference's; and the reference's scores are
-valid (see references above).
-
-Metrics recomputed from the served rows and the reference: each item's
-flips and its near-tie, decisive and total counts and rates (the near-tie
-rule), `logprobs.limits` (the
-spread rule over that item's variants), `logprobs.passed`, its greedy walk
-(`greedy.passed`, `greedy.reference_margin`, `greedy.near_tie_limit`) from
-the recorded walk fields, the item's `passed` (greedy, expectation, token
-count and logprobs all passed) and the receipt's `passed` (every item
-passed). Recorded: the served scores, the walk fields and the expectation
-and token-count matches.
-
-Verdict: the declared predicates: `passed` true and the pinned
-`exact_reference_sha256`.
+Coverage, metrics and verdict: every row is complete and consistent with
+its served rows and the reference, as for `teacher_forced`; the flips,
+rates, limits, greedy walk and `passed` (every item's greedy, expectation,
+token count and logprobs passed) are recomputed. The declared predicates
+require `passed` true and the pinned `exact_reference_sha256`.
 
 ## greedy_pin (greedy_pin.v1)
 
-Inputs: the pinned exact reference's texts; a baseline record: the same
-run's AR arm (the [correctness runner](../tools/qual/README.md#correctness-runner)'s
-C1 greedy screen, recorded by `chopinfer eval capture --kind greedy_pin`).
+Inputs: the pinned exact reference's texts and a baseline record: the same
+run's AR arm (the correctness runner's C1 greedy screen, recorded by
+`chopinfer eval capture --kind greedy_pin`).
 
 Requests, one per reference text, at the record's `concurrency`:
 `POST /v1/completions` with `prompt` the text's first
@@ -587,79 +525,38 @@ fresh `cache_salt`; the response must report `cached_tokens: 0`.
 
 Receipt fields: `arm`, `k` (drafts), `concurrency`, `prompt_tokens`,
 `max_tokens`, `cold_cache`, `reference_sha256`, `requests` (text name to
-token IDs) and `finish_reasons` (text name to `stop` or `length`).
-
-Coverage: both records hold a nonempty `requests` of non-negative token ID
-lists, `finish_reasons` for exactly those requests, the workload integers and
-`reference_sha256`. Records of different workloads (`reference_sha256`,
-`prompt_tokens`, `max_tokens`, `concurrency`, request names) fail.
-
-Metrics (recomputed): `equal`, `first_differences` (per differing request:
-`request`, `position`, `ar_token`, `other_token`, a missing token as null)
-and `finish_differences` (`request`, `ar`, `other`).
-
-Verdict: rule `exact`: pass when `equal`, else fail. Rule `informational`:
-pass when `equal`, else informational.
+token IDs) and `finish_reasons`. Records of different workloads fail.
+Metrics (recomputed): `equal`, `first_differences` and
+`finish_differences`. Verdict: rule `exact` passes when `equal`, else
+fails; rule `informational` passes when `equal`, else is informational.
 
 ## determinism (determinism.v1)
 
-Inputs: none beyond the fixed request set; the image request when the
-package serves image inputs. Two records: this arm's and the other arm's.
-A release gate check names them as `json_file` (this arm's record) and
-`reference_file` (the other arm's), so the gate scores the one against the
-other ([declarations](../tools/qual/README.md#model-declarations)).
+Inputs: none beyond the fixed request set of `tools/qual/determinism.py`;
+the image request when the package serves image inputs. Two records: this
+arm's and the other arm's, which a gate check names as `json_file` and
+`reference_file`.
 
 Requests, one at a time, greedy with 48 output tokens and top-5 logprobs,
 each with a fresh `cache_salt` and reporting `cached_tokens: 0`: four short
-completions (`capital`, `haiku`, `fibonacci`, `arithmetic`); a long
-completion over two prefill chunks (`long`) and its cold repeat
-(`long-cold-repeat`); with images, one chat request with a generated PNG
-(`image`); the long prompt as token IDs (`long-ids`); per anchor A in 1024
-and 2000, a primer of the first A IDs with one output token
-(`long-primer-A`) and the whole ID prompt under the primer's salt
-(`long-hit-A`, reporting `0 < cached_tokens <= A`). `tools/qual/determinism.py`
-holds the prompts and the PNG.
-
-Receipt fields: `arm`, `run_id`, `concurrency` (1), `sampling`,
-`request_set` (`names`, `sha256`, `long_prompt_tokens`,
-`long_prompt_token_ids_sha256`), `image` (`included`, `png_sha256`,
-`reason`), `cold_repeat`, `prefix_hit`, and `requests`: per request in order
-`name`, `cache_salt`, `text`, `finish_reason`, `token_ids`, `tokens`,
-`logprobs`, `top_logprobs` (ordered `[token, logprob]` pairs) and `usage`.
+completions; a long completion over two prefill chunks and its cold repeat;
+with images, one chat request with a generated PNG; the long prompt as token
+IDs; and per anchor A in 1024 and 2000, a primer of the first A IDs and the
+whole ID prompt under the primer's salt, reporting `0 < cached_tokens <= A`.
 
 Coverage: each record passes `determinism.check`: the request names in
 order, a distinct salt per request (each hit its primer's), the cache rules
-above, token IDs matching usage, complete and finite logprobs, and the long
-prompt longer than one 2048-token chunk.
-
-Metrics (recomputed): `passed`, `left_arm`, `right_arm`, `requests`,
-`tokens`, `equal`, `first_difference` (`request`, `field`, `position`,
-`left`, `right`), `max_abs_difference`, `cold_repeat` and `prefix_hit` (per
-arm `equal`, `first_difference`, `max_abs_difference`). Two answers are
-equal when their `token_ids`, `tokens`, `logprobs` and `top_logprobs` are
-equal position by position (floats by their IEEE 754 bits), then `text`,
-`reasoning` and `finish_reason`.
+above, token IDs matching usage, complete and finite logprobs, and a long
+prompt longer than one 2048-token chunk. Two answers are equal when their
+`token_ids`, `tokens`, `logprobs` and `top_logprobs` are equal position by
+position (floats by their IEEE 754 bits), then `text`, `reasoning` and
+`finish_reason`.
 
 Verdict: pass when every request is equal across the arms, the two cold long
 sends are equal within each arm, and each prefix hit equals the cold
-`long-ids` send within each arm; else fail.
-
-For diagnostic work on nondefault model options, `determinism.py record
---experimental --experimental-pin FILE --experimental-pin-sha256 SHA256
---server-log LOG` requires an explicit pin containing exactly
-`model_options` (the complete typed option map), `checkpoint_identity` and
-`startup_nonce`. The bounded regular pin file must match the supplied digest
-and forbid group and world writes. Its identity must match both live health
-reads, the startup log and every response's identity headers. Ordinary
-recording continues to refuse unqualified model options.
-
-`determinism.py compare --experimental LEFT RIGHT` uses the same token,
-logprob, cold-repeat and prefix-hit comparisons. It additionally validates
-the recorded pins and requires identical options and checkpoints across
-arms. These records and comparison metrics report `qualified: false`.
-Release scoring rejects an `experimental_determinism` marker on either
-receipt or its server identity, including mechanics runs. A diagnostic
-comparison cannot establish release qualification.
+`long-ids` send within each arm; else fail. Diagnostic records of
+nondefault model options (`determinism.py record --experimental` with a
+sealed pin) report `qualified: false`, and release scoring rejects them.
 
 ## api (api.v1)
 
@@ -667,222 +564,196 @@ Inputs: the declared `api_samples` (a captured completions response with
 logprobs), `chat_renders` (its `tools-00` conversation) and the frontend
 declaration's thinking keyword.
 
-Requests: the 40 cases below, in order. The model is the served one; every
-request is non-streaming unless it says `stream`. `prompt` is `"Hello"` and
-chat messages are one user turn `"Hello"` unless stated.
+Requests: the 40 cases of `tools/qual/api.py`, in order, against the served
+model: single and multiple choices with and without streaming and usage,
+generated token IDs, `/tokenize` and `/detokenize`, batched prompts,
+`add_special_tokens`, a stop token, `add_generation_prompt: false`, hidden
+reasoning, `ignore_eos`, nullable flags, an unknown extension, sampling
+extensions, chat token-limit precedence, continuous and stream usage, a stop
+string, completion logprobs against the captured sample, reasoning on and
+off (where the frontend refuses disabled thinking, that request must be
+refused with HTTP 400), streamed and whole tool calls whose names and
+parsed arguments agree as typed JSON, a tool result, and the vLLM-compatible
+`/metrics` series.
 
-| Case | Request | Passes when |
-|---|---|---|
-| `choice_single_False` | completion, `n: 1`, `seed: 41`, `temperature: 0.7`, `max_tokens: 3`, `ignore_eos` | one choice |
-| `multiple_choices_False_False`, `_True` | the same with `n: 3`; `_True` streams with usage | choice indexes 0-2, each finishing `length`; usage prompt equal to the single case's, completion 9, total their sum; a stream ends with a usage-only chunk and one response ID |
-| `choice_single_True`, `multiple_choices_True_False`, `_True_True` | the chat forms of the three above | as above |
-| `generated_token_ids_<chat>_<stream>` | completion or chat, `return_token_ids`, `temperature: 0`, `max_tokens: 3`, `ignore_eos`, streamed or not | prompt token IDs present; generated IDs non-negative, as many as `completion_tokens` |
-| `tokenize` | `POST /tokenize` `"Hello"`, no special tokens | `count` equals the token list's length |
-| `batch_single` (twice) | completion of one prompt, then of its token IDs, `max_tokens: 1` | a choice |
-| `batch_False_False`, `batch_False_True`, `batch_True_False`, `batch_True_True` | completion of two equal prompts (text, then token IDs), `n: 2`, `max_tokens: 3`, streamed or not | 4 choices; usage prompt twice the single prompt, completion 12 |
-| `add_special_tokens_<chat>_<special>` | completion or chat with `add_special_tokens`, `return_token_ids`, `max_tokens: 1` | prompt token IDs present |
-| `detokenize` | `POST /detokenize` of the `tokenize` IDs | `"Hello"` |
-| `stop_token_ids` | completion biased (+100) to the first `tokenize` ID, which is a stop token, `max_tokens: 3` | one completion token, empty text, finish `stop` |
-| `generation_prompt_control` | chat, `add_generation_prompt: false`, `max_tokens: 1` | a choice |
-| `hidden_reasoning` | chat "What is 17 times 23?" with thinking on, `include_reasoning: false`, `max_tokens: 8` | no reasoning field |
-| `ignore_eos` | completion, `max_tokens: 3`, `ignore_eos`, `stop_token_ids: []` | 3 tokens, finish `length` |
-| `nullable_flags` | chat with `stream`, `logprobs` null and `top_logprobs: 0` | a choice |
-| `unknown_extension` | completion with an unknown field | a choice |
-| `sampling_extensions` | completion, `min_tokens: 2`, `max_tokens: 3`, `seed: -1`, `top_k: -1`, `user` | 2-3 completion tokens |
-| `chat_token_limit_precedence` | chat, `max_tokens: 1`, `max_completion_tokens: 3`, `min_tokens: 2` | 2-3 completion tokens |
-| `continuous_usage` | streamed completion with `continuous_usage_stats` | usage on every chunk, non-decreasing, totals consistent, a final usage-only chunk |
-| `stream_usage` | streamed chat "Say hello.", `max_tokens: 24`, with usage | a chat chunk and a usage-only chunk |
-| `stop` | chat asking for a sentence ending with END, `stop: ["END"]`, `max_tokens: 48` | no `END` in the content |
-| `completion_logprobs` | completion "Paris is", `max_tokens: 5`, `logprobs: 5` | its logprobs fields include the captured sample's |
-| `reasoning_True`, `reasoning_False` | chat "What is 17 times 23?", thinking on or off, `max_tokens: 128` | reasoning present exactly when thinking is on; where the frontend refuses disabled thinking (`reasoning.allow_disabled: false`), `reasoning_False` must be refused with HTTP 400 (the row's `refused`: the first 200 characters of the error) |
-| `stream_tool_arguments` | streamed chat of `tools-00` with its tools, `tool_choice: auto`, `max_tokens: 256`; then the same request not streamed | every chunk's choice has index 0 and tool indexes count up from 0; finish `tool_calls`; each call has an ID (a nonempty string, unique among the calls) and one name, sent before any arguments and never repeated; its argument deltas, in one part or several and all before the finish chunk, join into a JSON object; the calls' names and parsed arguments equal the unstreamed response's as JSON of the same types (an integer never equals a float, a boolean never a number; key order and spacing are ignored; IDs are not compared) |
-| `tool_call` | the same, not streamed, `max_tokens: 128` | finish `tool_calls` with tool calls |
-| `tool_result` | the conversation plus the call and a tool result (18, cloudy), `max_tokens: 1024` | the answer mentions 18 or cloudy |
-| `metrics_compatibility` | `GET /metrics` | the vLLM-compatible counters, gauges and histograms with `model_name` and `engine` labels, a finish reason label and `+Inf` buckets |
-
-Receipt fields: `rows`, one per case in the order above (`name`, `passed`,
-`latency_seconds` when it passed, and case facts such as `finish_reason`),
-`errors` (per failed case: `name`, `error`, the rejected `response`),
-`stream_text`.
-
-Coverage: the row names are exactly the 40 cases in order, each with a
-boolean `passed`.
-
-Metrics: `rows`, and `passed` recomputed as every row passed.
-
-Verdict: the declared predicate `passed` true.
+Receipt fields: `rows`, one per case in order (`name`, `passed`,
+`latency_seconds` when it passed, and case facts), `errors` and
+`stream_text`. Coverage: the row names are exactly the 40 cases in order,
+each with a boolean `passed`. Metrics: `rows`, and `passed` recomputed as
+every row passed. Verdict: the declared predicate `passed` true.
 
 ## structured (structured.v1)
 
-Inputs: the 12 cases of `tools/qual/structured.py` (`chat_json_object`,
-`chat_json_schema_strict`, `chat_json_schema_loose`, `chat_so_json`,
-`chat_so_choice`, `chat_so_regex`, `chat_so_json_object`,
-`completion_so_json`, `completion_json_schema`, `tool_required`,
-`tool_named`, `reasoning_json_schema`), their schemas, choices, regex and
-tools, and the settings: `repeat`, `stream`, `max_tokens` (512),
+Inputs: the 12 cases of `tools/qual/structured.py`, their schemas, choices,
+regex and tools, and the settings: `repeat`, `stream`, `max_tokens` (512),
 `reasoning_max_tokens` (4096), `temperature` (1.0) and `seed`.
-The chat cases other than `reasoning_json_schema` disable thinking; where
-the frontend refuses that (`reasoning.allow_disabled: false`) they send no
-thinking switch and take `reasoning_max_tokens` unless the case sets its own.
 
 Requests: per case, `repeat` times, the case's request with the settings'
-sampling; with `stream`, each once more streamed with usage
-(`<case>+stream`). An HTTP 400 is `refused`; finish `length` is
-`truncated`; otherwise the output is validated locally (JSON Schema subset,
-choice membership, regex full match, offered tools with valid arguments) and
-is `passed` or `failed`.
-
-Receipt fields: `settings` (`cases`, `repeat`, `stream`, ...), `rows` (per
-request: `name`, `stream`, `status`, `latency_seconds`,
-`completion_tokens`, `tokens_per_second`, `finish_reason`, and `error` and
-`output` when not passed), `summary` (`overall` and per case: the four
-status counts, `validity_rate = passed / (passed + failed)`, null when
-none, rounded to 4 places, latency p50 and p90, mean tokens per second),
-`errors` (the failed rows).
+sampling; with `stream`, each once more streamed with usage. An HTTP 400 is
+`refused`; finish `length` is `truncated`; otherwise the output is
+validated locally (JSON Schema subset, choice membership, regex full match,
+offered tools with valid arguments) and is `passed` or `failed`.
 
 Coverage: `settings.cases` are the 12 cases in order, `repeat` positive,
-`stream` boolean, and the rows are exactly the requests those settings run
-in order, each with a known status.
-
-Metrics recomputed from the rows: `summary` and `passed` (no failed row).
-
-Verdict: the declared predicates: `passed` true, overall `validity_rate`
-at least 1.0, and no refused or truncated request.
-
+`stream` boolean, and the rows are exactly the requests those settings run,
+each with a known status. Metrics recomputed from the rows: `summary` (per
+case and overall status counts and `validity_rate = passed / (passed +
+failed)`) and `passed` (no failed row). Verdict: the declared predicates:
+`passed` true, overall `validity_rate` at least 1.0, and no refused or
+truncated request.
 
 ## Declared media capture formats
 
-`qualification.media` selects a capture format, reference name and receipt ID.
-`cases` pairs a captured prompt/answer set with its exact variants. `image-probes`
-uses captured image requests and the pinned reference's per-probe `short` or
-`free-text` rule. These formats share `media_forced`; model names select no code
-path. Teacher reference variants and reference names are already declared data.
+`qualification.media` selects a capture format, reference name and receipt
+ID; model names select no code path. `cases` pairs a captured prompt/answer
+set with its exact variants and requires `capture_schema`, `expectations`
+and, for audio, a positive `audio_near_tie`. `image-probes` uses captured
+image requests and the pinned reference's per-probe `short` or `free-text`
+rule, and requires `stop_token`, `expected`, `fixture_images` and `items`.
 
 For image probes, rows must cover every declared probe in the captured
-request order (the normalized reference's explicit `order` list, independent
-of JSON object key order). Short answers use the reference's greedy
-near-tie threshold. Free-text answers use the
-reference answer teacher-forced, with each probe's spread-derived limits,
-floors, step and cap unchanged. Their greedy comparison and near-tie reports
-are context. Content expectations and prompt token counts gate both groups.
-Scores must be finite, nonnegative and cover the reference answer positions;
-top-1 disagreement must represent a whole number of those positions. The
-recorded `near_tie_report.flips` must identify every disagreement by position
-and served token ID, with the reference top-1 matching the pinned reference.
-Their gaps, decisive/near-tie rates and total rate are recomputed with the
-same rule as live capture; the report's diagnostic classifications are
-context. Missing or inconsistent flip identities are insufficient.
-
-Legacy image-probe receipts store the first divergence and its reference
-margin, rather than the divergent token bytes. Rescore checks the margin
-against the pinned top-5 gaps, then recomputes the inclusive threshold test and recomputes forced-score
-limits. It does not claim to reconstruct missing token bytes. Reference digest,
-probe coverage and all boolean expectation/count results are required.
-Teacher and case-format media receipts require the bound `served_rows` of
-the near-tie rule; their absence is insufficient.
+request order. Short answers use the reference's greedy near-tie threshold.
+Free-text answers use the reference answer teacher-forced, with each probe's
+spread-derived limits, floors, step and cap unchanged. Content expectations
+and prompt token counts gate both groups. Every disagreement must be
+identified by position and served token ID, and its gap and rates are
+recomputed; missing or inconsistent flip identities are insufficient.
+Media captures, their sidecars and the named exact reference are read
+through the locked fixture readers, and regenerated image bytes must match
+the captured image digests.
 
 ## frontend_goldens (frontend_goldens.v1)
 
-The check compares a served capture with the declared goldens.
-`frontend_capture/chat-renders.json` is the chat reference; the separately
-declared `tokenizer_goldens` is the tokenizer reference. Each served file
-compares `token_ids` by row index, with exact IDs and equal row counts. Row
-identifiers are not matching keys.
+The check compares a served capture with the declared goldens:
+`frontend_capture/chat-renders.json` for chat and the declared
+`tokenizer_goldens` for the tokenizer. Each served file compares
+`token_ids` by row index, with exact IDs and equal row counts. A check may
+declare `tokenizer_refusals` (`{sha256, special_token, reason}`): each
+listed row must return HTTP 400 with exactly `prompt contains a special
+token the model does not admit in prompts: <token>`; unlisted rows still
+require exact IDs.
 
-A check may declare `tokenizer_refusals`, a list of `{sha256, special_token,
-reason}` records. The digest identifies one reference row's UTF-8 text, and
-the one-line reason explains why that token is outside the served prompt
-format. Each listed row must return HTTP 400 with exactly `prompt contains
-a special token the model does not admit in prompts: <token>`, where
-`<token>` is its declared `special_token`. A success, another status, or any
-other error fails. Unlisted rows still require exact IDs. The report keeps
-`matched_rows` and the `expected_refusals` observations separately; rescore
-requires every declared refusal's identity, status and message.
+The served capture is a directory a capture script wrote, or one the check
+captures itself with `--url` and `--capture-out` through the server's
+`/tokenize` in reference order, so it can run in a quick cohort. The report
+binds each compared golden file by name, input, SHA-256 and row count, and
+rescore refuses missing or unequal bindings. Worker exit codes are 0 for
+match, 1 for diverged and 3 for insufficient (zero gated rows, missing
+required files or missing predicate evidence); a declaration without a
+frontend check is a usage error (exit 2). Release qualification requires
+both golden files, plus every declared predicate.
 
-The served capture is either a directory a capture script wrote (the
-positional argument) or one the check captures itself: with `--url` and
-`--capture-out`, each reference chat row (its `messages`, with tool-call
-arguments sent as JSON text, `tools`, `chat_template_kwargs` and
-`add_generation_prompt` true) and each tokenizer text (`add_special_tokens`
-false) goes to the server's `/tokenize` in reference order. The served IDs, or
-the status and error body of a refused request, are written to `--capture-out`
-with the server's identity in `capture-meta.json`, then compared as a capture
-directory. This form needs no external capture, so it can run in a quick
-cohort.
+## Multimodal serving
 
-The report's `reference.files` maps each compared golden filename to `{input,
-file, sha256, rows}`. `input` names the declaration input; `file` is
-`chat-renders.json` under `frontend_capture`, or empty for the direct
-`tokenizer_goldens` file. `sha256` hashes the exact reference bytes; `rows` is
-the reference JSON array length. Rescore loads these declared files and refuses
-missing or unequal bindings. Historical unbound reports are insufficient.
-`--reference` supplies a diagnostic override; its report qualifies when its digest
-and row count match the declared files, regardless of the override path
-spelling. With a reference lock, an override must resolve to the declared file;
-a different directory is refused before comparison. Environment-backed inputs are resolved through the same declaration
-mechanism. Each golden report contains `rows` (served count), `reference_rows`,
-`mismatches` (the first 20 mismatch indexes), `media_refused` (refused indexes),
-`key` (filename) and `agrees` (equal counts and no mismatches). Media refusals
-never bypass equality. Rescore checks `reference_rows` against the bound file
-length, then validates counts, indexes and consistency; individual served IDs
-are not retained, so equality is recorded evidence.
+Match checkpoint binding, prompt token IDs and usage to the reference.
+Declared media formats determine coverage and scoring. Case answers are
+teacher-forced under per-case spread limits, and a greedy walk through the
+first departure must remain within 0.3 nats of the reference top-one (2.3
+for audio). Image-probe descriptions use per-probe spread bounds with mean
+error at least 0.15 and at most 0.30. Preprocessing and encoder checks are
+separate obligations. Served but unqualified modalities remain explicitly
+declared as such (`capabilities.unqualified_media`).
 
-`coverage.files` counts compared rows (minimum of the two file counts).
-`required` lists `--required-file` arguments; `missing` lists requested files
-without compared rows. `omitted` lists absent or empty files. `compared` sums
-all compared rows; `gated` sums files read by declared predicates or explicitly
-required. Worker exit codes are 0 for match, 1 for diverged and 3 for
-insufficient (zero gated rows, missing required files or missing predicate
-evidence). A declaration without a frontend check is refused as a usage error
-(exit 2). Only declared predicates gate; incidental needle/API failures remain
-context. An explicit partial scope selects predicates rooted at the requested
-filenames. Release qualification requires both golden files, plus every declared
-predicate.
+## Tap captures
 
-The Cargo tokenizer/chat tests use the distinct validation evidence category
-`frontend_cargo_goldens`. This offline capture kind is developer tooling,
-outside the portable eval subset. `frontend_goldens.py` compares HF
-references, including the declared API answer shapes.
+A tap gate (`encoder_parity`, `qwen38_layers`, `text_layers`) counts engine
+taps only from a capture bound to the process and request that wrote them.
+Serve a diagnostic-taps bundle with `CHOPINFER_TAPS_DIR` set,
+`CHOPINFER_REQUEST_TRACE=1`, prefix caching off and nothing else in flight,
+then capture with `tools/qual/tap_binding.py capture`. Each request is sent
+once under a fresh request ID and cache salt, and only the new steps that
+name the live startup nonce and that request are kept; the trace, the steps
+and the manifest must name it by its integer engine request ID. A prefix-hit
+continuation must report `0 < cached_tokens <=` its primer's prompt tokens.
+The manifest keeps the server's complete `model_options`, which must be the
+qualified defaults; a capture with diagnostic option overrides records
+`qualified: false`, and no gate admits it. The gate admits a capture only if
+the candidate still serves with the capture's `/health` identity, startup
+nonce included, and every step holds its recorded digests.
 
-### Media declaration and historical policy data
+## Text layers
 
-`qualification.media` requires `format`, `reference` and `receipt`. `cases` also
-requires `capture_schema` (string) and `expectations` (object); `image-probes`
-requires `stop_token`, `expected` (nonempty string lists), `fixture_images`
-(path strings) and `items` (`short` or `free-text`). `audio_near_tie` is a
-required positive number for `cases`. Expectation entries under `files` or
-`kinds` require a nonempty text `field` and boolean `single`. `expected` and
-`fixture_images` keys must name declared `items`. MiMo declares 2.3 nats from
-its measured encoder spread. The named reference must exist; case references
-require variants, image references store their variants in probe data and do not
-require a declaration variant list.
+The `text_layers` check compares one reference sequence, captured from a
+diagnostic-taps server, against the reference runner's F32 taps with its
+BF16 taps as the floor, through `tapdiff.py`, by the
+[layer rules](numerics.md#layer-comparisons). The
+reference run is the declared `layer_reference` input, which the reference
+lock pins; each mode's cache keys must name that mode's adapter and the
+runner numerics files with their current digests, and the check's `MODES`
+and `ADAPTERS` constants say which dequantization and adapter each mode
+uses. A declaration's `REQUIRED_TAPS` must all be compared, else the status
+is `insufficient`. A `ROUTER` constant (`score`, `top_k`, `n_group`,
+`topk_group` and the `bias` input, a `router_bias.py extract` sidecar the
+reference lock authenticates) has tapdiff judge routing flips by
+[route-near-tie.v2](numerics.md#routing-near-ties); the receipt keeps the
+flips, margins and removed rows.
 
-Stored policies lacking `qualification.media` receive this format block and
-missing inputs from today's declaration, not from their historical revision.
-Their recorded reference pins and thresholds remain authoritative. A short probe
-margin at its divergence must equal a gap to a non-reference top-5 token within
-the shared float tolerance; otherwise it is insufficient. Valid margins use
-`limits.near_tie`, including its boundary tolerance. Free-text probe flips
-retain token identities and are judged against pinned reference top-5 rows.
+## Encoder parity
 
-`dev/encoder_parallel.py` requires `CHOPINFER_QUAL_CONFIG` set to the
-model's `qual.json` for declared media paths.
+The `encoder_parity` check compares every encoder output row the engine
+computes, and MiMo's RVQ codes, with the generic encoder reference over the
+same media, through `tapdiff.py`. The encoder declarations in
+`models/<model>/contract/encoders/*.json` define the taps. Its input is a
+`chopinfer.encoder-parity-run.v1` directory holding a bound
+[tap capture](#tap-captures) and one reference run per declaration in the
+`exact`, `policy` and `reference-bf16` modes. Tapdiff takes `exact` as the
+reference and `reference-bf16` as the spread:
 
-### Authenticated media and frontend inputs
+- `enc.vision.out`, per item. Direction: with d = |engine/|engine| -
+  exact/|exact|| per row and its floor the same for reference-bf16, every
+  row needs d <= 3 x max(floor, 2^-8) and the median d / (3 x floor) at most
+  1. Scale (largest row-norm error per item): an F32-policy encoder
+  (`f32-pairs.v1`) is held to its policy run's own error, at least 0.1% and
+  rounded up to 0.1%; a BF16-policy encoder (`bf16-legacy.v1`) to the larger
+  of reference-bf16's and the policy run's, rounded up to 0.5%
+  ([why](numerics.md#mimo-vision-row-scale)).
+- MiMo's `enc.audio.out`: relative L2 per row by the same rules, over rows
+  whose RVQ codes all equal the exact run's.
+- The audio encoder's `enc.audio.x.codes`: agreement with the exact codes,
+  overall and in the first stage, at least reference-bf16's less 3
+  percentage points.
 
-The unified workers consume bytes authenticated by the reference lock. Media
-captures, their sidecars and the named exact reference use the locked fixture
-readers. Recorded-revision rescoring exports sidecars from their declared
-source paths and checks those copied bytes against the adopted inputs before
-scoring. Functional media files are read through the `media_fixtures` entry and
-those returned bytes are passed to message construction. Regenerated image
-bytes must match the captured image digests. `media_cases` and `media_images`
-are code inputs, following the existing exemption for fixture helper code.
+An encoder whose every input kind the declaration lists in
+`capabilities.unqualified_media` has no required rows and pins no
+reference. Every tap must hold compared rows and tapdiff must report a
+match. A lab capture of the encoder alone (`encoder_parity.py lab`) is
+evidence for the encoder kernels and weights, not this check.
 
-Frontend context and chat-render files use scoped `frontend_capture` members;
-tokenizer goldens use their own file entry. Parsing, counts and report digests
-use the authenticated bytes. Lock refusals exit with a `refused:` message
-and no comparison verdict or traceback.
+## Prefix caching
+
+Hit and chunked rows must equal cold rows bitwise under the model's granule
+and the context-parallel stripe rules
+([prefix-cache accuracy](numerics.md#prefix-cache-accuracy),
+[KV state](numerics.md#kv-offload-and-prefix-state)).
+`prefix_exact.py record --ram-hit` is the RAM-hit arm: its server runs the
+RAM prefix tier with `--debug-prefix-ram`, so every hit restores an anchor
+copied back from the host tier. Its record meets the GPU-hit arm's gate,
+drafter acceptance included, and each request that reports cached tokens
+must raise `chop_prefix_cache_ram_hits_total` once. A model whose bundle
+runs the tier may declare the opt-in `ram-forced` configuration, which
+serves every arm that way; its prefix_exact input predicates require
+RAM-hit records. `kv_offload.py`'s `kv-offload-prefix-pressure` arm runs the
+pressure workload with the tier on and no forced swaps, and is judged
+against the pressure off arm: complete captures, every C1 request bitwise
+equal, promotions and RAM hits above zero, and no pending transfer, swapped
+request or stall at the end.
+
+## KV layout equality
+
+A comparison KV layout that stores exactly the values the native formats
+decode to must serve the same bits. In a model's BF16 comparison
+configuration (`kv-bf16`), `kv_layout_equality.py compare` requires the
+native and BF16 layouts' determinism records and forced records (on the
+pinned exact and long-context references, the long text forced through 1
+prefill and 1,023 decode rows) to be bit-identical in every text, finish
+reason, token ID, token and selected and top logprob, with complete typed
+rows. Each pair must name one checkpoint, metadata, source commit, bundle,
+version, served model, effective profile and complete `model_options` map;
+the layout fields are validated, not compared. `kv_layout_equality.py taps`
+compares two tap captures, one of each layout, bit for bit in logical
+representation, and requires the native capture's raw stored codes and
+scales to decode exactly to its logical values. The check does not qualify
+production accuracy; the default configuration's gates do.
 
 ## Capture coverage
 

@@ -9,7 +9,7 @@ are refused; other compute capability 12.0 parts, such as GeForce RTX 50
 series cards, are untested, and packages plan 94 GiB of device memory per
 rank, which smaller cards do not have ([hardware](../README.md)).
 The numerical gates are in [numerics](numerics.md); for independent model workspaces, see
-[external models](adding-a-model.md#external-sdk-workflow).
+the [external SDK workflow](../BUNDLE_ARCHITECTURE.md#external-sdk-workflow).
 
 ## Crates
 
@@ -127,7 +127,7 @@ An op is model math first, then each backend's implementation of it.
    launches; a collective gets a multi-rank case (`kit::collective`).
    Declare the gate before running on a GPU. Its relaunch, graph and PDL
    checks poison the outputs and workspaces before every compared launch
-   with `kernel_harness::poison` (see `crates/kernel-lab/README.md`).
+   with `kernel_harness::poison`.
 
 An op that only one model runs stays with that model, behind its `OwnOps`
 trait ([model-owned ops](#model-owned-ops)), and moves to `kernel-core` when
@@ -198,14 +198,6 @@ in tuning tables. A policy that changes the arithmetic is part of the
 entry's numerical identity and is never a tuning knob. Another model adopts
 a shared template only when its current entries are bitwise equal under
 the chosen policies. Sharing is never forced.
-
-On 2026-10-26, CPU source inspection found that GLM's C1-C8 FP8 block-128
-strip chains cannot use the dense decode fold template through new policy
-types alone. The template's fixed byte operands, K32 MMA loop and UE8M0
-scale loads cannot express GLM's BF16 operands, eight K16 MMAs per chain
-and F32 block-scale FMA. Adoption would require porting GLM's compute body
-and TMA staging. The shared policy interface stays available; GLM keeps its
-current entries. No GPU twins or step-time measurements were run.
 
 ### Serving options and candidate switches
 
@@ -304,8 +296,7 @@ write. It does not prove every input was initialized or every PDL wait was
 placed correctly. Output checks see the final chain, so a later write can
 hide an earlier overrun. PDL overlap is not guaranteed; a passing run is not
 a proof that early reads are impossible. Keep GPU negative controls and
-inspect which phase actually detected them. See the conformance API and
-[kernel-lab checks](../crates/kernel-lab/README.md#poisoned-replay-checks).
+inspect which phase actually detected them.
 
 ## Model-owned selections
 
@@ -317,8 +308,8 @@ recipe membership, not arbitrary CUDA's mathematical truth.
 
 ## Generated projection offers
 
-Derive offers from a model's [projection declaration](../crates/projection-spec/README.md)
-through [generated precision offers](../crates/kernels-sm120/src/precision/README.md).
+Derive offers from a model's projection declaration (`projection-spec`)
+through the generated precision offers of `kernels_sm120::precision`.
 Symbols follow content; existing aliases are kept in append-only adoption
 ledgers. A migration to generated offers preserves existing lock records.
 New entries require oracle and invariance evidence. Execution binds precision
@@ -397,9 +388,7 @@ prefill launch also takes a 4D weight map over the packed strips. Each
 family's kernel-lab `<family>_packed` cubin holds row-major twins beside
 the packed entries, and `kernel_harness::packed_fold` requires every byte a
 packed entry writes to equal the row-major entry's on codes whose words are
-all distinct; see
-[the porting notes](../crates/kernels-sm120/cuda/gemm/mxfp8_fold_packed.md).
-The TMA matrix prefill and the row-local and cluster folds have no packed
+all distinct. The TMA matrix prefill and the row-local and cluster folds have no packed
 entries.
 
 The row-local pair loop and deep ring share `mxfp8_fold_local_wide.cuh`;
@@ -422,32 +411,6 @@ in this layout, compiles only packed fold readers into its fold cubins and
 refuses at create a rank index that stores a dense codes view in another
 layout than its ops read.
 
-Measured on Flash SM120 at 300 W on 2026-10-23:
-
-- Parity: every packed compute symbol DeepSeek serves (367 across TP1,
-  TP2 and TP4, in 506 production-shape comparisons) wrote the same bytes
-  as its row-major twin, and moving one eight-row strip failed each
-  family's comparison.
-- Prefill, paired lab timings of packed against row-major entries at 448
-  to 8192 rows:
-  - compact 0.83 to 0.92;
-  - TMA 0.85 to 0.89;
-  - split 0.86 to 0.97;
-  - matrix-load 0.88 to 1.00;
-  - staged-scale 0.98 to 1.00.
-- Decode: at the decode routes DeepSeek serves, the split, ticket,
-  prefetch and reuse folds measured 0.96 to 1.02. Each sample was at
-  least 1 ms of cold repetitions.
-- Serving, against the previous layout with its create-time packed
-  copies:
-  - outputs were bitwise equal in tp4-ar and tp4-dspark;
-  - greedy throughput was within the A/A spread or faster: tp4-ar 0.9997,
-    1.0028 and 1.0103 at C1, C8 and C32, and tp4-dspark 1.0020, 1.0067
-    and 1.0039;
-  - each rank had 1922 MiB more free memory at the first graph capture
-    (2116 MiB with the drafter), about 35,400 more KV pages of 56,960
-    bytes.
-
 ## Ownership and source changes
 
 `kernel-build-report.json` beside the cubins records the transitive
@@ -456,13 +419,12 @@ relative ownership, ordered recipes and entry declarations, on fresh builds and
 cache hits. `BuildReport::verify_current` checks source, compiler, lock and
 artifact digests; ownership and declaration completeness are checked
 separately, and reports do not grant qualification. Schema and invalidation
-rules are in [`kernel-build`](../crates/kernel-build/README.md).
+rules live with `kernel-build`.
 
 A change to shared row, PTX or conversion headers can affect the independent
 example as well as production catalogs; `ci/cpu.sh` builds its `cuda-probe`,
-verifies locks and runs selection tests. Follow the
-[example's template lock procedure](../examples/external-model/README.md)
-for an intentional source update. Never repair a pinned consumer by bypassing
+verifies locks and runs selection tests. Follow the example's template
+lock procedure (`examples/external-model`) for an intentional source update. Never repair a pinned consumer by bypassing
 its lock. An identity-only refactor must preserve every existing lock
 record. Declared replacements that follow
 [candidate adoption](#adopting-a-candidate) may retire a symbol and its
@@ -475,7 +437,7 @@ Run GPU work only on otherwise idle GPUs. kernel-lab GPU tests run only when
 `CHOPINFER_KERNEL_GPU=<ordinal>` is set. The harness refuses to run when
 device memory is short and records co-resident compute processes; a benchmark
 taken with another process on the device is labelled shared-device and is not
-performance evidence. See [kernel-lab](../crates/kernel-lab/README.md).
+performance evidence.
 
 ## Contribution checks
 
@@ -489,8 +451,7 @@ performance evidence. See [kernel-lab](../crates/kernel-lab/README.md).
   not in its key. Layout copies also take their widths and strides at launch
   from a geometry-shared cubin, so a new geometry or rank count adds no copy
   entry; lookups, quantizers and gathers keep compiled shapes, since their
-  launch-shape forms measured slower
-  ([generated projections](../crates/kernels-sm120/src/precision/README.md)).
+  launch-shape forms measured slower.
   Planners never allocate and kernels support graph capture. A qualified
   name never changes content. Retire a symbol only after kernel-lab twin
   and served bitwise evidence for its replacement.
@@ -514,9 +475,8 @@ limits and reduction order. A failure refuses catalog generation; fallback
 never changes operation semantics or establishes qualification. Build reports
 label the source row or default for tunable entries.
 
-The exact dense, MoE and schedule rules live with the tables:
-[Qwen tuning](../models/qwen38/contract/tuning/README.md) and
-[MiMo tuning](../models/mimo26/contract/tuning/README.md).
+The exact dense, MoE and schedule rules live with each model's tables in
+`models/<model>/contract/tuning`.
 
 ## Activation policy
 
@@ -576,10 +536,7 @@ separate libtest process, and excludes them from its ordinary Rust test pass.
 It discovers models through their required allowlist file. Quick sweeps run
 up to four models in parallel. The runner warns loudly when a model exceeds
 20 seconds in quick or 60 seconds in CPU, and prints the route stage's total
-added wall time. The CPU stage runs models serially. On a shared host with
-eight admitted CPUs, the CPU stage took 244 seconds at seed 7: DeepSeek 99,
-GLM 46, MiMo 44 and Qwen 55 seconds (2026-10-27).
-The model warnings remain active.
+added wall time. The CPU stage runs models serially.
 `ci/quick.sh` always selects quick; `ci/cpu.sh` selects CPU.
 Missing executed cases or peak RSS reports fail the stage.
 Each quick or CPU route sweep and each bundle's
@@ -732,7 +689,7 @@ Adding a model:
    mixed step carries several). Scope a prefill-only gap to `prefill`, so a
    verify or decode step that takes it still fails the window.
    An arm's own `allow_fallbacks` replaces a family's job allowance in that
-   arm's windows only ([depth tuning](depth-tuning.md)).
+   arm's windows only.
    The optional `ranks` census retains tagged entry counts and untagged symbol
    counts for each logical rank, through capture and replay. Symbols acquired
    outside the shared acquisition helpers are reported under `unknown`; a
@@ -762,12 +719,3 @@ and a family scoped to step phases covers evidence only under a `--phase`
 it names.
 The serving-step profile report accepts `--route-classes` and `--route-allow`
 to run this check after reading the export.
-
-DeepSeek's `CHOPINFER_SYNC_GATHER_TRACE=1` diagnostic logs each synchronous
-Engram gather's rank, layer index, plane index (codes then scales), token rows, gathered rows, row bytes,
-reason, wall-clock start and monotonic elapsed host time. It defaults off;
-the disabled path reads no clocks. The interval includes the host service
-call and excludes logging. It adds no device synchronization and does not
-claim GPU completion time or achieved bandwidth. Use the timestamps to
-associate exposure with step traces and keep these diagnostic timings
-separate from acceptance timing.

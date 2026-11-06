@@ -42,7 +42,8 @@ are declared in `model.toml`; `--list` shows their commands. They exercise
 config admission, tensor mapping, frontend and weightless packaging with
 bounded inputs. They do not qualify real weights or device execution.
 Each selected test must execute and pass without ignored cases. Start a new
-model with the [external example](../examples/external-model/README.md).
+model from the executable example in `examples/external-model`
+([adding a model](../BUNDLE_ARCHITECTURE.md#adding-a-model)).
 
 ## Checks
 
@@ -138,24 +139,7 @@ build/lint prerequisites. The quick gate keeps its own selection policy.
 The exact `high-memory-*` nextest overrides declare the exceptional tests
 once. The CPU runner excludes them from ordinary tests, then runs each
 serially in an exclusive gate slot after the ordinary phase. That slot
-does not lift an enclosing supervisor or cgroup cap. The historical
-16 GiB and 30-minute limits came from an outer supervisor, not from the
-heavy wrapper or this phase split.
-
-The 2026-10-25 phased-gate comparison preserved the baseline Rust test,
-doctest and route inventories. Measured wall/CPU seconds and peak RSS were:
-
-| Phase | Wall seconds | CPU seconds | Peak RSS GiB |
-| --- | ---: | ---: | ---: |
-| portable-build | 997.418 | 4594.563 | 2.184 |
-| portable-lint | 167.929 | 716.873 | 1.738 |
-| portable-test | 1414.386 | 10325.714 | 36.635 |
-| high-memory-tests | 146.883 | 147.178 | 32.567 |
-
-RSS is the process/descendant high-water mark from `wait4`, not aggregate
-cgroup memory. Independent steps overlap, so phase times do not sum to gate
-wall time. The ordinary phase also exceeded 16 GiB; separating the two
-exceptional tests does not make the rest fit that cap.
+does not lift an enclosing supervisor or cgroup cap.
 
 Each gate retains `results.json`, `executed-tests.json`, JUnit reports and
 per-case `high-memory-results.json` under its external work directory.
@@ -195,22 +179,20 @@ touches no model:
   `CHOPINFER_MIMO_TOKENIZER_DIR`. When only `CHOPINFER_QWEN38_CHECKPOINT` or
   `CHOPINFER_MIMO_CHECKPOINT` is set, the script uses that directory as the
   tokenizer directory. The geometry and export recipes always run and fail
-  without them ([geometry recipe](contributing.md#checks)).
+  without them.
 - MiMo's pinned DFlash `mask_embedding.pt`, in `CHOPINFER_MIMO_DFLASH_DIR` or
   in the `dflash/` subdirectory of the MiMo tokenizer or checkpoint directory.
   The MiMo geometry recipe fails without it.
 - A reference-runner Python with torch, transformers and numpy in
-  `CHOPINFER_REFRUN_PYTHON`
-  ([reference runner](../tools/refrun/README.md#prepare-and-run)). The
-  `reference-prerequisites` step fails without it ([Contributing](contributing.md#checks)).
+  `CHOPINFER_REFRUN_PYTHON` (`python3 -m tools.refrun --help`). The
+  `reference-prerequisites` step fails without it.
 - The pinned references in `CHOPINFER_QWEN38_LONG_REFERENCE`,
   `CHOPINFER_QWEN38_LAYER_REFERENCE` and `CHOPINFER_GLM5NEXT_LAYER_REFERENCE`
   ([local.env.example](../local.env.example)), and a short, existing, writable `TMPDIR` (at
   most 64 bytes). The gate checks them before its first step and refuses to
-  start without them; `bash ci/cpu.sh --preflight` runs only that check
-  ([Contributing](contributing.md#checks)). Neither the repository
-  nor a release includes these references: they are GPU
-  [reference runner](../tools/refrun/README.md) outputs on the pinned checkpoints,
+  start without them; `bash ci/cpu.sh --preflight` runs only that check.
+  Neither the repository nor a release includes these references: they are
+  GPU reference runner (`tools/refrun`) outputs on the pinned checkpoints,
   and `models/<model>/qual-references.lock.json` pins their bytes. Ask the
   maintainers for copies. Until you have them, run `bash ci/quick.sh`,
   which needs them only when a change selects the release gate,
@@ -238,16 +220,17 @@ Contributors report the commands, executed cases and results, including
 missing prerequisites. CPU acceptance and a skipped GPU test establish no
 device correctness. Select only idle GPUs with `CHOPINFER_KERNEL_GPU` or
 `CHOPINFER_KERNEL_GPUS` and set `CHOPINFER_KERNEL_REQUIRE=1` for required
-kernel checks. Choose the affected tests from [kernel-lab](../crates/kernel-lab/README.md).
-Changes that alter bits follow the [numerical evidence rules](numerics.md#a-speedup-that-changes-bits)
+kernel checks. Choose the affected kernel-lab tests (`cargo test -p
+kernel-lab --test NAME`, GPU cases ending in `_on_a_gpu`). Changes that alter bits follow the [numerical evidence rules](numerics.md#a-speedup-that-changes-bits)
 before measuring speed. Served timings require an idle host as well as idle
 GPUs; [pair-lab kernel timing](#pair-lab-kernel-timing) needs only idle GPUs.
 
-Maintainers produce pinned-toolchain locks, sealed [journal proofs](../tools/journal_proof/README.md),
-[serving smokes](../tools/smoke/README.md), [serving A/Bs](../tools/ab/serving/README.md)
-and the affected models' [qualification runs](../tools/qual/README.md#correctness-runner).
-Never regenerate locks or goldens to hide a mismatch. Reference capture setup
-is in [tools/refrun](../tools/refrun/README.md).
+Maintainers produce pinned-toolchain locks, sealed journal proofs
+(`tools/journal_proof`), serving smokes (`tools/smoke`), serving A/Bs
+(`tools/ab/serving`) and the affected models' qualification runs
+([correctness runner](#correctness-runner)). Never regenerate locks or
+goldens to hide a mismatch. Reference captures use the GPU reference runner
+in `tools/refrun`.
 
 ## Shared build hosts
 
@@ -260,7 +243,7 @@ when comparing timings, and keep raw evidence outside the tree.
 
 ## Release
 
-Run the full CPU gate and affected [correctness suites](../tools/qual/README.md#correctness-runner)
+Run the full CPU gate and affected [correctness suites](#correctness-runner)
 before a release. Set the workspace version and refresh Cargo.lock, preserving
 ABI/schema versions. Build the archive with `tools/release/build.sh` into a
 fresh external directory; its builder verifies pinned kernel locks and emits
@@ -296,6 +279,45 @@ trusts the controlled producer; it is not a signature authenticating another
 builder. These provenance checks do not replace the full CPU gate or affected
 model qualification before publishing.
 
+### Correctness runner
+
+The runner builds a release install, verifies checkpoints and starts each
+configuration's arms for the captures and checks its declaration selects
+([release gates](check-kinds.md#release-gates)):
+
+```sh
+bash tools/qual/release_preview.sh prepare --model MODEL
+bash tools/qual/release_preview.sh plan --model MODEL --suite full
+bash tools/qual/release_preview.sh run --model MODEL --suite full
+```
+
+Use a target owned by this checkout. Preparation records file hashes and
+build identity; reuse requires matching ownership and unchanged artifacts,
+and checkpoint verification markers bind both files and the selected
+manifest. Runs retain the actual startup identities of each arm. Supply
+missing files with `--input` and literal values with `--input-value`; every
+declared input must exist. Forced arms serve the configuration's
+`--debug-reference-tokens` file. A check counts only with a passing row and
+a readable receipt; missing captures are not passes. Baselines advance only
+after a full passing run of every required configuration, and reseeding
+needs a recorded reason. No rule or baseline may change to hide a mismatch.
+
+The release gate alone consumes an already-running server and prepared
+inputs; it starts no server and downloads nothing:
+
+```sh
+python3 tools/qual/release_gate.py --model mimo26 --profile quick --url "$URL"
+python3 tools/qual/release_gate.py --model mimo26 --profile full --url "$URL" --inputs release-inputs.json
+```
+
+`--plan` shows the checks and `--list-inputs` the authenticated
+prerequisites, without serving. `CHOPINFER_QUAL_CONFIG` selects a
+declaration for standalone checks, `CHOPINFER_EVAL` the built host, and
+`CHOPINFER_DATA` and `CHOPINFER_QUAL_RECEIPTS` the external output
+locations. `python3 -m tools.qual check ID` runs one declared check;
+`rescore` judges stored receipts under current or recorded policy without
+changing the original run ([exit statuses](check-kinds.md#exit-statuses)).
+
 ## Pull requests
 
 See [accepted contributions](../.github/CONTRIBUTING.md#what-is-accepted).
@@ -324,87 +346,29 @@ against their owning layer.
 ## Diagnostics
 
 Reproduce a divergence under a fixed request/batch schedule first. Use
-`tools/dev/fixed-batch-logits.sh` and [serving A/B](../tools/ab/serving/README.md)
-for exact comparisons, [journal proofs](../tools/journal_proof/README.md)
-for structural claims, and [reference taps](../tools/refrun/README.md#taps-and-tapdiff)
-for matched-input arithmetic. Find the first differing stage before changing
-precision or tolerance. Eager synchronized dumps cannot clear a graph-only
-failure. Keep captures outside the repository and bound to the producer.
+`tools/dev/fixed-batch-logits.sh` and the serving A/B (`tools/ab/serving`)
+for exact comparisons, journal proofs (`tools/journal_proof`) for
+structural claims, and reference taps (`python3 -m tools.refrun` and
+`tools/qual/tapdiff.py`) for matched-input arithmetic. Find the first
+differing stage before changing precision or tolerance. Eager synchronized
+dumps cannot clear a graph-only failure. Keep captures outside the
+repository and bound to the producer.
 
 A host built with `linux-cuda-host` also exposes
 `chopinfer fixed-batch replay --config FILE`. It runs the same recorder and
-comparison checks as the fixed-batch device test, using the native executable's
-identity. This lets a replay use that executable's weight-keeper content proof.
-The JSON configuration accepts `weight_keeper`, `weight_keeper_policy` and
-`weight_keeper_identity`, with the same meanings and validation as the serving
-options. Stage the proof with the actual package, checkpoint and instance
-configuration; do not reuse a proof from another executable. The optional
-`temperature` field controls sampled rows and is recorded as part of comparison
-identity. Omission preserves 0.8; greedy rows remain at zero. Keep GPU selection,
-trace limits, baseline repeat controls and capture locations unchanged.
-
-A plain replay is one arm of the gather/owned logits A/B: `owned: false`
-expects every decode row on rank 0 and `owned: true` the owner blocks, after a
-gathered repeat control. A package without a rank-0 gather switch sets
-`default_owners: true` (with `owned: false` and no `control`) instead: each
-step's rows must then sit all on rank 0 or all in the owner blocks, one layout
-for the whole trace, and the receipt records which. The mode is part of the
-comparison identity, so such a capture only serves as the reference of another
-default-owner replay, which must take the same layout, and never as a gathered
-baseline or the owned arm's control. An ordinary replay refuses any reference
-or control whose receipt records default owners, including receipts written
-before the identity bound the mode. Ownership is never numerical evidence;
-the rows themselves still match the reference bit for bit.
-
-For a bounded drafting transition, supply a version-6 trace and set
-`transitions: true`, `trace_input: true`, `verify: true`, explicit `kv_pages`
-and diagnostic capture limits in the replay configuration. Such traces permit
-2 to 1,024 steps, up to 32 live requests and 256 rows per step, within the
-package's limits. Finish all prompt prefills before decoding. An absent
-request keeps its committed state. Each item's serialized `history` is empty:
-the recorder derives it from committed inputs and accepted bundle proposals.
-`kept` includes the input row and any accepted draft rows; `emitted` counts
-the current history's generated tokens before the proposed rows. Every
-proposal, resulting history, sampling record and logits byte remains part of
-the exact comparison. Transition traces forward the native seed, generated
-index and temperature envelope when the package declares sampled drafting.
-Their comparison invariants bind that wire behavior. Versions 1 through 5
-retain their existing rules and wire records.
-
-An allocated replay accepts `model_options` as a map of option names to
-string values and `allocation` as `{ "width": N, "confidence": CALIBRATION }`,
-using the serving calibration schema. An optional `capacity` in `allocation`
-sets the instance's maximum verify rows; omit it to use the trace's maximum.
-Use the serving capacity and `max_sequences` when comparing padded layouts.
-It requires a version-6 trace with
-prefills followed by one final drafted step, using greedy, seeded or top-logprob
-sampling. The width must cover the calibration's floor and be smaller than
-the reserved rows. The recorder submits serving's allocation and device-result
-metadata, records every reserved row and proposal, and commits the actual
-device acceptance instead of the trace's prescribed `kept` counts. With
-`draft_confidence: true` it also reads each drafted request's raw F32 drafter
-confidence, one word per computed token, beside its proposals and compares
-every word bit for bit; it refuses proposals without confidence and a replay
-that records none. The mode is part of the comparison identity, so its
-reference sets it too. Configurations
-without `allocation` keep the existing replay path. Model options must also
-be included in the executable's keeper proof.
-
-Version 7 adds bounded request lifetimes to transition traces. Its optional
-`lifecycle` list contains ordered, one-based `before_step` boundaries, each
-with `actions` and an optional `cancel: true`. Actions are `capture {slot}`,
-`retire {slot}`, and `restore {slot, from}`, encoded with an `action` tag.
-The slot identifies a logical request; physical state slots come from the
-normal host allocator. A canceled step still compares all logits, proposals
-and samples, then cancels the bundle, rolls back provisional KV and retires
-the touched requests. A later restore or prefill starts a new lifetime.
-Capture retains real KV anchors and bundle snapshot pages; restore validates
-their ownership and uses the bundle's state-slot restore API. All requests
-must be prefilled, and the trace must exercise capture, retirement, restore,
-cancellation and drafting. At most 16 boundaries and eight saved prefixes
-are allowed. Version 6 retains its original validation and wire records.
-Snapshot page requirements are checked after instance creation; a CPU dry
-run alone does not establish that the snapshot allocation fits.
+comparison checks as the fixed-batch device test, using the native
+executable's identity, so a replay can use that executable's weight-keeper
+content proof (`weight_keeper`, `weight_keeper_policy` and
+`weight_keeper_identity`, validated as the serving options are). Stage the
+proof with the actual package, checkpoint and instance configuration; never
+reuse a proof from another executable. Sampled rows, model options,
+allocation, transitions (trace version 6) and request lifecycles (version 7)
+are part of the comparison identity, so a reference must set them too.
+Every logits byte, proposal, resulting history and sampling record stays
+part of the exact comparison. Ownership of decode rows (gathered on rank 0
+or in the owner blocks) is never numerical evidence: the rows still match
+the reference bit for bit. A CPU dry run alone does not establish that a
+replay's snapshot allocation fits.
 
 ## Measuring a change
 
@@ -439,7 +403,7 @@ with an in-job A/A help locate work to improve.
 - Report each cell and weight cells by served shapes: decode C1, C2, C4,
   C8, C16 and C32, and DSpark verify widths 6, 8, 16, 32 and 64.
 - A comparison may declare before the job that
-  [Engram-adjusted step time](depth-tuning.md#engram-adjusted-step-time)
+  [Engram-adjusted step time](operations-observability.md#trace-scheduler-steps)
   decides its step cells. A change to an Engram path is judged on raw
   time, and the major-fault limit applies to both.
 
@@ -510,10 +474,26 @@ Method:
   logical token-page demand from intervening completed traffic; the receipt
   states the page size and formula. This is a pressure proxy, not physical
   allocation telemetry. Keep server eviction and reuse counters beside it.
+  A content-free trace declaration and its replay look like this; the
+  example's think time leaves the rest of the 600-second window for
+  requests:
+
+  ```sh
+  python3 -B tools/qual/agentic_trace.py --out "$CHOPINFER_DATA/trace.json" \
+    --sessions 8 --turns 4 --contexts 100000,250000 --idle-pages 0
+  python3 -B tools/qual/agentic_mixed.py --workload trace \
+    --trace "$CHOPINFER_DATA/trace.json" --levels 8 --replicas 1 \
+    --temperature 1 --seconds 600 --session-timeout-seconds 600 \
+    --min-samples 8 --cache-salt group --arm fixed --label baseline
+  ```
+
+  `agentic_verdict.py A1 B1 B2 A2 --gain METRIC --cell C` judges one ABBA's
+  four replay receipts by the rule below and refuses receipts that are not
+  one ABBA.
 - Run one untimed warm-up process on the same install and workload, then
   visit A1, B1, B2, A2 in that order. Each visit is a fresh server
-  process (it may borrow the [weight keeper](weight-keeper.md)), so no
-  cache or learned policy state carries between visits. A1/B1 share one
+  process (it may borrow the [weight keeper](operations-observability.md#weight-keeper)),
+  so no cache or learned policy state carries between visits. A1/B1 share one
   seed and B2/A2 share another.
 - Keep the profile, KV pool size, concurrency levels, window length and
   session limits identical in every visit. Record preemptions and
@@ -624,11 +604,5 @@ Also check that each GPU's IOMMU group lists its root port among its
 devices: on the reference host, a GPU whose group leaves out its root port
 is one whose port was missed.
 
-On the reference host (GPUs behind separate root ports of one CPU), the
-2026-10-31 configuration cleared only three of the four ports, because one
-address in its list named no device. With all four cleared on 2026-11-05,
-at 300 W per GPU, peer traffic was unchanged: one destination runs at 42 to
-54 GB/s, and a GPU writing to or reading from the other three at once gets
-about 2 GB/s in total, as [SM120 PCIe communication](../crates/kernels-sm120/cuda/comm/README.md#measured-pcie-behaviour)
-records. Record the host's IOMMU mode and kernel command line with timing
-evidence, and compare timings only between runs on the same configuration.
+Record the host's IOMMU mode and kernel command line with timing evidence,
+and compare timings only between runs on the same configuration.

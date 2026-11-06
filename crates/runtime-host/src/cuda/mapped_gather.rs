@@ -21,9 +21,23 @@ fn configured_init(value: Option<std::ffi::OsString>) -> HostTransformInit {
     }
 }
 
+/// The configured mode, read at the first gather, which logs a mode other
+/// than the default once so a served run shows it engaged.
 fn init() -> HostTransformInit {
     static INIT: std::sync::OnceLock<HostTransformInit> = std::sync::OnceLock::new();
-    *INIT.get_or_init(|| configured_init(std::env::var_os(INIT_ENV)))
+    *INIT.get_or_init(|| {
+        let init = configured_init(std::env::var_os(INIT_ENV));
+        if init == HostTransformInit::OnFailure {
+            runtime_engine::logging::line(
+                serde_json::json!({
+                    "schema":"chopinfer.mapped-row-fetch.v1","phase":"gather-initialization",
+                    "mode":"failure",
+                })
+                .to_string(),
+            );
+        }
+        init
+    })
 }
 
 pub(super) struct Gather {

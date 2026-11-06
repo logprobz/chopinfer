@@ -222,8 +222,24 @@ fn copy_fanout_on(copies: Vec<(&mut [u8], &[u8])>, copiers: usize) -> usize {
     if started > 0 {
         PARALLEL_FANOUTS.fetch_add(1, Ordering::Relaxed);
         PARALLEL_FANOUT_CHUNKS.fetch_add(copied as u64, Ordering::Relaxed);
+        report_parallel(started + 1, bytes, copied);
     }
     copied
+}
+
+/// Logs the process's first parallel fanout, once every copier finished,
+/// so a served run shows the copiers engaged.
+fn report_parallel(copiers: usize, bytes: usize, chunks: usize) {
+    static REPORTED: AtomicBool = AtomicBool::new(false);
+    if !REPORTED.swap(true, Ordering::Relaxed) {
+        runtime_engine::logging::line(
+            serde_json::json!({
+                "schema":"chopinfer.mapped-row-fetch.v1","phase":"parallel-fanout",
+                "copiers":copiers,"bytes":bytes,"other_copier_chunks":chunks,
+            })
+            .to_string(),
+        );
+    }
 }
 
 /// Whether [`copy_large`] reads `bytes` output bytes of `mapping`: large

@@ -169,8 +169,12 @@ byte of them. The outputs are zeroed once when they are allocated either
 way, so the callback never sees uninitialized bytes. `CHOPINFER_MAPPED_FANOUT_COPIERS`, 1
 (the default) to 16, copies the other ranks' planes of a large leader's
 rows on that many threads, which only copy host bytes and finish before
-the callback returns; the fetch snapshot's `parallel_fanouts` counts the
-gathers that used them. Routes, reads and bytes stay the same. On
+the callback returns, and never more than the threads the process may
+run on; the fetch snapshot's `parallel_fanouts` counts the fanouts that
+started another copier, once they finished. Each knob, set, logs one
+`chopinfer.mapped-row-fetch.v1` line when it first engages
+(`gather-initialization` at the first gather, `parallel-fanout` after the
+first parallel fanout). Routes, reads and bytes stay the same. On
 2026-11-06, a CPU benchmark of a four-rank DeepSeek layer gather (24 ids
 a row, a warm page cache, a shared build host) spent 7.8, 14.5 and 20.1 ms
 on the leading rank's reads at 1536, 2890 and 4096 prefill rows, 2.3 ms

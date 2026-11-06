@@ -119,3 +119,7 @@ path = "tests/sm120/f32_verify_rows/main.rs"
 [[test]]
 name = "prefill_tail_folds"
 path = "tests/sm120/prefill_tail_folds.rs"
+
+[[test]]
+name = "norm_prefill_rows"
+path = "tests/sm120/norm_prefill_rows.rs"

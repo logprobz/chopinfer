@@ -378,7 +378,7 @@ follows, and the served behavior is kept:
 ## Qualification
 
 `tp4-dspark` is qualified through 32 sequences, its default, by the release
-preview's full suite at d3d580aa02 ([release run](#release-run-of-2026-11-05)).
+preview's full suite at d3d580aa02, which is the stored last-good result.
 `tp4-ar` stays the experimental baseline that speculative output is checked
 against. `qual.json`, `validation.toml` and the pinned reference locks are
 authoritative for the checks and their inputs.
@@ -439,28 +439,6 @@ driver's pinned host buffers mapped through the GPU device nodes.
 The [numerical gates](../../docs/numerics.md#serving-qualification-gates)
 describe the shared acceptance rules. Store captures, qualification
 receipts and timings outside the repository under `CHOPINFER_DATA`.
-
-### Release run of 2026-11-05
-
-The release preview's full suite (`release_preview.py run --suite full`,
-every configuration `qual.json` declares) ran at d3d580aa02 on four GPUs at
-their default 300 W limit. 71 rows passed, 6 were informational
-(`paired_teacher` in both arms and `gsm8k_regression`, which had no stored
-baseline before this run) and KV offload was not applicable; the run is the
-stored last-good result.
-
-GSM8K scored 196 of 200 in each arm against the floor of 193. The teacher
-check scored 3,974 positions at a mean absolute logprob difference of 0.115
-nats (limit 0.150) with 4.0% top-one disagreement (limit 10%), the same in
-both arms. Chat scored 5,270 positions at 0.291 nats (limit 0.300) with
-7.5% disagreement, and long_context 1,024 positions at 0.002 nats. Greedy
-AR and DSpark answers were identical on all 35 requests. `verify_exact`
-matched AR at every forced position in the default configuration and in
-each verify-row configuration from 2 to 32 rows, and `kv_layout_equality`
-found native and BF16 KV storage equal bit for bit. Under the soak rule
-above, the DSpark server's judged host memory grew 154.6 MiB over its
-1,200-second C32 soak and the AR server's 136.9 MiB, against 512 MiB;
-device memory did not grow.
 
 ### Diagnostic taps
 

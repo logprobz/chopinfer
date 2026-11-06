@@ -1,5 +1,21 @@
 use super::*;
+use model_deepseek41_contract::execution_options::PREFILL_DMA_PRODUCER_INTERVALS;
 use runtime_bundle_sdk::prefill::{Boundary, encode};
+
+thread_local! {
+    /// Model options `create_with_services` adds to its record, for the
+    /// captures inside `with_options`.
+    static OPTIONS: std::cell::RefCell<Vec<(&'static str, serde_json::Value)>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// `run` with `options` added to every instance it creates.
+fn with_options<T>(options: &[(&'static str, serde_json::Value)], run: impl FnOnce() -> T) -> T {
+    OPTIONS.with(|o| *o.borrow_mut() = options.to_vec());
+    let out = run();
+    OPTIONS.with(|o| o.borrow_mut().clear());
+    out
+}
 
 fn create_sparse(host: &Rc<Host>) -> BundleInstanceV1 {
     create_with_services(host, HostServicesTableV1::new(Rc::clone(host)))
@@ -18,6 +34,11 @@ pub(super) fn create_with_services(
         serde_json::from_slice(&record[at + MODEL_OPTIONS_TAG_V1.len() + 4..]).unwrap();
     options["prefill_chunk_tokens"] = 8192.into();
     options["prefill_upper_skip"] = true.into();
+    OPTIONS.with(|extra| {
+        for (name, value) in extra.borrow().iter() {
+            options[*name] = value.clone();
+        }
+    });
     let options = serde_json::to_vec(&options).unwrap();
     record.truncate(at + MODEL_OPTIONS_TAG_V1.len());
     record.extend_from_slice(&(options.len() as u32).to_le_bytes());
@@ -769,14 +790,19 @@ fn exact_slice(original: &str, part: &str, quarter: u64, counts: Span) -> Result
         .parse::<u64>()
         .map_err(|_| "invalid row grid")?;
     let total = grid * step;
-    if !total.is_multiple_of(32) || quarter >= 4 {
+    if quarter >= 4 {
         return Err("invalid interval extent".into());
     }
-    let count = total / 4;
-    let begin = count * quarter;
+    // The transport's owner intervals: `ceil(total / 4)` rows, clipped.
+    let owner = total.div_ceil(4);
+    let begin = (owner * quarter).min(total);
+    let count = owner.min(total - begin);
+    if count == 0 || !count.is_multiple_of(step) {
+        return Err("invalid interval extent".into());
+    }
     let expected_header = old_header.replacen(
         &format!("{dimension}: {grid},"),
-        &format!("{dimension}: {},", grid / 4),
+        &format!("{dimension}: {},", count / step),
         1,
     );
     if new_header != expected_header {
@@ -830,4 +856,98 @@ fn exact_slice(original: &str, part: &str, quarter: u64, counts: Span) -> Result
         }
     }
     Ok(())
+}
+
+/// The rows of a launch's row grid.
+fn grid_rows(line: &str) -> u64 {
+    line.split_once("grid_x: ")
+        .and_then(|(_, rest)| rest.split(',').next())
+        .and_then(|rows| rows.parse().ok())
+        .expect("a row grid")
+}
+
+/// With `prefill_dma_producer_intervals`, the MoE producer before every DMA
+/// call (512 rows or more) splits over the transport's owner intervals at
+/// any row count and at every layer, each part an exact slice of the
+/// unsplit launch; every other launch is unchanged. Without the DMA route
+/// the only change is the routed sum writing exactly its rows instead of
+/// the partial's capacity.
+#[test]
+fn producer_intervals_split_every_moe_call_at_any_row_count() {
+    use super::super::query_window::arguments;
+    let spans = super::super::shared_overlap::journal_spans;
+    let hidden = u64::from(FLASH.shape.hidden);
+    let on = [(PREFILL_DMA_PRODUCER_INTERVALS, true.into())];
+    for rows in [512, 1500, 2304, 3000, 8191, 8192] {
+        let default = capture(rows, Some(false));
+        let (reference, candidate) =
+            with_options(&on, || (capture(rows, Some(false)), capture(rows, None)));
+        assert_eq!(default.len(), reference.len(), "rows={rows}");
+        let mut narrowed = 0;
+        for (before, after) in default.iter().zip(&reference) {
+            if before == after {
+                continue;
+            }
+            assert!(producer(before) && producer(after), "rows={rows}: {after}");
+            let (old, new) = (arguments(before), arguments(after));
+            assert_eq!(old.len(), new.len());
+            for (at, (a, b)) in old.iter().zip(&new).enumerate() {
+                if at == 5 {
+                    let (whole, exact) = (spans(a), spans(b));
+                    assert_eq!(
+                        exact,
+                        vec![(whole[0].0, whole[0].1, grid_rows(after) * hidden * 4)]
+                    );
+                } else {
+                    assert_eq!(a, b, "rows={rows}: argument {at} of {after}");
+                }
+            }
+            assert_eq!(
+                before.split_once(" [").unwrap().0,
+                after.split_once(" [").unwrap().0
+            );
+            narrowed += 1;
+        }
+        let calls = reference
+            .iter()
+            .filter(|line| producer(line) && grid_rows(line) >= 512)
+            .count();
+        assert!(
+            calls >= 20 * 4,
+            "rows={rows}: {calls} producers before DMA calls"
+        );
+        assert_eq!(
+            split_producers(&reference, &candidate).unwrap(),
+            calls,
+            "rows={rows}"
+        );
+        if rows == 8192 {
+            assert_eq!(narrowed, 0);
+            assert_eq!(calls, 36 * 4);
+        } else {
+            assert!(narrowed >= 20 * 4, "rows={rows}");
+        }
+        let before = compute(&reference)
+            .into_iter()
+            .filter(|line| !consumer(line) && !producer(line))
+            .collect::<Vec<_>>();
+        let after = compute(&candidate)
+            .into_iter()
+            .filter(|line| !consumer(line) && !producer(line))
+            .collect::<Vec<_>>();
+        let unsplit = compute(&capture(rows, None))
+            .into_iter()
+            .filter(|line| !consumer(line) && !producer(line))
+            .map(|line| line.to_owned())
+            .collect::<Vec<_>>();
+        assert_eq!(before, after, "rows={rows}");
+        assert_eq!(
+            after
+                .iter()
+                .map(|line| line.to_string())
+                .collect::<Vec<_>>(),
+            unsplit,
+            "rows={rows}"
+        );
+    }
 }

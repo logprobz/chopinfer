@@ -4,7 +4,10 @@
 //!
 //! Admitted only where every rank's launch immediately before the call is
 //! the MoE route-row sum with its shared expert addend, sized to the call's
-//! rows and writing exactly the call's partial rows. Each interval's launch
+//! rows and writing exactly the call's partial rows, and the call's rows are
+//! a multiple of 32 unless `prefill_dma_producer_intervals` admits every
+//! count. The intervals are the transport's: `ceil(rows / 4)` rows per
+//! owner, clipped at the end. Each interval's launch
 //! keeps the original's symbol and arguments, with its row views narrowed
 //! to the interval, its live count read from the prefill count table and
 //! one block per token as before. The sum computes every token from that
@@ -68,10 +71,11 @@ impl Producers {
         flags: &[bool],
     ) -> Result<Option<Self>, String> {
         let rows = call.rows;
+        let any_rows = instance.config.shape.prefill_dma_producer_intervals;
         if !crate::ops::dma_produce_requested()
             || call.embedding
             || call.sends.len() != 4
-            || !rows.is_multiple_of(32)
+            || !(any_rows || rows.is_multiple_of(32))
             || instance.prefill_counts.len() != 4
             || producers.len() != 4
             || flags.len() != 4
@@ -80,7 +84,7 @@ impl Producers {
             return Ok(None);
         }
         let geometry = instance.config.shape.geometry;
-        let owner_rows = rows / 4;
+        let owner_rows = rows.div_ceil(4);
         let mut launches = Vec::new();
         for (rank, launch) in producers.iter().enumerate() {
             let Some(layout) = crate::Kernels::prefill_dma_producer(&launch.symbol, geometry)
@@ -114,9 +118,12 @@ impl Producers {
             }
             let mut slices = Vec::new();
             for owner in (1..=4).map(|step| (rank + step) % 4) {
-                let begin = owner as u32 * owner_rows;
-                let Some(part) =
-                    narrow(instance, rank, launch, &layout, partial, begin, owner_rows)?
+                let begin = (owner as u32 * owner_rows).min(rows);
+                let count = owner_rows.min(rows - begin);
+                if count == 0 {
+                    return Ok(None);
+                }
+                let Some(part) = narrow(instance, rank, launch, &layout, partial, begin, count)?
                 else {
                     return Ok(None);
                 };

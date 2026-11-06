@@ -136,8 +136,7 @@ const PARALLEL_FANOUT_BYTES: usize = 8 << 20;
 
 /// `CHOPINFER_MAPPED_FANOUT_COPIERS`: how many threads, 1 (the default) to
 /// 16, copy a prepared gather's fanout, the other ranks' copies of a large
-/// leader's rows ([`copy_fanout`]); anything else keeps the default. At a
-/// 2890-row DeepSeek prefill a TP4 layer's fanout is about 52 MiB.
+/// leader's rows ([`copy_fanout`]); anything else keeps the default.
 fn configured_copiers(value: Option<std::ffi::OsString>) -> usize {
     value
         .and_then(|value| value.to_str()?.parse::<usize>().ok())

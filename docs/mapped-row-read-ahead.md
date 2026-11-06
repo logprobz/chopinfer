@@ -175,8 +175,8 @@ gathers that used them. Routes, reads and bytes stay the same. On
 a row, a warm page cache, a shared build host) spent 7.8, 14.5 and 20.1 ms
 on the leading rank's reads at 1536, 2890 and 4096 prefill rows, 2.3 ms
 zeroing by default, and
-0.7, 1.7 and 2.5 ms copying the fanout on one thread (0.4, 1.3 and 2.1 ms
-on eight). CPU evidence only; served step time decides adoption.
+0.7, 1.7 and 2.5 ms copying the other three ranks' 28, 52 and 74 MiB of
+fanout on one thread (0.4, 1.3 and 2.1 ms on eight). CPU evidence only; served step time decides adoption.
 
 Cold-row experiments must keep async read-ahead enabled. The shared defaults
 already enable it; `CHOPINFER_MAPPED_ASYNC_READ_AHEAD=1` makes the setting

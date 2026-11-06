@@ -15,6 +15,11 @@ const SHAPES: &[(u32, u32, u32)] = &[
     (5120, 15360, 1),
 ];
 
+/// The DSpark main projection, whose served baseline is the generic fold.
+fn is_main(n: u32, k: u32) -> bool {
+    (n, k) == (5120, 15360)
+}
+
 struct Case {
     entry: Entry,
     ranks: u32,
@@ -52,17 +57,18 @@ fn configured(value: Value) -> LabResult<Case> {
         count("ranks")?,
     );
     let (first, last) = (count("first")?, count("last")?);
+    // The ordinary prefill wrapper keeps an exact compact row at 128. The
+    // DSpark main projection bypasses that wrapper, so its lower band
+    // includes 128.
+    let lower = if is_main(n, k) { 128 } else { 127 };
     if ranks != 4
         || !SHAPES.contains(&(n, k, groups))
         || !matches!(stages, 2 | 3)
         || first > last
-        || !((65..=127).contains(&first) && last <= 127
+        || !((65..=lower).contains(&first) && last <= lower
             || (129..=511).contains(&first) && last <= 511)
     {
         return Err("range case is outside the TP4 candidate bands or matched shapes".into());
-    }
-    if (n, k) == (5120, 15360) && first < 129 {
-        return Err("DSpark main projection currently qualifies only the upper band".into());
     }
     let neighbors = value["neighbors"]
         .as_bool()
@@ -136,7 +142,7 @@ fn calls(
     rows: u32,
     buffers: &[Buffers<View>; 3],
 ) -> LabResult<[Vec<Launch>; 3]> {
-    let baseline = if (case.entry.base.query.n, case.entry.base.query.k) == (5120, 15360) {
+    let baseline = if is_main(case.entry.base.query.n, case.entry.base.query.k) {
         // DSpark Prepared::main uses the generic fold above its small-row
         // capacity. Comparing against the prefill wrapper would miss that gap.
         let mut b = buffers[0];
@@ -204,6 +210,20 @@ fn range_configuration_covers_bands_and_neighbours() {
     let mut wrong = value(65, 127);
     wrong["ranks"] = json!(1);
     assert!(configured(wrong).is_err());
+
+    let main = |first, last| {
+        json!({"n":5120,"k":15360,"groups":1,"stages":3,"ranks":4,
+               "first":first,"last":last,"neighbors":true})
+    };
+    for (first, last, expected) in [(65, 128, 66), (65, 96, 34), (97, 128, 34), (129, 511, 385)] {
+        let case = configured(main(first, last)).unwrap();
+        assert_eq!(case.entry.stages, 3);
+        assert_eq!(case.rows, (first - 1..=last + 1).collect::<Vec<_>>());
+        assert_eq!(case.rows.len(), expected);
+    }
+    for (first, last) in [(64, 128), (65, 129), (128, 129), (129, 512)] {
+        assert!(configured(main(first, last)).is_err());
+    }
 
     let case = configured(json!({"n":5120,"k":15360,"groups":1,"stages":2,"ranks":4,
                                 "first":192,"last":192,"neighbors":true}))
@@ -290,7 +310,11 @@ fn range_bitwise_gpu() {
                 .map(|arm| s.capture(|stream| issue(s, &arena, &functions, arm, stream)))
                 .collect::<LabResult<Vec<_>>>()?;
             let mut live_rows = vec![rows, rows / 2];
-            live_rows.extend([127, 128, 129].into_iter().filter(|&n| n < rows));
+            live_rows.extend(
+                [32, 33, 64, 65, 127, 128, 129]
+                    .into_iter()
+                    .filter(|&n| n < rows),
+            );
             live_rows.extend([0, rows]);
             let mut comparisons = 0;
             for bad in [false, true] {
@@ -382,4 +406,303 @@ fn range_timing_gpu() {
         println!("compact_range_timing_complete {}", json!({"cases":completed,"serving_enabled":false}));
         Ok(())
     }).unwrap();
+}
+
+/// The served generic fold of the main projection, which `Prepared::main`
+/// launches above its small-row capacity outside the compact ranges.
+const GENERIC: &str = "chop_deepseek41_mxfp8_fold_m8192_n5120_k15360_g1_f32_v2_packed_v1";
+
+/// The stage-2 main projection case's entry and its stage-3 sibling.
+fn stage_entries(case: &Case) -> LabResult<[Entry; 2]> {
+    let q = case.entry.base.query;
+    if !is_main(q.n, q.k) || case.entry.stages != 2 {
+        return Err("the stage pair names the DSpark main projection at stage 2".into());
+    }
+    let other = family::entries()
+        .into_iter()
+        .find(|e| e.base.query == q && e.stages == 3)
+        .ok_or("missing the stage-3 compact entry")?;
+    Ok([case.entry.clone(), other])
+}
+
+/// The generic fold as `dspark_main::prepare` prepares its fallback: at the
+/// query's capacity over packed weights.
+fn stage_baseline(case: &Case) -> LabResult<kernel_core::backend::Prepared<Buffers<View>>> {
+    let q = case.entry.base.query;
+    registration::register(Sm120::new(), &FLASH, case.ranks)?
+        .with_packed_fold_weights()
+        .mxfp8_fold_gemm(&q, Need::rows(q.m_capacity))
+        .map_err(|e| e.to_string())
+}
+
+/// The generic fold and both compact stages at `rows`, each over packed
+/// weights into its own bank, refusing any arm whose symbols differ from
+/// the served ones.
+fn stage_arms(
+    baseline: &kernel_core::backend::Prepared<Buffers<View>>,
+    stages: &[Entry; 2],
+    rows: u32,
+    banks: &[Buffers<View>; 3],
+) -> LabResult<[Vec<Launch>; 3]> {
+    let base = baseline
+        .launches(&banks[0], View::EMPTY, Counts::rows(rows))
+        .map_err(|e| e.to_string())?;
+    if base.len() != 1 || base[0].symbol != GENERIC {
+        return Err(format!(
+            "rows={rows}: the baseline is not the served generic fold"
+        ));
+    }
+    let compact = |index: usize| -> LabResult<Vec<Launch>> {
+        let e = &stages[index];
+        let calls = Sm120::new()
+            .with_mxfp8_prefill(e.base.clone())
+            .with_mxfp8_prefill_compact(e.clone(), rows)
+            .with_packed_fold_weights()
+            .mxfp8_prefill_gemm(&e.base.query, Need::rows(rows))
+            .map_err(|e| e.to_string())?
+            .launches(&banks[index + 1], View::EMPTY, Counts::rows(rows))
+            .map_err(|e| e.to_string())?;
+        let expected = [
+            e.admission_symbol(),
+            kernels_sm120::gemm::mxfp8_fold_packed::symbol(&e.symbol(Entry::tile(rows))),
+        ];
+        if calls.iter().map(|c| &c.symbol).ne(expected.iter()) {
+            return Err(format!(
+                "rows={rows} stages={}: unexpected compact launches",
+                e.stages
+            ));
+        }
+        Ok(calls)
+    };
+    Ok([base, compact(0)?, compact(1)?])
+}
+
+/// The bundle cubins a pair lab loaded, by name, and the function of each
+/// symbol it launches.
+type ServedFunctions = (
+    BTreeMap<&'static str, runtime_cuda::Module>,
+    BTreeMap<String, Function>,
+);
+
+/// Functions of `ops` from the bundle's own cubins, admission included, so
+/// every timed launch is a served cubin's. The modules stay with the caller.
+fn served_functions(s: &Session, ops: &[Launch]) -> LabResult<ServedFunctions> {
+    let mut modules = BTreeMap::new();
+    let mut out = BTreeMap::new();
+    for op in ops {
+        if out.contains_key(&op.symbol) {
+            continue;
+        }
+        let (name, bytes) = fold_cubin_for_symbol(&op.symbol)
+            .ok_or_else(|| format!("no served cubin holds {}", op.symbol))?;
+        if !modules.contains_key(name) {
+            modules.insert(name, s.load_cubin(bytes)?);
+        }
+        let f = modules[name]
+            .function(&op.symbol)
+            .map_err(|e| e.to_string())?;
+        if op.plan.dynamic_shared_bytes > 0 {
+            f.set_max_dynamic_shared_memory(op.plan.dynamic_shared_bytes)
+                .map_err(|e| e.to_string())?;
+        }
+        out.insert(op.symbol.clone(), f);
+    }
+    Ok((modules, out))
+}
+
+/// The device's enforced power limit and SM clock.
+fn telemetry(s: &Session) -> LabResult<Value> {
+    let output = std::process::Command::new("nvidia-smi")
+        .args([
+            "--query-gpu=enforced.power.limit,clocks.sm",
+            "--format=csv,noheader,nounits",
+            "--id",
+            s.metadata["uuid"]
+                .as_str()
+                .ok_or("missing device identity")?,
+        ])
+        .output()
+        .map_err(|e| e.to_string())?;
+    if !output.status.success() {
+        return Err("GPU telemetry query failed".into());
+    }
+    let text = String::from_utf8(output.stdout).map_err(|e| e.to_string())?;
+    let values = text
+        .trim()
+        .split(',')
+        .map(|v| v.trim().parse::<f64>().map_err(|e| e.to_string()))
+        .collect::<LabResult<Vec<_>>>()?;
+    if values.len() != 2 || values.iter().any(|v| !v.is_finite() || *v <= 0.0) {
+        return Err("GPU power and clock telemetry is unavailable".into());
+    }
+    Ok(json!({"enforced_power_w": values[0], "sm_mhz": values[1]}))
+}
+
+/// The stage pair plans every count of the main projection's lower band
+/// with the served symbols, each in a bundle cubin, and no workspace.
+#[test]
+fn range_stage_pair_plans_served_symbols() {
+    let case = configured(json!({"n":5120,"k":15360,"groups":1,"stages":2,"ranks":4,
+                                "first":65,"last":128,"neighbors":true}))
+    .unwrap();
+    let stages = stage_entries(&case).unwrap();
+    assert_eq!(stages.each_ref().map(|e| e.stages), [2, 3]);
+    let baseline = stage_baseline(&case).unwrap();
+    for &rows in &case.rows {
+        let mut arena = Arena::new(None);
+        let size = case.entry.base.bytes(1);
+        let weights = [
+            arena.filled(size.weights, 0).unwrap(),
+            arena.filled(size.weight_scales, 0).unwrap(),
+        ];
+        let banks = banks(&mut arena, &case.entry, rows, weights).unwrap();
+        let arms = stage_arms(&baseline, &stages, rows, &banks).unwrap();
+        for call in arms.iter().flatten() {
+            call.plan.validate_geometry().unwrap();
+            assert_eq!(call.plan.workspace_bytes, 0);
+            assert!(
+                fold_cubin_for_symbol(&call.symbol).is_some(),
+                "{}",
+                call.symbol
+            );
+        }
+    }
+    let case = configured(json!({"n":5120,"k":15360,"groups":1,"stages":3,"ranks":4,
+                                "first":65,"last":128,"neighbors":true}))
+    .unwrap();
+    assert!(stage_entries(&case).is_err());
+}
+
+/// The served generic fold against both compact stages, and stage 2
+/// against stage 3, at every count of a stage-2 main projection case, on
+/// two idle GPUs in turn within five minutes. Each count first compares
+/// every output and status byte of the three arms, then times seven pairs
+/// of CUDA-event rounds: the baseline's A/A, the baseline against each
+/// stage, stage 2 against stage 3, an A/A of each stage and a closing
+/// baseline A/A, then compares again. Weights are packed and uploaded once
+/// per device and each served module loads once.
+#[test]
+#[ignore = "pair-lab: CHOPINFER_DEEPSEEK41_COMPACT_RANGE and two idle GPUs, at most five minutes"]
+fn range_stage_pair_gpu() {
+    use std::time::{Duration, Instant};
+    let case = from_env().unwrap();
+    let stages = stage_entries(&case).unwrap();
+    let baseline = stage_baseline(&case).unwrap();
+    let start = Instant::now();
+    let deadline = start + Duration::from_secs(280);
+    let q = case.entry.base.query;
+    let ran = kernel_harness::gpu_test_multi_with(kernel_harness::Cubins::NONE, 4 << 30, |sessions| {
+        if sessions.len() != 2 {
+            return Err("the stage pair runs on exactly two GPUs".into());
+        }
+        for s in sessions {
+            let initial = telemetry(s)?;
+            let mut arena = Arena::new(Some(s));
+            let size = case.entry.base.bytes(1);
+            let codes = seed(size.weights as usize, false, 901);
+            let packed = kernel_core::weight_transform::mxfp8_fold::Mxfp8FoldLayout {
+                groups: q.groups as usize,
+                n: q.n as usize,
+                k: q.k as usize,
+            }
+            .pack(&codes)
+            .map_err(|e| e.to_string())?;
+            let weights = [
+                arena.bytes(&packed)?,
+                arena.bytes(&seed(size.weight_scales as usize, true, 1901))?,
+            ];
+            let mut planned = Vec::new();
+            for &rows in &case.rows {
+                let mut dry = Arena::new(None);
+                let banks = banks(&mut dry, &case.entry, rows, weights)?;
+                planned.extend(stage_arms(&baseline, &stages, rows, &banks)?.into_iter().flatten());
+            }
+            let (_modules, functions) = served_functions(s, &planned)?;
+            let keep = arena.next;
+            let mut results = Vec::new();
+            for &rows in &case.rows {
+                if Instant::now() >= deadline {
+                    return Err("stage-pair time budget exhausted; no complete result".into());
+                }
+                let state = telemetry(s)?;
+                if state["enforced_power_w"] != initial["enforced_power_w"] {
+                    return Err("power limit changed; pair-lab job is void".into());
+                }
+                let banks = banks(&mut arena, &case.entry, rows, weights)?;
+                arena.write(
+                    banks[0].activations,
+                    &seed(banks[0].activations.bytes as usize, false, 1771),
+                )?;
+                arena.write(
+                    banks[0].activation_scales,
+                    &seed(banks[0].activation_scales.bytes as usize, true, 2771),
+                )?;
+                let arms = stage_arms(&baseline, &stages, rows, &banks)?;
+                let graphs = arms
+                    .iter()
+                    .map(|arm| s.capture(|stream| issue(s, &arena, &functions, arm, stream)))
+                    .collect::<LabResult<Vec<_>>>()?;
+                let check = || -> LabResult<()> {
+                    for (graph, bank) in graphs.iter().zip(&banks) {
+                        reset(&arena, bank, rows, rows, false)?;
+                        graph.launch(&s.stream).map_err(|e| e.to_string())?;
+                    }
+                    for bank in &banks[1..] {
+                        equality(&arena, &banks[0], bank, rows, rows, false)?;
+                    }
+                    Ok(())
+                };
+                check()?;
+                let pair = |x: usize, y: usize| {
+                    timing::pair(s, |arm, stream| {
+                        graphs[if arm == 0 { x } else { y }]
+                            .launch(stream)
+                            .map_err(|e| e.to_string())
+                    })
+                };
+                let aa_base_before = pair(0, 0)?;
+                let base_s2 = pair(0, 1)?;
+                let base_s3 = pair(0, 2)?;
+                let s2_s3 = pair(1, 2)?;
+                let aa_s2 = pair(1, 1)?;
+                let aa_s3 = pair(2, 2)?;
+                let aa_base_after = pair(0, 0)?;
+                check()?;
+                let record = json!({"device":s.ordinal,"n":q.n,"k":q.k,"groups":q.groups,
+                    "ranks":case.ranks,"rows":rows,"bitwise":true,"packed_twin":true,
+                    "serving_enabled":false,"gpu":state,
+                    "symbols":arms.iter().map(|arm|arm.iter().map(|c|&c.symbol).collect::<Vec<_>>()).collect::<Vec<_>>(),
+                    "aa_base_before":aa_base_before,"base_s2":base_s2,"base_s3":base_s3,
+                    "s2_s3":s2_s3,"aa_s2":aa_s2,"aa_s3":aa_s3,"aa_base_after":aa_base_after});
+                println!("compact_range_stage_pair {record}");
+                results.push(record);
+                arena.buffers.retain(|&handle, _| handle <= keep);
+                arena.next = keep;
+            }
+            let end = telemetry(s)?;
+            if end["enforced_power_w"] != initial["enforced_power_w"] {
+                return Err("power limit changed; pair-lab job is void".into());
+            }
+            s.receipt(
+                "deepseek41-compact-range-stage-pair",
+                BTreeMap::from([
+                    ("case".into(), json!({"n":q.n,"k":q.k,"groups":q.groups,"stages":[2,3],
+                        "ranks":case.ranks,"first":case.first,"last":case.last,"rows":case.rows})),
+                    ("results".into(), json!(results)),
+                    ("gpu_start".into(), initial),
+                    ("gpu_end".into(), end),
+                    ("seconds".into(), json!(start.elapsed().as_secs_f64())),
+                ]),
+            )?;
+        }
+        Ok(())
+    })
+    .unwrap();
+    assert!(ran.is_some(), "the two-GPU stage pair must run");
+    assert!(start.elapsed() < Duration::from_secs(295));
+    println!(
+        "compact_range_stage_pair_complete {}",
+        json!({"cases":case.rows.len(),"devices":2,"first":case.first,"last":case.last,
+            "seconds":start.elapsed().as_secs_f64(),"serving_enabled":false})
+    );
 }

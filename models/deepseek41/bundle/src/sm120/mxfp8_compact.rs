@@ -26,20 +26,21 @@ pub fn stages(g: &Geometry, q: Mxfp8FoldGemmQuery, rows: u32) -> Option<u32> {
     row.knobs["stages"].count()
 }
 
-/// The `prefill_compact_dense_rows` candidate's site: one contiguous row
-/// range per TP4 prefill projection, read only with the option on.
+/// The `prefill_compact_dense_rows` candidate's site: the row ranges of each
+/// TP4 prefill projection, read only with the option on.
 pub const RANGE_SITE: &str = "dense_prefill.compact_range.prefill";
 
-/// The row range and compact stages the candidate site admits for `q` at
-/// `ranks`, if any.
-pub fn range(
+/// The row ranges, each with its compact stages, that the candidate site
+/// admits for `q` at `ranks`, in row order. The table refuses overlapping
+/// rows of one projection.
+pub fn ranges(
     g: &Geometry,
     ranks: u32,
     q: Mxfp8FoldGemmQuery,
-) -> Result<Option<(std::ops::RangeInclusive<u32>, u32)>, String> {
+) -> Result<Vec<(std::ops::RangeInclusive<u32>, u32)>, String> {
     use model_deepseek41_contract::tuning::{Family, table};
     let Some(table) = table(g, Family::DensePrefill) else {
-        return Ok(None);
+        return Ok(Vec::new());
     };
     let key: std::collections::BTreeMap<String, u32> = [
         ("n", q.n),
@@ -49,50 +50,46 @@ pub fn range(
     ]
     .map(|(name, value)| (name.to_string(), value))
     .into();
-    let mut rows = table.rows().iter().filter(|row| {
-        row.key.op == RANGE_SITE
-            && row.key.weights == "mxfp8"
-            && row.key.shape == key
-            && row.key.bucket == q.m_capacity
-    });
-    let Some(row) = rows.next() else {
-        return Ok(None);
-    };
-    if rows.next().is_some() {
-        return Err(format!(
-            "{}: one contiguous compact range per projection",
-            row.key
-        ));
-    }
-    let [first, last] = row
-        .key
-        .rows
-        .ok_or_else(|| format!("{}: the compact range has no rows", row.key))?;
-    if row.schedule != "prefill_tiles"
-        || row.knobs.get("matrix_fetch").and_then(|v| v.flag()) != Some(false)
-        || row.knobs.get("tile_rows").and_then(|v| v.count()) != Some(Entry::tile(first))
-        || Entry::tile(first) != Entry::tile(last)
-    {
-        return Err(format!("{}: unsupported compact range recipe", row.key));
-    }
-    let stages = row
-        .knobs
-        .get("stages")
-        .and_then(|v| v.count())
-        .ok_or_else(|| format!("{}: the compact range has no stages", row.key))?;
-    Ok(Some((first..=last, stages)))
+    table
+        .rows()
+        .iter()
+        .filter(|row| {
+            row.key.op == RANGE_SITE
+                && row.key.weights == "mxfp8"
+                && row.key.shape == key
+                && row.key.bucket == q.m_capacity
+        })
+        .map(|row| {
+            let [first, last] = row
+                .key
+                .rows
+                .ok_or_else(|| format!("{}: the compact range has no rows", row.key))?;
+            if row.schedule != "prefill_tiles"
+                || row.knobs.get("matrix_fetch").and_then(|v| v.flag()) != Some(false)
+                || row.knobs.get("tile_rows").and_then(|v| v.count()) != Some(Entry::tile(first))
+                || Entry::tile(first) != Entry::tile(last)
+            {
+                return Err(format!("{}: unsupported compact range recipe", row.key));
+            }
+            let stages = row
+                .knobs
+                .get("stages")
+                .and_then(|v| v.count())
+                .ok_or_else(|| format!("{}: the compact range has no stages", row.key))?;
+            Ok((first..=last, stages))
+        })
+        .collect()
 }
 
-/// Registers each prefill projection's candidate range on the shared
+/// Registers each prefill projection's candidate ranges on the shared
 /// compact wrapper, which plans each count as it launches. The measured
 /// exact rows keep precedence inside a range.
 pub fn register_range(mut backend: Sm120, g: &Geometry, ranks: u32) -> Result<Sm120, String> {
     for base in super::prefill_entries(g, ranks)? {
-        let Some((rows, stages)) = range(g, ranks, base.query)? else {
-            continue;
-        };
-        let entry = Entry::new(base, stages).map_err(|e| e.to_string())?;
-        backend = backend.with_mxfp8_prefill_compact_range(entry, rows);
+        for (rows, stages) in ranges(g, ranks, base.query)? {
+            let entry = Entry::new(base.clone(), stages).map_err(|e| e.to_string())?;
+            backend = backend.with_mxfp8_prefill_compact_range(entry, rows);
+        }
     }
     Ok(backend)
 }
@@ -224,14 +221,14 @@ mod tests {
     /// topology launches as before, with the same layout and guarantees.
     #[test]
     fn candidate_ranges_change_only_their_counts() {
-        let mut ranged = std::collections::BTreeSet::new();
+        let mut ranged = std::collections::BTreeMap::new();
         for ranks in [1, 2, 4] {
             let old = super::super::register(Sm120::new(), &FLASH, ranks).unwrap();
             let new = super::super::register(Sm120::new(), &FLASH, ranks).unwrap();
             let new = register_range(new, &FLASH, ranks).unwrap();
             for base in super::super::prefill_entries(&FLASH, ranks).unwrap() {
                 let q = base.query;
-                let range = range(&FLASH, ranks, q).unwrap();
+                let ranges = ranges(&FLASH, ranks, q).unwrap();
                 let a = old
                     .mxfp8_prefill_gemm(&q, Need::rows(q.m_capacity))
                     .unwrap();
@@ -254,17 +251,20 @@ mod tests {
                     status: v(7, size.status),
                     status_row_offset: 0,
                 };
-                let counts: Vec<u32> = if range.is_some() {
-                    (1..=q.m_capacity).collect()
+                let counts: Vec<u32> = if ranges.is_empty() {
+                    vec![
+                        1, 64, 1152, 1153, 1280, 1500, 2048, 2304, 2369, 2944, 3072, 3200, 3201,
+                        8192,
+                    ]
                 } else {
-                    vec![1, 64, 1408, 1409, 1500, 2048, 2304, 3071, 3072, 8192]
+                    (1..=q.m_capacity).collect()
                 };
                 for count in counts {
                     let rows = Counts::rows(count);
                     let before = a.launches(&views, View::EMPTY, rows).unwrap();
                     let after = b.launches(&views, View::EMPTY, rows).unwrap();
-                    match &range {
-                        Some((band, stages)) if band.contains(&count) => {
+                    match ranges.iter().find(|(band, _)| band.contains(&count)) {
+                        Some((band, stages)) => {
                             assert_eq!(*stages, 2);
                             let lab = Entry::new(base.clone(), *stages)
                                 .unwrap()
@@ -282,9 +282,12 @@ mod tests {
                                 assert_eq!(tag.class, kernel_core::route::RouteClass::Fast);
                                 assert!(tag.admitted.iter().any(|r| r.contains(&count)));
                             }
-                            ranged.insert((q.n, q.k, q.groups));
+                            ranged
+                                .entry((q.n, q.k, q.groups))
+                                .or_insert_with(std::collections::BTreeSet::new)
+                                .insert((*band.start(), *band.end()));
                         }
-                        _ => assert_eq!(before, after, "ranks={ranks} n{} rows={count}", q.n),
+                        None => assert_eq!(before, after, "ranks={ranks} n{} rows={count}", q.n),
                     }
                 }
             }
@@ -292,10 +295,10 @@ mod tests {
         assert_eq!(
             ranged,
             [
-                (512, 5120, 1),
-                (576, 5120, 1),
-                (1024, 4096, 2),
-                (1280, 5120, 1)
+                ((512, 5120, 1), [(1409, 3071)].into()),
+                ((576, 5120, 1), [(1409, 3071)].into()),
+                ((1024, 4096, 2), [(1409, 3071)].into()),
+                ((1280, 5120, 1), [(1409, 3071)].into()),
             ]
             .into()
         );

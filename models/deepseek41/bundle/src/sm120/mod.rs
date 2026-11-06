@@ -1827,10 +1827,11 @@ mod one_row_twin_lines {
 #[cfg(test)]
 mod compact_ranges {
     /// With the `prefill_compact_dense_rows` candidate on, the served TP4
-    /// backend launches at every sampled count of a candidate range exactly
-    /// what the lab's compact arm launches (`compact_calls` in
-    /// `lab/tests/sm120/prefill_tail_folds.rs`): the exact-row compact plan
-    /// of that count over packed weights, in place of the tail partition.
+    /// backend launches at every sampled count of a candidate range (its
+    /// ends and the live counts inside it) exactly what the lab's compact arm
+    /// launches (`compact_calls` in `lab/tests/sm120/prefill_tail_folds.rs`):
+    /// the exact-row compact plan of that count over packed weights, in
+    /// place of the tail partition.
     #[test]
     fn served_compact_ranges_launch_the_labs_packed_compact_plans() {
         use super::mxfp8_fold::compact;
@@ -1842,17 +1843,17 @@ mod compact_ranges {
             .unwrap()
             .with_prefill_compact_dense_rows(true);
         let kernels = crate::Kernels::new(&shape).unwrap();
-        let mut checked = 0;
+        let (mut bands, mut checked) = (0, 0);
         for base in super::mxfp8_fold::prefill_entries(&FLASH, 4).unwrap() {
             let q = base.query;
-            let Some((band, stages)) = compact::range(&FLASH, 4, q).unwrap() else {
+            let ranges = compact::ranges(&FLASH, 4, q).unwrap();
+            if ranges.is_empty() {
                 continue;
-            };
+            }
             let served = kernels
                 .backend
                 .mxfp8_prefill_gemm(&q, kernel_core::backend::Need::rows(q.m_capacity))
                 .unwrap();
-            let entry = Compact::new(base.clone(), stages).unwrap();
             let size = base.bytes(q.m_capacity);
             let v = |handle, bytes| kernel_core::backend::View { handle, bytes };
             let views = kernel_core::mxfp8_gemm::Mxfp8FoldGemmBuffers {
@@ -1865,33 +1866,43 @@ mod compact_ranges {
                 status: v(7, size.status),
                 status_row_offset: 0,
             };
-            for count in [*band.start(), 1500, 2047, 2049, 2304, 2880, *band.end()] {
-                let lab = kernels_sm120::backend::Sm120::new()
-                    .with_mxfp8_prefill(base.clone())
-                    .with_mxfp8_prefill_compact(entry.clone(), count)
-                    .with_packed_fold_weights()
-                    .mxfp8_prefill_gemm(&q, kernel_core::backend::Need::rows(q.m_capacity))
-                    .unwrap();
-                let rows = kernel_core::backend::Counts::rows(count);
-                let launched = served
-                    .launches(&views, kernel_core::backend::View::EMPTY, rows)
-                    .unwrap();
-                // The admission launch reads no weights; the tiles read packed ones.
-                assert!(
-                    launched
+            for (band, stages) in ranges {
+                bands += 1;
+                let entry = Compact::new(base.clone(), stages).unwrap();
+                let mut counts = vec![*band.start(), *band.end()];
+                counts.extend(
+                    [1500, 2047, 2049, 2304, 2880]
                         .iter()
-                        .any(|call| call.symbol.ends_with("_packed_v1"))
+                        .filter(|c| band.contains(c)),
                 );
-                assert_eq!(
-                    launched,
-                    lab.launches(&views, kernel_core::backend::View::EMPTY, rows)
-                        .unwrap(),
-                    "n{} rows={count}",
-                    q.n
-                );
-                checked += 1;
+                for count in counts {
+                    let lab = kernels_sm120::backend::Sm120::new()
+                        .with_mxfp8_prefill(base.clone())
+                        .with_mxfp8_prefill_compact(entry.clone(), count)
+                        .with_packed_fold_weights()
+                        .mxfp8_prefill_gemm(&q, kernel_core::backend::Need::rows(q.m_capacity))
+                        .unwrap();
+                    let rows = kernel_core::backend::Counts::rows(count);
+                    let launched = served
+                        .launches(&views, kernel_core::backend::View::EMPTY, rows)
+                        .unwrap();
+                    // The admission launch reads no weights; the tiles read packed ones.
+                    assert!(
+                        launched
+                            .iter()
+                            .any(|call| call.symbol.ends_with("_packed_v1"))
+                    );
+                    assert_eq!(
+                        launched,
+                        lab.launches(&views, kernel_core::backend::View::EMPTY, rows)
+                            .unwrap(),
+                        "n{} rows={count}",
+                        q.n
+                    );
+                    checked += 1;
+                }
             }
         }
-        assert_eq!(checked, 4 * 7);
+        assert_eq!((bands, checked), (4, 28));
     }
 }

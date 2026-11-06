@@ -71,12 +71,13 @@ fn tail_folds_preserve_prefill_outputs_and_committed_state() {
 }
 
 /// The four TP4 projections the `prefill_compact_dense_rows` candidate
-/// table admits, as their fold symbols spell them.
-const COMPACT_RANGE_SHAPES: [&str; 4] = [
-    "_n512_k5120_g1_",
-    "_n576_k5120_g1_",
-    "_n1280_k5120_g1_",
-    "_n1024_k4096_g2_",
+/// table admits, as their fold symbols spell them, each with its row ranges
+/// (the `dense_prefill.compact_range.prefill` rows).
+const COMPACT_RANGES: [(&str, &[std::ops::RangeInclusive<u64>]); 4] = [
+    ("_n512_k5120_g1_", &[1409..=3071]),
+    ("_n576_k5120_g1_", &[1409..=3071]),
+    ("_n1280_k5120_g1_", &[1409..=3071]),
+    ("_n1024_k4096_g2_", &[1409..=3071]),
 ];
 
 /// The launches of a prompt of `rows` rows and of one decode step after
@@ -122,16 +123,21 @@ fn stream_symbol(line: &str) -> (&str, &str) {
     (words.next().unwrap(), words.next().unwrap())
 }
 
-/// `lines` with each of the four projections' calls over all `rows` (its
+/// `lines` with each call of the `shapes` projections over all `rows` (its
 /// admit launch of `rows` CTAs, then its tiles and any tail folds on the
-/// same stream) replaced by one marker, and each replaced call's symbols.
-fn projection_calls(lines: &[String], rows: u64) -> (Vec<String>, Vec<Vec<String>>) {
+/// same stream) replaced by one marker, and each replaced call's shape and
+/// symbols.
+fn projection_calls(
+    lines: &[String],
+    rows: u64,
+    shapes: &[&'static str],
+) -> (Vec<String>, Vec<(&'static str, Vec<String>)>) {
     let mut out = Vec::new();
     let mut calls = Vec::new();
     let mut at = 0;
     while at < lines.len() {
         let (stream, symbol) = stream_symbol(&lines[at]);
-        let shape = COMPACT_RANGE_SHAPES.iter().find(|s| symbol.contains(*s));
+        let shape = shapes.iter().find(|s| symbol.contains(*s));
         let whole = lines[at].contains(&format!("grid_x: {rows},"));
         let (Some(shape), true, true) = (shape, symbol.ends_with("_admit_v1"), whole) else {
             out.push(lines[at].clone());
@@ -148,7 +154,7 @@ fn projection_calls(lines: &[String], rows: u64) -> (Vec<String>, Vec<Vec<String
             at += 1;
         }
         out.push(format!("launch {stream} projection{shape}rows{rows} "));
-        calls.push(call);
+        calls.push((*shape, call));
     }
     (out, calls)
 }
@@ -198,11 +204,12 @@ fn same_launches(what: &str, candidate: &[String], default: &[String]) {
     }
 }
 
-/// Inside the candidate's range (1409 to 3071 rows) each call of the four
-/// projections over the step's rows runs the compact entry in place of the
-/// full 128-row tiles and their exact-row tail folds; every other launch,
-/// every count outside the range, the measured exact compact row 2048 and
-/// the decode step after are unchanged.
+/// At a count inside a projection's ranges each call of that projection
+/// over the step's rows runs the compact entry in place of the full
+/// 128-row tiles and their exact-row tail folds; every other launch, the
+/// other projections' calls, every count outside all ranges, the measured
+/// exact compact row 2048 and the decode step after are unchanged. The
+/// counts hit each range end and each count a range leaves out.
 #[test]
 fn compact_range_replaces_only_the_admitted_projection_calls() {
     let mut ranged = 0;
@@ -214,7 +221,12 @@ fn compact_range_replaces_only_the_admitted_projection_calls() {
             &renumbered(&decode),
             &renumbered(&base_decode),
         );
-        if !(1409..=3071).contains(&rows) || rows == 2048 {
+        let shapes: Vec<&str> = COMPACT_RANGES
+            .iter()
+            .filter(|(_, ranges)| rows != 2048 && ranges.iter().any(|r| r.contains(&rows)))
+            .map(|(shape, _)| *shape)
+            .collect();
+        if shapes.is_empty() {
             same_launches(
                 &format!("prefill of {rows} rows"),
                 &renumbered(&prefill),
@@ -222,8 +234,8 @@ fn compact_range_replaces_only_the_admitted_projection_calls() {
             );
             continue;
         }
-        let (candidate, compact) = projection_calls(&prefill, rows);
-        let (default, partition) = projection_calls(&base_prefill, rows);
+        let (candidate, compact) = projection_calls(&prefill, rows, &shapes);
+        let (default, partition) = projection_calls(&base_prefill, rows, &shapes);
         same_launches(
             &format!("prefill of {rows} rows without the projection calls"),
             &renumbered(&candidate),
@@ -233,10 +245,13 @@ fn compact_range_replaces_only_the_admitted_projection_calls() {
         // marker can hold several calls: two launches (admit and tiles) per
         // compact call, and per default call two full-tile launches and two
         // per 64-row tail fold.
-        assert!(!compact.is_empty(), "rows={rows}");
+        let replaced: std::collections::BTreeSet<&str> =
+            compact.iter().map(|(shape, _)| *shape).collect();
+        assert_eq!(replaced, shapes.iter().copied().collect(), "rows={rows}");
         assert_eq!(compact.len(), partition.len(), "rows={rows}");
         let folds = 2 * rows.rem_euclid(128).div_ceil(64) as usize;
-        for (call, base) in compact.iter().zip(&partition) {
+        for ((shape, call), (base_shape, base)) in compact.iter().zip(&partition) {
+            assert_eq!(shape, base_shape, "rows={rows}");
             assert!(call.len() % 2 == 0, "rows={rows}: {call:?}");
             assert!(
                 call.iter()

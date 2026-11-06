@@ -100,7 +100,6 @@ PENDING = {
         'crates/kernels-sm120/cuda/gemm/decoded_balanced.cuh',
         'crates/kernels-sm120/cuda/gemm/decoded_tiles.cuh',
         'crates/kernels-sm120/cuda/gemm/encoder_gemm.cuh',
-        'crates/kernels-sm120/cuda/gemm/README.md',
         'crates/kernels-sm120/cuda/gemm/staged_tiles.cuh',
         'crates/kernels-sm120/cuda/gemm/strip_chains_ordered.cuh',
         'crates/kernels-sm120/cuda/gemm/strip_chains_stacked_ordered.cuh',

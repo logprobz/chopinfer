@@ -454,3 +454,63 @@ fn a_mixed_step_fails_streamed_as_batch_beside_the_dspark_candidates() {
 fn a_mixed_step_fails_streamed_as_batch_beside_the_early_dspark_plan() {
     assert_mixed_failures(true);
 }
+
+/// With diagnostic step logs, each step-shape record says whether its
+/// step's prefill was lowered while it issued (`streamed_lowering`): true
+/// for a miss (the first prompt's, of the short-prompt cache, and each new
+/// prefill structure's), false for a kept plan's or template's reuse, and
+/// false for every step with the option off, with and without the early
+/// begin and plan. The record's template counts show the reuse is a hit.
+#[test]
+fn step_shape_records_say_whether_the_prefill_was_streamed() {
+    use Then::*;
+    use model_deepseek41_contract::execution_options::DIAGNOSTIC_STEP_LOGS;
+    let steps = [
+        step(&[prefill(7, 8, 0, 512)], true, Commit),
+        step(&[prefill(8, 9, 0, 512)], true, Commit),
+        step(&[prefill(9, 10, 0, 600)], true, Commit),
+    ];
+    let schedule = Schedule {
+        verify_rows: 32,
+        widths: &[4; 8],
+        restored: &[],
+        steps: &steps,
+    };
+    let logs = (DIAGNOSTIC_STEP_LOGS, serde_json::Value::from(true));
+    let streamed = (PREFILL_STREAMED_LOWERING, true.into());
+    let early = [
+        (DSPARK_EARLY_PREFILL_ENGRAM, true.into()),
+        (DSPARK_EARLY_PREFILL_PLAN, true.into()),
+    ];
+    // Eight prompts, the first a miss, then a 512-row miss, its template's
+    // reuse by another request and a 600-row miss.
+    let on = [vec![true], vec![false; 7], vec![true, false, true]].concat();
+    for (options, expected) in [
+        (vec![logs.clone()], vec![false; 11]),
+        (vec![logs.clone(), streamed.clone()], on.clone()),
+        (with(&[logs.clone(), streamed.clone()], &early), on),
+    ] {
+        let arm = format!("{options:?}");
+        let run = schedule.run(&options);
+        let field = |marker: &str| -> Vec<&str> {
+            run.logs
+                .iter()
+                .filter_map(|line| line.find(marker).map(|at| &line[at + marker.len()..]))
+                .collect()
+        };
+        let records: Vec<bool> = field("\"streamed_lowering\":")
+            .iter()
+            .map(|rest| rest.starts_with("true"))
+            .collect();
+        assert_eq!(records, expected, "{arm}");
+        let hits: Vec<u64> = field("\"prefill_templates\":")
+            .iter()
+            .map(|rest| {
+                let templates: serde_json::Value =
+                    serde_json::from_str(&rest[..=rest.find('}').unwrap()]).unwrap();
+                templates["hits"].as_u64().unwrap()
+            })
+            .collect();
+        assert_eq!(hits[8..], [0, 1, 1], "{arm}: the reuse is a template hit");
+    }
+}

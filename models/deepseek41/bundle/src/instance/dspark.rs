@@ -580,6 +580,7 @@ impl Instance {
             .iter()
             .filter(|input| input.rows.kind.drafts() > 0)
             .count();
+        let streamed = self.plans.streamed_launches();
         let mut result = self.dspark_with(
             |runtime, host| {
                 runtime
@@ -625,6 +626,7 @@ impl Instance {
             .metadata = None;
         if let (Ok(()), Some(mut times)) = (&result, times) {
             times.prefill_templates = Some(self.plans.template_state());
+            times.prefill_streamed = self.plans.streamed_launches() > streamed;
             let context = self.dspark.as_ref().expect("enabled drafter").diagnostic;
             let _ = self
                 .services

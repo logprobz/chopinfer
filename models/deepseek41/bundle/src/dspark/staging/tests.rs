@@ -315,6 +315,7 @@ fn run(shape: Shape, budget: u32, kept: Option<u32>) -> ResultCase {
     // The fake program neither begins nor plans its prefill early.
     assert_eq!(record["early_prefill_begin"], false);
     assert_eq!(record["early_prefill_plan"], false);
+    assert_eq!(record["streamed_lowering"], false);
     // Only an instance has prefill plan templates.
     assert!(record["prefill_templates"].is_null());
     assert!(record["micros"]["target"].is_u64());

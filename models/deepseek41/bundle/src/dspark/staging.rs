@@ -521,11 +521,14 @@ pub(crate) fn early_stagings() -> u64 {
 /// (`dspark_early_prefill_engram`), and a prefill planned while the drafter
 /// runs is `prefill_plan`, outside `target` (`dspark_early_prefill_plan`).
 /// The record also says whether the step's prefill began its gathers or
-/// planned early, and holds the prefill plan templates after the step.
+/// planned early, whether it was lowered while it issued
+/// (`prefill_streamed_lowering`), and holds the prefill plan templates
+/// after the step.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct PhaseTimes {
     pub prefill_began_early: bool,
     pub prefill_planned_early: bool,
+    pub prefill_streamed: bool,
     /// The instance's templates after the step; none outside an instance.
     pub prefill_templates: Option<PrefillTemplates>,
     pub catch_up_us: u64,
@@ -583,7 +586,7 @@ impl PhaseTimes {
             concat!(
                 "{{\"schema\":\"chopinfer.deepseek41.step-shape.v1\",",
                 "\"instance_id\":\"{}\",\"step_id\":\"{}\",\"items\":{},\"drafting\":{},",
-                "\"early_prefill_begin\":{},\"early_prefill_plan\":{},",
+                "\"early_prefill_begin\":{},\"early_prefill_plan\":{},\"streamed_lowering\":{},",
                 "\"prefill_templates\":{},",
                 "\"catch_up_items\":{},\"catch_up_rows\":{},\"bulk_passes\":{},",
                 "\"undrafted_ready\":{},\"undrafted_status_packets\":{},",
@@ -598,6 +601,7 @@ impl PhaseTimes {
             drafting,
             self.prefill_began_early,
             self.prefill_planned_early,
+            self.prefill_streamed,
             templates,
             self.catch_up_items,
             self.catch_up_rows,

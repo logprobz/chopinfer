@@ -306,7 +306,7 @@ them. A non-default value is unqualified.
 | `prefill_chunk_tokens` | `8192` | Guaranteed chunk ends: 0, 2048 or 8192 tokens. |
 | `prefill_plan_cache_plans` | `16` | Kept short-prompt plans, from 1 to 64; evict the least recently used plan when full. |
 | `prefill_plan_cache_verify` | `false` | Lower each cache hit and each reused plan template again and refuse a differing plan. |
-| `prefill_streamed_lowering` | `false` | Candidate: an upper-skip prefill that no kept plan or template serves lowers its body while it issues the parts already lowered, with the same launches and results, and keeps its plan once launched. A lowering failure after its first launch poisons the instance. Not yet measured. |
+| `prefill_streamed_lowering` | `false` | Candidate: an upper-skip prefill that no kept plan or template serves lowers its body while it issues the parts already lowered, with the same launches and results, and keeps its plan once launched. A lowering failure after its first launch poisons the instance. A DSpark step-shape record's `streamed_lowering` says whether its prefill was streamed. Not yet measured. |
 | `prefill_upper_skip` | `true` | Use upper-skip prefill; requires nonzero guaranteed chunk ends. |
 | `shared_overlap_max_rows` | `4294967295` | Largest graph bucket that overlaps shared-expert and eligible window-KV work. Positive values only; the default covers every admitted bucket. |
 | `text_config.candidate_topk_blocks` | `2048` | Candidate block pool, checked with index top-k and the partial newest block. |

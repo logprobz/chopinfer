@@ -89,6 +89,8 @@ pub(crate) struct Cache {
     /// Whether a plan no kept plan or template serves is lowered while it
     /// issues (`prefill_streamed_lowering`).
     streamed: bool,
+    /// The streamed launches that completed so far.
+    launched: Cell<u64>,
 }
 
 impl Cache {
@@ -114,6 +116,7 @@ impl Cache {
             evictions: Cell::new(0),
             templates: plan_templates::Templates::new(dspark && options.dspark_early_prefill_plan),
             streamed: options.prefill_streamed_lowering,
+            launched: Cell::new(0),
         }
     }
 
@@ -126,6 +129,12 @@ impl Cache {
     #[cfg(test)]
     pub(super) fn template_counts(&self) -> bundle_runtime::template::Counts {
         self.templates.counts()
+    }
+
+    /// The streamed launches that completed so far, which only grow, so a
+    /// step's record says whether its prefill was streamed.
+    pub(crate) fn streamed_launches(&self) -> u64 {
+        self.launched.get()
     }
 
     /// The prefill plan templates after a step, for its step-shape record.
@@ -228,6 +237,7 @@ impl Cache {
         engram: Option<super::super::prefill_engram::Plan>,
         pending: Pending,
     ) -> Rc<skip::Plan> {
+        self.launched.set(self.launched.get() + 1);
         match pending.keep {
             Keep::Short(key) => {
                 let plan = Rc::new(plan);

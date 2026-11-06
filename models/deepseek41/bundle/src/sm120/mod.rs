@@ -1903,6 +1903,6 @@ mod compact_ranges {
                 }
             }
         }
-        assert_eq!((bands, checked), (4, 28));
+        assert_eq!((bands, checked), (8, 36));
     }
 }

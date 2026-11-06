@@ -74,10 +74,10 @@ fn tail_folds_preserve_prefill_outputs_and_committed_state() {
 /// table admits, as their fold symbols spell them, each with its row ranges
 /// (the `dense_prefill.compact_range.prefill` rows).
 const COMPACT_RANGES: [(&str, &[std::ops::RangeInclusive<u64>]); 4] = [
-    ("_n512_k5120_g1_", &[1409..=3071]),
-    ("_n576_k5120_g1_", &[1409..=3071]),
-    ("_n1280_k5120_g1_", &[1409..=3071]),
-    ("_n1024_k4096_g2_", &[1409..=3071]),
+    ("_n512_k5120_g1_", &[1153..=3071, 3073..=3199]),
+    ("_n576_k5120_g1_", &[1153..=2943, 2945..=3200]),
+    ("_n1280_k5120_g1_", &[1153..=1279, 1281..=2368, 2401..=3200]),
+    ("_n1024_k4096_g2_", &[1153..=3200]),
 ];
 
 /// The launches of a prompt of `rows` rows and of one decode step after
@@ -213,7 +213,7 @@ fn same_launches(what: &str, candidate: &[String], default: &[String]) {
 #[test]
 fn compact_range_replaces_only_the_admitted_projection_calls() {
     let mut ranged = 0;
-    for rows in [1408, 1409, 1500, 2048, 2304, 3071, 3072] {
+    for rows in [1152, 1153, 1280, 1500, 2048, 2369, 2944, 3072, 3200, 3201] {
         let [base_prefill, base_decode] = compact_range_launches(rows, false);
         let [prefill, decode] = compact_range_launches(rows, true);
         same_launches(
@@ -268,5 +268,5 @@ fn compact_range_replaces_only_the_admitted_projection_calls() {
         }
         ranged += 1;
     }
-    assert_eq!(ranged, 4);
+    assert_eq!(ranged, 7);
 }

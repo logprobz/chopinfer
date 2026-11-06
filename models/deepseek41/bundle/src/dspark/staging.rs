@@ -92,7 +92,7 @@ pub trait Program {
     }
 
     /// Whether this step plans its prefill while the drafter runs, as its
-    /// target would plan it (`dspark_early_prefill_plan`).
+    /// target would plan it.
     fn plans_prefill_early(&self) -> bool {
         false
     }
@@ -518,7 +518,7 @@ pub(crate) fn early_stagings() -> u64 {
 /// status waits; a device-resident decode target records its own phases.
 /// The phases are disjoint: an early prefill begin is part of `gather`,
 /// and a prefill planned while the drafter runs is `prefill_plan`, outside
-/// `target` (`dspark_early_prefill_plan`).
+/// `target`.
 /// The record also says whether the step's prefill began its gathers or
 /// planned early, whether it was lowered while it issued
 /// (`prefill_streamed_lowering`), and holds the prefill plan templates

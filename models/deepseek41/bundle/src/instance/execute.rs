@@ -981,11 +981,10 @@ impl Instance {
     }
 
     /// Plans a DSpark prefill that reads no encoder rows from its staged
-    /// ids `hashed` while the drafter runs (`dspark_early_prefill_plan`),
-    /// as its target would plan it: the same inputs, plan caches and
-    /// gathers, with no encoder or gather work. The target consumes the
-    /// plan after its encode and advances the index-tag sequence where it
-    /// would have planned.
+    /// ids `hashed` while the drafter runs, as its target would plan it:
+    /// the same inputs, plan caches and gathers, with no encoder or gather
+    /// work. The target consumes the plan after its encode and advances
+    /// the index-tag sequence where it would have planned.
     pub(super) fn stage_early_prefill(
         &self,
         inputs: &mut PhaseInputs,

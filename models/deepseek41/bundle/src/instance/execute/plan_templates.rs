@@ -30,8 +30,8 @@
 //! seeds and ledger request/boundary pairs are rebuilt for each step.
 //!
 //! Freeing a dropped template's launches takes about 4 ms at the served
-//! long-context shapes. With `dspark_early_prefill_plan` a dropped template
-//! waits until the step's prefill launched (`release`), so its freeing
+//! long-context shapes. On a DSpark instance a dropped template waits
+//! until the step's prefill launched (`release`), so its freeing
 //! runs while the device works instead of before the launch; a step that
 //! fails before its launch leaves them to the next step's entry.
 

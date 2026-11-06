@@ -149,7 +149,6 @@ them. A non-default value is unqualified.
 | `dspark_confidence_staged` | `false` | Candidate: drafter confidence heads load each thread's 128-weight chain into registers before the dependency wait and stage each row's operands in shared memory, keeping every chain, fold and score. Bitwise equal to the default; not adopted. |
 | `dspark_coupled_drafts` | `true` | Couple sampled drafts to the target sampler's noise. |
 | `dspark_draft_chunk_items` | `12` | Drafting items per forward, from 1 to 32. |
-| `dspark_early_prefill_plan` | `true` | Candidate: a DSpark step plans its prefill (its upper-skip lowering or template and its Engram plan) once the drafter's launch returned, while the drafter runs, instead of after the draft readback and the verify rows' gather, and frees the plan templates that planning drops to stay within the limit once the prefill launched rather than before it. It applies where the prefill takes the prepared gathers (no encoder rows, no text taps); every launch, upload and result is unchanged. Not yet measured. |
 | `dspark_graph_handles_per_rank` | `512` | Graph handles per rank, from 0 to 9223372036854775807; 0 keeps DSpark eager. The total across ranks must fit the platform's count range. |
 | `dspark_hc_draft_rows` | `false` | Candidate, with `dspark_hc_fusion`: drafter forwards of one to six items (5 to 30 block rows) admit the HC finish route through the drafter's own table, so their stage boundaries fuse too. Bitwise equal to the default; not adopted. |
 | `dspark_hc_fusion` | `false` | Candidate: the drafter's stage boundaries fuse their all-reduce round, expansion, next mixer and input norm where the finish route admits the forward's rows (7 to 12 items), as the backbone's do. Bitwise equal to the default; not adopted. |
@@ -233,6 +232,13 @@ gathers before catch-up and drafting, instead of just before the prefill's
 launch, so the host copies run while the drafter does. A step refused after
 that begin settles its gathers before it returns. Adopted on 2026-11-06
 with the other DSpark prefill steps ([served timing](#served-timing)).
+
+Such a step also plans its prefill (its upper-skip lowering or template
+and its Engram plan) once the drafter's launch returned, while the drafter
+runs, instead of after the draft readback and the verify rows' gather, and
+frees the plan templates that planning drops once the prefill launched.
+Adopted on 2026-11-06 with the other DSpark prefill steps ([served
+timing](#served-timing)).
 
 ## Reference
 

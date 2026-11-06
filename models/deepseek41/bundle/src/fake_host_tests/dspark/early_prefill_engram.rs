@@ -11,8 +11,7 @@ use crate::fake_host_tests::prefill_engram::{
 };
 use crate::instance::execute::plan_timing::restore_without_snapshot;
 use model_deepseek41_contract::execution_options::{
-    DSPARK_EARLY_PREFILL_PLAN, DSPARK_GRAPH_HANDLES_PER_RANK, PREFILL_PLAN_CACHE_VERIFY,
-    PREFILL_STREAMED_LOWERING,
+    DSPARK_GRAPH_HANDLES_PER_RANK, PREFILL_PLAN_CACHE_VERIFY, PREFILL_STREAMED_LOWERING,
 };
 use runtime_bundle_sdk::prefill::{Boundary, encode};
 
@@ -349,7 +348,7 @@ fn assert_same_lines(a: &[String], b: &[String], context: &str) {
 }
 
 /// `line` without the host times a log line reports.
-pub(in crate::fake_host_tests) fn untimed(line: &str) -> String {
+fn untimed(line: &str) -> String {
     let mut out = String::with_capacity(line.len());
     let mut rest = line;
     while let Some(at) = ["\"micros\":", "_ms="]
@@ -421,13 +420,10 @@ fn mixed_began_after_device_work(run: &Run) -> Vec<bool> {
 /// former defaults, ahead of `options`: an arm that names no candidate
 /// runs the default each comparison was written against.
 fn opted_out<'a>(options: &[(&'a str, serde_json::Value)]) -> Vec<(&'a str, serde_json::Value)> {
-    [
-        (DSPARK_EARLY_PREFILL_PLAN, false.into()),
-        (PREFILL_STREAMED_LOWERING, false.into()),
-    ]
-    .into_iter()
-    .chain(options.iter().cloned())
-    .collect()
+    [(PREFILL_STREAMED_LOWERING, false.into())]
+        .into_iter()
+        .chain(options.iter().cloned())
+        .collect()
 }
 
 fn with(
@@ -577,12 +573,10 @@ fn spans(instance: &BundleInstanceV1) -> Vec<DeviceBufferSpanV1> {
 /// A failed prefill join or completion after the early begin refuses the
 /// mixed step and publishes nothing. A failed enqueue, of the first layer
 /// or of the second after the first began, before catch-up and drafting,
-/// refuses the step before any device work. Planning while the drafter
-/// runs changes none of these journals, and no device access touches a
-/// pending gather's ids or rows in either arm.
+/// refuses the step before any device work, and no device access touches
+/// a pending gather's ids or rows.
 #[test]
 fn gather_failures_after_the_early_begin_refuse_the_step() {
-    let plan = [(DSPARK_EARLY_PREFILL_PLAN, true.into())];
     // Eight prompts join two layers on four ranks each and complete both.
     for (stage, after) in [
         ("wait", 64 + 2),
@@ -590,8 +584,8 @@ fn gather_failures_after_the_early_begin_refuse_the_step() {
         ("enqueue", 16),
         ("enqueue", 17),
     ] {
-        let run = |options: &[(&str, serde_json::Value)]| {
-            let (host, mut instance, mixed) = prompted(options, |host| {
+        let (begun, indices) = {
+            let (host, mut instance, mixed) = prompted(&[], |host| {
                 MappedHost::with_row_ids(host).failing(stage, after)
             });
             let indices = spans(&instance);
@@ -610,9 +604,6 @@ fn gather_failures_after_the_early_begin_refuse_the_step() {
             (step, indices)
         };
         let context = format!("{stage} after {after}");
-        let (begun, indices) = run(&[]);
-        let (planned, _) = run(&plan);
-        assert_same_lines(&begun, &planned, &format!("{context}: early plans"));
         if stage == "enqueue" {
             assert!(!begun.iter().any(|line| is_device_work(line)), "{begun:#?}");
             continue;

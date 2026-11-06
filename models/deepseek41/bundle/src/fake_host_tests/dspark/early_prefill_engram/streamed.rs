@@ -1,12 +1,11 @@
-//! The `prefill_streamed_lowering` candidate beside the DSpark candidates:
+//! The `prefill_streamed_lowering` candidate beside the DSpark early steps:
 //! a prefill no kept plan or template serves lowers one layer at a time
 //! while it issues. Each step's journal (every launch with its arguments,
 //! every upload with its bytes, the prepared gathers' begins and joins),
-//! every log line and every result is the batch lowering's, with and
-//! without `dspark_early_prefill_plan`, beside the early Engram begin and
-//! the mixed steps' prepared verify-row gathers, with the upper-skip DMA
-//! and without. A mixed step fails streamed where it fails batch, and
-//! keeps nothing.
+//! every log line and every result is the batch lowering's, beside the
+//! early Engram begin and plan and the mixed steps' prepared verify-row
+//! gathers, with the upper-skip DMA and without. A mixed step fails
+//! streamed where it fails batch, and keeps nothing.
 //! Only the line that keeps a streamed plan moves: it follows the launch's
 //! own lines, as the plan is kept once its launch completed. The streamed
 //! plans are the ones the batch run lowered before their launch, but for
@@ -80,29 +79,16 @@ fn assert_streamed(schedule: &Schedule<'_>, options: &[(String, Options)], launc
 /// Instance options.
 type Options = Vec<(&'static str, serde_json::Value)>;
 
-/// The DSpark early plan on when `plan`, else the default, named.
-fn candidates(plan: bool) -> Vec<(String, Options)> {
-    if plan {
-        vec![(
-            "early plan".into(),
-            vec![(DSPARK_EARLY_PREFILL_PLAN, true.into())],
-        )]
-    } else {
-        vec![("default".into(), vec![])]
-    }
-}
-
-/// The early plan off and on.
-fn every_candidate() -> Vec<(String, Options)> {
-    [candidates(false), candidates(true)].concat()
+/// The default options, named.
+fn default() -> Vec<(String, Options)> {
+    vec![("default".into(), vec![])]
 }
 
 /// The early Engram begin's schedule (template reuse and misses, 511 to
 /// 8000 rows, two prefill items, a prefill step without verify rows, a
-/// cancel and its retry), with the early plan when `plan` (`candidates`),
-/// and the same eager (no graph handles) or with every reused plan lowered
-/// again.
-fn assert_early_begin_schedule(plan: bool) {
+/// cancel and its retry): with every reused plan lowered again when
+/// `verify`, else by default and eager (no graph handles).
+fn assert_early_begin_schedule(verify: bool) {
     use Then::*;
     let steps = [
         step(&[prefill(7, 8, 0, 512)], true, Commit),
@@ -124,48 +110,43 @@ fn assert_early_begin_schedule(plan: bool) {
         restored: &[],
         steps: &steps,
     };
-    let mut options = candidates(plan);
-    let all = options.last().unwrap().1.clone();
-    options.push(if plan {
-        (
-            "early plan, verified".into(),
-            with(&all, &[(PREFILL_PLAN_CACHE_VERIFY, true.into())]),
-        )
+    let options = if verify {
+        verified()
     } else {
-        (
+        let eager = (
             "eager".into(),
-            with(&all, &[(DSPARK_GRAPH_HANDLES_PER_RANK, 0.into())]),
-        )
-    });
+            vec![(DSPARK_GRAPH_HANDLES_PER_RANK, 0.into())],
+        );
+        [default(), vec![eager]].concat()
+    };
     // The first prompt and the six prefill structures.
     assert_streamed(&schedule, &options, 7);
 }
 
-/// The early begin's schedule without the early plan, and eager.
+/// The early begin's schedule by default, and eager.
 #[test]
-fn streamed_plans_issue_the_batch_journal_beside_the_dspark_candidates() {
+fn streamed_plans_issue_the_batch_journal_beside_the_dspark_early_steps() {
     assert_early_begin_schedule(false);
 }
 
-/// The early begin's schedule with the early plan, and verified.
+/// The early begin's schedule with every reused plan lowered again.
 #[test]
-fn streamed_plans_issue_the_batch_journal_beside_the_early_dspark_plan() {
+fn verified_streamed_plans_issue_the_batch_journal_beside_the_dspark_early_steps() {
     assert_early_begin_schedule(true);
 }
 
-/// Every candidate combination with every reused plan lowered again.
+/// Every reused plan lowered again.
 fn verified() -> Vec<(String, Options)> {
-    let verify = (PREFILL_PLAN_CACHE_VERIFY, true.into());
-    every_candidate()
-        .into_iter()
-        .map(|(name, options)| (name, with(&options, std::slice::from_ref(&verify))))
-        .collect()
+    vec![(
+        "verified".into(),
+        vec![(PREFILL_PLAN_CACHE_VERIFY, true.into())],
+    )]
 }
 
 /// The live shape: 1536-row prefills after a 93,000-token context beside
 /// eight verify items, a template reused after another 128 tokens and
-/// after a cancel, and a 1537-row miss, with every candidate combination
-/// and every reused plan lowered again.
+/// after a cancel, and a 1537-row miss, with every reused plan lowered
+/// again.
 #[test]
 fn long_context_streamed_plans_issue_the_batch_journal() {
     use Then::*;
@@ -185,7 +166,7 @@ fn long_context_streamed_plans_issue_the_batch_journal() {
 }
 
 /// A 66-row eager verify phase beside a 512-row template and its reuse,
-/// with every candidate combination and every reused plan lowered again.
+/// with every reused plan lowered again.
 #[test]
 fn eager_verify_streamed_plans_issue_the_batch_journal() {
     use Then::*;
@@ -206,9 +187,8 @@ fn eager_verify_streamed_plans_issue_the_batch_journal() {
 /// With room for two templates, prefills of 512, 600, 700 and 512 rows
 /// drop the oldest template at each of the last two, streamed as batch.
 /// A streamed miss keeps its template once its launch completed, so the
-/// template it drops is freed after the launch with or without
-/// `dspark_early_prefill_plan`, where the batch lowering without it frees
-/// it before.
+/// template it drops is freed after the launch, as the batch lowering's is
+/// on a DSpark instance.
 #[test]
 fn a_streamed_miss_frees_the_template_it_drops_after_its_launch() {
     use Then::*;
@@ -224,23 +204,12 @@ fn a_streamed_miss_frees_the_template_it_drops_after_its_launch() {
         restored: &[],
         steps: &steps,
     };
-    let plan = (DSPARK_EARLY_PREFILL_PLAN, true.into());
     let streamed = (PREFILL_STREAMED_LOWERING, true.into());
     plan_templates::with_limit(2, || {
-        let options = [
-            ("default".into(), vec![]),
-            ("early plan".into(), vec![plan.clone()]),
-        ];
         // The first prompt and the four prefills: the last 512 rows miss,
         // as the 700 rows dropped their template.
-        assert_streamed(&schedule, &options, 5);
-        let launch = ["prefill launch", "prefill launched"];
-        for (options, frees_first) in [
-            (vec![], true),
-            (vec![plan.clone()], false),
-            (vec![streamed.clone()], false),
-            (vec![plan.clone(), streamed.clone()], false),
-        ] {
+        assert_streamed(&schedule, &default(), 5);
+        for options in [vec![], vec![streamed.clone()]] {
             let context = format!("{options:?}");
             let (host, mut instance, _) = prompted(&options, MappedHost::with_row_ids);
             let mut events = Vec::new();
@@ -262,12 +231,11 @@ fn a_streamed_miss_frees_the_template_it_drops_after_its_launch() {
                 1,
                 "{context}"
             );
-            let expected = if frees_first {
-                [&["plan freed"][..], &launch].concat()
-            } else {
-                [&launch[..], &["plan freed"]].concat()
-            };
-            assert_eq!(events, expected, "{context}");
+            assert_eq!(
+                events,
+                ["prefill launch", "prefill launched", "plan freed"],
+                "{context}"
+            );
             assert_eq!(plan_templates::retired(instance.handle()), 0, "{context}");
             let _ = instance.destroy();
         }
@@ -337,8 +305,7 @@ fn prefill_body() -> Vec<(String, crate::program::Stage)> {
 }
 
 /// A mixed C8 step beside a 512-row prefill fails streamed where it fails
-/// batch, with the candidate combinations `plan` selects (`candidates`),
-/// with the upper-skip DMA and without. Launch failures at the prefill's
+/// batch, with the upper-skip DMA and without. Launch failures at the prefill's
 /// last launch before its first gather join, at its first after it and at
 /// its first after the second layer's joins, a refusal of its first Engram
 /// consumer's segment on rank 0, after that join, and a refusal of the
@@ -349,7 +316,8 @@ fn prefill_body() -> Vec<(String, crate::program::Stage)> {
 /// either: a lowering error at its first group refuses unpoisoned, and one
 /// at a later group, failed gathers, a launch reading pending ids, a panic
 /// and a head audit error poison.
-fn assert_mixed_failures(plan: bool) {
+#[test]
+fn a_mixed_step_fails_streamed_as_batch_beside_the_dspark_early_steps() {
     use crate::program::Stage;
     use skip::StreamedFailure::{Alias, Gathers, Group, Head, Panic};
     let body = prefill_body();
@@ -363,87 +331,73 @@ fn assert_mixed_failures(plan: bool) {
     // Each earlier occurrence is a segment on every rank.
     let earlier = body[..at].iter().filter(|(s, _)| *s == consumer).count() as u32;
     let streamed = [(PREFILL_STREAMED_LOWERING, true.into())];
-    for (name, options) in candidates(plan) {
-        for dma in [true, false] {
-            let context = format!("{name}, DMA {dma}");
-            let reference = skip::with_dma(dma, || {
-                let (host, mut instance, mixed) = prompted(&options, MappedHost::with_row_ids);
-                let begin = host.journal.borrow().len();
-                run(&mut instance, &host, &mixed);
-                let journal = host.journal.borrow()[begin..].to_vec();
-                let _ = instance.cancel();
-                let _ = instance.destroy();
-                journal
+    let options: Options = vec![];
+    for dma in [true, false] {
+        let context = format!("DMA {dma}");
+        let reference = skip::with_dma(dma, || {
+            let (host, mut instance, mixed) = prompted(&options, MappedHost::with_row_ids);
+            let begin = host.journal.borrow().len();
+            run(&mut instance, &host, &mixed);
+            let journal = host.journal.borrow()[begin..].to_vec();
+            let _ = instance.cancel();
+            let _ = instance.destroy();
+            journal
+        });
+        let launches_before = |at: usize| {
+            reference[..at]
+                .iter()
+                .filter(|line| line.starts_with("launch "))
+                .count() as u32
+        };
+        // Four ranks join each of the two layers.
+        let waits: Vec<_> = (0..reference.len())
+            .filter(|&at| reference[at].starts_with("async mapped wait "))
+            .collect();
+        assert!(waits.len() >= 8, "{context}: {waits:?}");
+        let faults = [
+            Fault::Launch(launches_before(waits[0]) - 1),
+            Fault::Launch(launches_before(waits[0])),
+            Fault::Launch(launches_before(waits[4])),
+            Fault::Refused(first.clone(), 0),
+            Fault::Refused(consumer.clone(), 4 * earlier),
+        ];
+        for fault in &faults {
+            let what = format!("{context}, {fault:?}");
+            let (batch, on) = skip::with_dma(dma, || {
+                (
+                    failed_mixed(&options, fault),
+                    failed_mixed(&with(&options, &streamed), fault),
+                )
             });
-            let launches_before = |at: usize| {
-                reference[..at]
-                    .iter()
-                    .filter(|line| line.starts_with("launch "))
-                    .count() as u32
-            };
-            // Four ranks join each of the two layers.
-            let waits: Vec<_> = (0..reference.len())
-                .filter(|&at| reference[at].starts_with("async mapped wait "))
-                .collect();
-            assert!(waits.len() >= 8, "{context}: {waits:?}");
-            let faults = [
-                Fault::Launch(launches_before(waits[0]) - 1),
-                Fault::Launch(launches_before(waits[0])),
-                Fault::Launch(launches_before(waits[4])),
-                Fault::Refused(first.clone(), 0),
-                Fault::Refused(consumer.clone(), 4 * earlier),
-            ];
-            for fault in &faults {
-                let what = format!("{context}, {fault:?}");
-                let (batch, on) = skip::with_dma(dma, || {
-                    (
-                        failed_mixed(&options, fault),
-                        failed_mixed(&with(&options, &streamed), fault),
-                    )
-                });
-                assert!(batch.1.starts_with("Err"), "{what}: {}", batch.1);
-                assert_same_lines(&batch.0, &on.0, &what);
-                assert_eq!((&batch.1, batch.2), (&on.1, on.2), "{what}");
-                // A failed launch poisons; the consumer's refusal follows the
-                // prefill's first join.
-                let joined = batch.0.iter().any(|l| l.starts_with("async mapped wait "));
-                match fault {
-                    Fault::Launch(_) => assert!(batch.2, "{what}: poisoned"),
-                    Fault::Refused(_, 0) => {}
-                    _ => assert!(joined && batch.2, "{what}: poisoned inside the prefill"),
-                }
-                assert_eq!((batch.3, on.3), (1, 0), "{what}: kept");
+            assert!(batch.1.starts_with("Err"), "{what}: {}", batch.1);
+            assert_same_lines(&batch.0, &on.0, &what);
+            assert_eq!((&batch.1, batch.2), (&on.1, on.2), "{what}");
+            // A failed launch poisons; the consumer's refusal follows the
+            // prefill's first join.
+            let joined = batch.0.iter().any(|l| l.starts_with("async mapped wait "));
+            match fault {
+                Fault::Launch(_) => assert!(batch.2, "{what}: poisoned"),
+                Fault::Refused(_, 0) => {}
+                _ => assert!(joined && batch.2, "{what}: poisoned inside the prefill"),
             }
-            for failure in [Group(0), Group(10), Gathers(10), Alias(10), Panic(10), Head] {
-                let what = format!("{context}, {failure:?}");
-                let (_, status, poisoned, kept) = skip::with_dma(dma, || {
-                    failed_mixed(&with(&options, &streamed), &Fault::Streamed(failure))
-                });
-                assert!(status.starts_with("Err"), "{what}: {status}");
-                assert_eq!((poisoned, kept), (failure != Group(0), 0), "{what}");
-            }
+            assert_eq!((batch.3, on.3), (1, 0), "{what}: kept");
+        }
+        for failure in [Group(0), Group(10), Gathers(10), Alias(10), Panic(10), Head] {
+            let what = format!("{context}, {failure:?}");
+            let (_, status, poisoned, kept) = skip::with_dma(dma, || {
+                failed_mixed(&with(&options, &streamed), &Fault::Streamed(failure))
+            });
+            assert!(status.starts_with("Err"), "{what}: {status}");
+            assert_eq!((poisoned, kept), (failure != Group(0), 0), "{what}");
         }
     }
-}
-
-/// The mixed step's failures with the combinations without the early plan.
-#[test]
-fn a_mixed_step_fails_streamed_as_batch_beside_the_dspark_candidates() {
-    assert_mixed_failures(false);
-}
-
-/// The mixed step's failures with the combinations with the early plan.
-#[test]
-fn a_mixed_step_fails_streamed_as_batch_beside_the_early_dspark_plan() {
-    assert_mixed_failures(true);
 }
 
 /// With diagnostic step logs, each step-shape record says whether its
 /// step's prefill was lowered while it issued (`streamed_lowering`): true
 /// for a miss (the first prompt's, of the short-prompt cache, and each new
 /// prefill structure's), false for a kept plan's or template's reuse, and
-/// false for every step with the option off, with and without the early
-/// begin and plan. The record's template counts show the reuse is a hit.
+/// false for every step with the option off. The record's template counts show the reuse is a hit.
 #[test]
 fn step_shape_records_say_whether_the_prefill_was_streamed() {
     use Then::*;
@@ -461,14 +415,12 @@ fn step_shape_records_say_whether_the_prefill_was_streamed() {
     };
     let logs = (DIAGNOSTIC_STEP_LOGS, serde_json::Value::from(true));
     let streamed = (PREFILL_STREAMED_LOWERING, true.into());
-    let early = [(DSPARK_EARLY_PREFILL_PLAN, true.into())];
     // Eight prompts, the first a miss, then a 512-row miss, its template's
     // reuse by another request and a 600-row miss.
     let on = [vec![true], vec![false; 7], vec![true, false, true]].concat();
     for (options, expected) in [
         (vec![logs.clone()], vec![false; 11]),
-        (vec![logs.clone(), streamed.clone()], on.clone()),
-        (with(&[logs.clone(), streamed.clone()], &early), on),
+        (vec![logs.clone(), streamed.clone()], on),
     ] {
         let arm = format!("{options:?}");
         let run = schedule.run(&options);

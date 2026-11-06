@@ -767,8 +767,8 @@ planning is charged to `upload`, since it runs inside the staging upload
 timer. A DSpark prefill's Engram hashing and the begin of its prepared
 gathers run before catch-up and count in `gather` instead of
 `target_upload`; a step refused after that begin settles its gathers before
-it returns. With `dspark_early_prefill_plan`, a prefill
-planned while the drafter runs counts in `prefill_plan`, outside `target`.
+it returns. A DSpark prefill planned while the drafter runs counts in
+`prefill_plan`, outside `target`.
 With `prefill_streamed_lowering`, an upper-skip prefill lowered while it
 issues, and the keeping of its plan, count in `target_submit`.
 `target_lower` keeps the target's own planning and the freeing of the

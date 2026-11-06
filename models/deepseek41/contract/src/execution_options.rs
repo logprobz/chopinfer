@@ -63,10 +63,6 @@ pub const DSPARK_MOE_DIRECT: &str = "dspark_moe_direct";
 /// the drafter table (`hc.draft_admit.verify`), so their stage boundaries
 /// fuse as the measured rows' do.
 pub const DSPARK_HC_DRAFT_ROWS: &str = "dspark_hc_draft_rows";
-/// Candidate: a DSpark step plans its prefill while its drafter runs,
-/// before the draft readback, and frees the plan templates that planning
-/// drops once the prefill launched.
-pub const DSPARK_EARLY_PREFILL_PLAN: &str = "dspark_early_prefill_plan";
 /// Candidate: an upper-skip prefill whose plan has no template lowers its
 /// body one layer at a time while it issues the units already lowered,
 /// instead of lowering the whole plan before its first launch.
@@ -96,11 +92,10 @@ pub struct Options {
     pub dspark_confidence_staged: bool,
     pub dspark_moe_direct: bool,
     pub dspark_hc_draft_rows: bool,
-    pub dspark_early_prefill_plan: bool,
     pub prefill_streamed_lowering: bool,
 }
 
-pub fn declarations() -> [ModelOptionV1; 18] {
+pub fn declarations() -> [ModelOptionV1; 17] {
     [
         (
             DIAGNOSTIC_STEP_LOGS,
@@ -109,10 +104,6 @@ pub fn declarations() -> [ModelOptionV1; 18] {
         (
             DSPARK_CONFIDENCE_STAGED,
             OptionDefinitionV1::Boolean { default: false },
-        ),
-        (
-            DSPARK_EARLY_PREFILL_PLAN,
-            OptionDefinitionV1::Boolean { default: true },
         ),
         (
             DSPARK_GRAPH_HANDLES_PER_RANK,
@@ -239,7 +230,6 @@ impl Options {
             dspark_confidence_staged: flag(DSPARK_CONFIDENCE_STAGED),
             dspark_hc_fusion: flag(DSPARK_HC_FUSION),
             dspark_markov_staged: flag(DSPARK_MARKOV_STAGED),
-            dspark_early_prefill_plan: flag(DSPARK_EARLY_PREFILL_PLAN),
             prefill_streamed_lowering: flag(PREFILL_STREAMED_LOWERING),
         })
     }
@@ -359,6 +349,14 @@ mod tests {
     }
 
     #[test]
+    fn removed_early_prefill_plan_option_is_rejected() {
+        for value in ["false", "true"] {
+            let options = BTreeMap::from([("dspark_early_prefill_plan".into(), value.into())]);
+            assert!(declaration().resolve(&options).is_err());
+        }
+    }
+
+    #[test]
     fn declared_and_legacy_defaults_keep_the_served_bounds_and_quiet_logs() {
         let declaration = declaration();
         let defaults = declaration.resolve(&BTreeMap::new()).unwrap();
@@ -379,7 +377,6 @@ mod tests {
             dspark_confidence_staged: false,
             dspark_hc_fusion: false,
             dspark_markov_staged: false,
-            dspark_early_prefill_plan: true,
             prefill_streamed_lowering: true,
         };
         assert_eq!(Options::read(&defaults).unwrap(), expected);
@@ -407,7 +404,6 @@ mod tests {
             (DSPARK_CONFIDENCE_STAGED.into(), "true".into()),
             (DSPARK_HC_FUSION.into(), "true".into()),
             (DSPARK_MARKOV_STAGED.into(), "true".into()),
-            (DSPARK_EARLY_PREFILL_PLAN.into(), "false".into()),
             (PREFILL_STREAMED_LOWERING.into(), "false".into()),
         ]);
         let resolved = declaration.resolve(&overrides).unwrap();
@@ -430,7 +426,6 @@ mod tests {
                 dspark_confidence_staged: true,
                 dspark_hc_fusion: true,
                 dspark_markov_staged: true,
-                dspark_early_prefill_plan: false,
                 prefill_streamed_lowering: false,
             }
         );
@@ -459,7 +454,6 @@ mod tests {
             (DSPARK_CONFIDENCE_STAGED, "1"),
             (DSPARK_HC_FUSION, "1"),
             (DSPARK_MARKOV_STAGED, "1"),
-            (DSPARK_EARLY_PREFILL_PLAN, "1"),
             (PREFILL_STREAMED_LOWERING, "1"),
             (DSPARK_GRAPH_HANDLES_PER_RANK, "-1"),
             (DSPARK_GRAPH_HANDLES_PER_RANK, "9223372036854775808"),

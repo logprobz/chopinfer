@@ -114,7 +114,7 @@ impl Cache {
             hits: Cell::new(0),
             misses: Cell::new(0),
             evictions: Cell::new(0),
-            templates: plan_templates::Templates::new(dspark && options.dspark_early_prefill_plan),
+            templates: plan_templates::Templates::new(dspark),
             streamed: options.prefill_streamed_lowering,
             launched: Cell::new(0),
         }

@@ -318,11 +318,10 @@ impl Instance {
         self.takes_prepared_prefill(request, prefill)
     }
 
-    /// Whether a DSpark step plans its prefill while its drafter runs
-    /// (`dspark_early_prefill_plan`).
+    /// Whether a DSpark step plans its prefill while its drafter runs:
+    /// wherever it takes the prepared gathers.
     pub(super) fn admits_early_prefill_plan(&self, request: &[u8], prefill: &PhaseInputs) -> bool {
-        self.config.execution.dspark_early_prefill_plan
-            && self.takes_prepared_prefill(request, prefill)
+        self.takes_prepared_prefill(request, prefill)
     }
 
     /// Whether a DSpark step's prefill takes the prepared gathers with ids

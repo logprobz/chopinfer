@@ -4,54 +4,17 @@
 //! settling the gathers it began. A plan lowered while it issues
 //! (`prefill_streamed_lowering`) keeps the same contract, fails with the
 //! batch lowering's journal and keeps nothing when it fails. Each test runs
-//! AR, and DSpark with the early Engram begin, without and with the early
-//! plan.
+//! AR, and DSpark with the early Engram begin and plan.
 use super::*;
 use crate::instance::execute::skip;
 use crate::program::Stage;
 use model_deepseek41_contract::execution_options::{
-    DSPARK_EARLY_PREFILL_PLAN, PREFILL_PLAN_CACHE_VERIFY, PREFILL_STREAMED_LOWERING,
+    PREFILL_PLAN_CACHE_VERIFY, PREFILL_STREAMED_LOWERING,
 };
-use std::cell::Cell;
 
-/// The early DSpark candidate of the instances `create` makes: the early
-/// plan (`dspark_early_prefill_plan`).
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-struct Early {
-    plan: bool,
-}
-
-thread_local! {
-    static EARLY: Cell<Early> = const { Cell::new(Early { plan: false }) };
-}
-
-/// Makes `create` turn on the early candidates it holds until it drops.
-struct Using(Early);
-
-impl Drop for Using {
-    fn drop(&mut self) {
-        EARLY.set(self.0);
-    }
-}
-
-fn using(early: Early) -> Using {
-    Using(EARLY.replace(early))
-}
-
-/// Each configuration a failure test runs, DSpark or not with its early
-/// plan: AR, and DSpark without and with it.
-fn configs() -> Vec<(bool, Early)> {
-    let mut configs = vec![(false, Early::default())];
-    for plan in [false, true] {
-        configs.push((true, Early { plan }));
-    }
-    configs
-}
-
-/// An instance like the tests', with the early candidates `using` set,
-/// lowering each plan no template serves while it issues when `streamed`.
+/// An instance like the tests', lowering each plan no template serves
+/// while it issues when `streamed`.
 fn create(host: &Rc<Host>, streamed: bool) -> BundleInstanceV1 {
-    let early = EARLY.get();
     super::super::prefill_skip::create_profile_with_options(
         host,
         8192,
@@ -59,7 +22,6 @@ fn create(host: &Rc<Host>, streamed: bool) -> BundleInstanceV1 {
         &[
             (PREFILL_PLAN_CACHE_VERIFY, false.into()),
             (PREFILL_STREAMED_LOWERING, streamed.into()),
-            (DSPARK_EARLY_PREFILL_PLAN, early.plan.into()),
         ],
     )
 }
@@ -151,8 +113,7 @@ enum After {
 /// it issues.
 #[test]
 fn failures_after_the_body_poison_the_instance() {
-    for (dspark, early) in configs() {
-        let _early = using(early);
+    for dspark in [false, true] {
         let (body, head) = symbols(dspark);
         let first = head.first().expect("a head launch").clone();
         assert!(
@@ -176,8 +137,7 @@ fn failures_after_the_body_poison_the_instance() {
                 (After::Head, true),
                 (After::Copy, true),
             ] {
-                let what =
-                    format!("dspark={dspark} {early:?} dma={dma} {after:?} streamed={streamed}");
+                let what = format!("dspark={dspark} dma={dma} {after:?} streamed={streamed}");
                 skip::with_dma(dma, || {
                     let host = host(dspark);
                     let mut instance = create(&host, streamed);
@@ -220,8 +180,7 @@ fn failures_after_the_body_poison_the_instance() {
 /// while it issues.
 #[test]
 fn a_refusal_at_a_later_engram_piece_poisons_the_instance() {
-    for (dspark, early) in configs() {
-        let _early = using(early);
+    for dspark in [false, true] {
         let (body, _) = symbols(dspark);
         let layers = model_deepseek41_contract::geometry::FLASH
             .shape
@@ -236,7 +195,7 @@ fn a_refusal_at_a_later_engram_piece_poisons_the_instance() {
         // Each earlier occurrence is a segment on every rank.
         let earlier = body[..at].iter().filter(|(s, _)| *s == consumer).count() as u32;
         for streamed in [false, true] {
-            let what = format!("dspark={dspark} {early:?} streamed={streamed}");
+            let what = format!("dspark={dspark} streamed={streamed}");
             skip::with_dma(false, || {
                 let host = host(dspark);
                 let mut instance = create(&host, streamed);
@@ -271,12 +230,11 @@ fn a_refusal_at_a_later_engram_piece_poisons_the_instance() {
 /// whole and while it issues.
 #[test]
 fn a_refusal_before_the_first_submission_settles_and_refuses() {
-    for (dspark, early) in configs() {
-        let _early = using(early);
+    for dspark in [false, true] {
         let (body, _) = symbols(dspark);
         let first = body.first().expect("a body launch").0.clone();
         for (dma, streamed) in [(true, false), (false, false), (true, true), (false, true)] {
-            let what = format!("dspark={dspark} {early:?} dma={dma} streamed={streamed}");
+            let what = format!("dspark={dspark} dma={dma} streamed={streamed}");
             skip::with_dma(dma, || {
                 let host = host(dspark);
                 let mut instance = create(&host, streamed);
@@ -442,8 +400,7 @@ fn failed(dspark: bool, streamed: bool, fault: &Fault) -> Failed {
 /// it planned; the failed streamed miss keeps none.
 #[test]
 fn streamed_failures_issue_the_batch_failures_journal() {
-    for (dspark, early) in configs() {
-        let _early = using(early);
+    for dspark in [false, true] {
         let (body, head) = symbols(dspark);
         let first = body[0].0.clone();
         let layer = model_deepseek41_contract::geometry::FLASH
@@ -497,7 +454,7 @@ fn streamed_failures_issue_the_batch_failures_journal() {
             }
             assert_eq!(faults.len(), if dma { 10 } else { 8 }, "dma={dma}");
             for fault in &faults {
-                let what = format!("dspark={dspark} {early:?} dma={dma} {fault:?}");
+                let what = format!("dspark={dspark} dma={dma} {fault:?}");
                 let (batch, streamed) = skip::with_dma(dma, || {
                     (failed(dspark, false, fault), failed(dspark, true, fault))
                 });
@@ -534,13 +491,12 @@ fn streamed_failures_issue_the_batch_failures_journal() {
 #[test]
 fn a_streamed_lowering_failure_refuses_before_the_first_submission_and_poisons_after() {
     use skip::StreamedFailure::{Group, Head};
-    for (dspark, early) in configs() {
-        let _early = using(early);
+    for dspark in [false, true] {
         let (body, _) = symbols(dspark);
         let first = body[0].0.clone();
         for dma in [true, false] {
             for failure in [Group(0), Group(10), Head] {
-                let what = format!("dspark={dspark} {early:?} dma={dma} {failure:?}");
+                let what = format!("dspark={dspark} dma={dma} {failure:?}");
                 skip::with_dma(dma, || {
                     let host = host(dspark);
                     let mut instance = create(&host, true);
@@ -679,13 +635,12 @@ fn streamed_failure(
 /// after the body's first join (group 10), with and without DMA.
 #[track_caller]
 fn assert_stops_at_its_group(fail: fn(usize) -> skip::StreamedFailure, logged: &str) {
-    for (dspark, early) in configs() {
-        let _early = using(early);
+    for dspark in [false, true] {
         let (body, _) = symbols(dspark);
         let first = body[0].0.clone();
         for dma in [true, false] {
             for group in [0, 10] {
-                let what = format!("dspark={dspark} {early:?} dma={dma} {:?}", fail(group));
+                let what = format!("dspark={dspark} dma={dma} {:?}", fail(group));
                 let (lowering, poisoned, _) =
                     streamed_failure(dspark, dma, skip::StreamedFailure::Group(group));
                 let (failed, failed_poisoned, logs) = streamed_failure(dspark, dma, fail(group));
@@ -750,11 +705,10 @@ fn a_launch_reading_pending_gathers_stops_a_streamed_launch_at_its_group() {
 #[test]
 fn a_panic_in_a_streamed_lowering_poisons_the_instance() {
     use skip::StreamedFailure::Panic;
-    for (dspark, early) in configs() {
-        let _early = using(early);
+    for dspark in [false, true] {
         for dma in [true, false] {
             for group in [0, 10] {
-                let what = format!("dspark={dspark} {early:?} dma={dma} group={group}");
+                let what = format!("dspark={dspark} dma={dma} group={group}");
                 skip::with_dma(dma, || {
                     let host = host(dspark);
                     let mut instance = create(&host, true);

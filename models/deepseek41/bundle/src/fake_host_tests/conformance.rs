@@ -18,7 +18,6 @@ use runtime_bundle_sdk::{BatchAppendV1, BatchItemV1, BatchRequestV1, BatchWireVe
 mod allocated;
 mod anchored;
 mod drafter;
-mod prefill_compact_rows;
 mod templated;
 mod wide;
 
@@ -381,36 +380,6 @@ fn adopted_ar_buffers_precede_serving_kv_sizing() {
     );
 }
 
-impl Served {
-    /// The execution options this serving's model options select, read as
-    /// the instance reads them.
-    fn execution(&self) -> model_deepseek41_contract::execution_options::Options {
-        let options = self
-            .serving
-            .model_options
-            .iter()
-            .map(|(name, value)| {
-                let value = serde_json::from_str(value).expect("a JSON model option value");
-                (name.clone(), value)
-            })
-            .collect();
-        model_deepseek41_contract::execution_options::Options::read(&options)
-            .expect("valid execution options")
-    }
-
-    /// The route tags of the kernels built for this serving's verify rows,
-    /// with `options` applied to the shape first.
-    fn route_tags_with(
-        &self,
-        options: impl FnOnce(Shape) -> Shape,
-    ) -> Vec<kernel_core::route::RouteTag> {
-        let shape = options(self.host.shape.with_verify_rows(self.serving.verify_rows()));
-        let mut tags = crate::Kernels::route_tags(&shape);
-        tags.extend(crate::engram_rows::route_tags());
-        tags
-    }
-}
-
 impl conformance::Startup for Served {
     type Observer = bundle_runtime::fake_host::NoObserver;
 
@@ -497,7 +466,10 @@ impl conformance::Startup for Served {
         envelope
     }
     fn route_tags(&self) -> Vec<kernel_core::route::RouteTag> {
-        self.route_tags_with(|shape| shape)
+        let shape = self.host.shape.with_verify_rows(self.serving.verify_rows());
+        let mut tags = crate::Kernels::route_tags(&shape);
+        tags.extend(crate::engram_rows::route_tags());
+        tags
     }
     fn check_allocated_route_shapes(
         serving: &conformance::Serving,

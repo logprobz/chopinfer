@@ -26,11 +26,11 @@ pub fn stages(g: &Geometry, q: Mxfp8FoldGemmQuery, rows: u32) -> Option<u32> {
     row.knobs["stages"].count()
 }
 
-/// The `prefill_compact_dense_rows` candidate's site: the row ranges of each
-/// TP4 prefill projection, read only with the option on.
+/// The compact range site: the row ranges of each TP4 prefill projection
+/// that the compact entry serves.
 pub const RANGE_SITE: &str = "dense_prefill.compact_range.prefill";
 
-/// The row ranges, each with its compact stages, that the candidate site
+/// The row ranges, each with its compact stages, that the range site
 /// admits for `q` at `ranks`, in row order. The table refuses overlapping
 /// rows of one projection.
 pub fn ranges(
@@ -81,7 +81,7 @@ pub fn ranges(
         .collect()
 }
 
-/// Registers each prefill projection's candidate ranges on the shared
+/// Registers each prefill projection's ranges on the shared
 /// compact wrapper, which plans each count as it launches. The measured
 /// exact rows keep precedence inside a range.
 pub fn register_range(mut backend: Sm120, g: &Geometry, ranks: u32) -> Result<Sm120, String> {
@@ -216,11 +216,11 @@ mod tests {
         assert_eq!(changed.len(), 66);
     }
 
-    /// With the candidate's ranges registered, every count of a range runs
+    /// With the ranges registered, every count of a range runs
     /// the compact entry the lab compares, and every other count, shape and
     /// topology launches as before, with the same layout and guarantees.
     #[test]
-    fn candidate_ranges_change_only_their_counts() {
+    fn ranges_change_only_their_counts() {
         let mut ranged = std::collections::BTreeMap::new();
         for ranks in [1, 2, 4] {
             let old = super::super::register(Sm120::new(), &FLASH, ranks).unwrap();

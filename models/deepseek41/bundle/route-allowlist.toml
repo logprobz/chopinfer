@@ -1,8 +1,6 @@
 # Served route gaps. Remove each entry when its tracked range is qualified.
 # P4 also covers preserved full TMA launches at unanchored packed-2 widths
 # 8190 and 8191. Separate allowances for those widths are stale with anchors.
-# `tp4-dspark*` also names tp4-dspark-compact-rows, the profile with the
-# `prefill_compact_dense_rows` candidate on.
 # The backbone router finish covers Decode-2/4 and Verify-2..32; its eight
 # unfused-stage exceptions are retired. HC and drafter entries remain separate.
 # `tp4-dspark*` also names tp4-dspark-rows192, the profile at the package's 192

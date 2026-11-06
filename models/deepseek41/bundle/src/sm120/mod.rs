@@ -1822,8 +1822,7 @@ mod one_row_twin_lines {
 
 #[cfg(test)]
 mod compact_ranges {
-    /// With the `prefill_compact_dense_rows` candidate on, the served TP4
-    /// backend launches at every sampled count of a candidate range (its
+    /// The served TP4 backend launches at every sampled count of a candidate range (its
     /// ends and the live counts inside it) exactly what the lab's compact arm
     /// launches (`compact_calls` in `lab/tests/sm120/prefill_tail_folds.rs`):
     /// the exact-row compact plan of that count over packed weights, in
@@ -1835,9 +1834,7 @@ mod compact_ranges {
         use kernel_core::backend::Backend;
         use kernels_sm120::gemm::mxfp8_prefill_compact::Entry as Compact;
         use model_deepseek41_contract::geometry::FLASH;
-        let shape = crate::shape::Shape::new(&FLASH, Ranks::TP4)
-            .unwrap()
-            .with_prefill_compact_dense_rows(true);
+        let shape = crate::shape::Shape::new(&FLASH, Ranks::TP4).unwrap();
         let kernels = crate::Kernels::new(&shape).unwrap();
         let (mut bands, mut checked) = (0, 0);
         for base in super::mxfp8_fold::prefill_entries(&FLASH, 4).unwrap() {

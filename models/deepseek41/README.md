@@ -173,7 +173,6 @@ them. A non-default value is unqualified.
 | `dspark_moe_direct` | `false` | Candidate: drafter forwards whose block rows the drafter table admits (`moe.direct_drafter.verify`) run the routed experts through the direct path instead of the expert chains. Bitwise equal to the default; not adopted. |
 | `phased_decode_reduce` | `false` | Candidate: Flash TP4 decode and verify all-reduces whose round no HC boundary takes launch the phased F32 rounding entries, over comm state of their own, instead of the F32 reduce-scatter, all-gather and round row. They give the same bits; the deferred pairs and prefill are unchanged. Not adopted. |
 | `prefill_chunk_tokens` | `8192` | Guaranteed chunk ends: 0, 2048 or 8192 tokens. |
-| `prefill_compact_dense_rows` | `false` | Candidate: Flash TP4 prefill steps whose row counts the candidate table admits (`dense_prefill.compact_range.prefill`) run those projections on the compact prefill entry at the step's exact rows instead of the 128-row tiles and their exact-row tail folds. The table admits `wkv` at 1153 to 3071 and 3073 to 3199 rows, the shared gate/up at 1153 to 2943 and 2945 to 3200, `wq_a` at 1153 to 1279, 1281 to 2368 and 2401 to 3200, and `wo_a` at 1153 to 3200. On 2026-11-06 the lab matched every output and status byte at every count from 1153 to 3200 rows for all four projections. A timing grid over that span (every 32 rows, each multiple of 128 and the count after it, with an A/A control) set the ranges: each grid count where the compact entry was slower at every visit is left out, with the counts before the next grid count. Not adopted. |
 | `prefill_plan_cache_plans` | `16` | Kept short-prompt plans, from 1 to 64; evict the least recently used plan when full. |
 | `prefill_plan_cache_verify` | `false` | Lower each cache hit and each reused plan template again and refuse a differing plan. |
 | `prefill_upper_skip` | `true` | Use upper-skip prefill; requires nonzero guaranteed chunk ends. |
@@ -219,6 +218,23 @@ already wrote exactly its rows. In the live-shape mixed-step profile of
 took 106 to 197 us per call, which bounds the overlap at about 3 to 5 ms
 per pass. It was timed with the other prefill kernel routes ([served
 timing](#served-timing)).
+
+Flash TP4 prefill steps whose row counts the compact range table admits
+(`dense_prefill.compact_range.prefill`) run those projections on the
+compact prefill entry at the step's exact rows instead of the 128-row
+tiles and their exact-row tail folds: `wkv` at 1153 to 3071 and 3073 to
+3199 rows, the shared gate/up at 1153 to 2943 and 2945 to 3200, `wq_a` at
+1153 to 1279, 1281 to 2368 and 2401 to 3200, and `wo_a` at 1153 to 3200.
+The measured exact compact rows keep precedence inside a range. The
+ranges were adopted on 2026-11-06 from the `prefill_compact_dense_rows`
+candidate option, which ran them at the same rows, and which was then
+removed. On 2026-11-06 the lab matched every output and status byte at
+every count from 1153 to 3200 rows for all four projections. A timing
+grid over that span (every 32 rows, each multiple of 128 and the count
+after it, with an A/A control) set the ranges: each grid count where the
+compact entry was slower at every visit is left out, with the counts
+before the next grid count. It was timed with the other prefill kernel
+routes ([served timing](#served-timing)).
 
 The bundle no longer reads execution settings from
 `CHOPINFER_DEEPSEEK41_SHARED_OVERLAP`,

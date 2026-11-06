@@ -153,7 +153,7 @@ fn pin_untuned_served_keys() {
                     q.m_capacity,
                 ));
             }
-            // The `prefill_compact_dense_rows` candidate's TP4 ranges.
+            // The compact ranges, served at TP4.
             if ranks == 4 {
                 domain.insert(key(
                     "dense_prefill.compact_range.prefill",

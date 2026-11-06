@@ -434,10 +434,13 @@ fn mixed_began_after_device_work(run: &Run) -> Vec<bool> {
 /// former defaults, ahead of `options`: an arm that names no candidate
 /// runs the default each comparison was written against.
 fn opted_out<'a>(options: &[(&'a str, serde_json::Value)]) -> Vec<(&'a str, serde_json::Value)> {
-    [(DSPARK_MIXED_PREPARED_ENGRAM, false.into())]
-        .into_iter()
-        .chain(options.iter().cloned())
-        .collect()
+    [
+        (DSPARK_MIXED_PREPARED_ENGRAM, false.into()),
+        (DSPARK_EARLY_PREFILL_ENGRAM, false.into()),
+    ]
+    .into_iter()
+    .chain(options.iter().cloned())
+    .collect()
 }
 
 fn with(

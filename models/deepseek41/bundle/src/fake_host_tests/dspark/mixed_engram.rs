@@ -264,9 +264,10 @@ fn mixed_verify_rows_land_the_synchronous_bytes_after_the_last_prefill_join() {
                 assert_eq!(off.iter().filter(|&&kind| kind == "ids").count(), 2);
                 let kinds = order(on);
                 assert!(!kinds.contains(&"sync"), "{kinds:?}");
-                // The prefill's two layers, every rank's joins of both, the
-                // verify layers, then the verify pieces between each rank's
-                // join of each layer, and all four gathers complete.
+                // The prefill's two layers, begun before the drafter's
+                // replays, every rank's joins of both, the verify layers,
+                // then the verify pieces between each rank's join of each
+                // layer, and all four gathers complete.
                 let expected: &[(&str, usize)] = if eager {
                     &[
                         ("ids", 2),
@@ -278,6 +279,7 @@ fn mixed_verify_rows_land_the_synchronous_bytes_after_the_last_prefill_join() {
                 } else {
                     &[
                         ("ids", 2),
+                        ("graph", 0),
                         ("wait", 8),
                         ("ids", 2),
                         ("graph", 0),

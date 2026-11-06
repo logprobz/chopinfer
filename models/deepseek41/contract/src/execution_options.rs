@@ -123,7 +123,7 @@ pub fn declarations() -> [ModelOptionV1; 20] {
         ),
         (
             DSPARK_EARLY_PREFILL_ENGRAM,
-            OptionDefinitionV1::Boolean { default: false },
+            OptionDefinitionV1::Boolean { default: true },
         ),
         (
             DSPARK_EARLY_PREFILL_PLAN,
@@ -385,7 +385,7 @@ mod tests {
             dspark_hc_fusion: false,
             dspark_markov_staged: false,
             dspark_mixed_prepared_engram: true,
-            dspark_early_prefill_engram: false,
+            dspark_early_prefill_engram: true,
             dspark_early_prefill_plan: false,
             prefill_streamed_lowering: false,
         };
@@ -415,7 +415,7 @@ mod tests {
             (DSPARK_HC_FUSION.into(), "true".into()),
             (DSPARK_MARKOV_STAGED.into(), "true".into()),
             (DSPARK_MIXED_PREPARED_ENGRAM.into(), "false".into()),
-            (DSPARK_EARLY_PREFILL_ENGRAM.into(), "true".into()),
+            (DSPARK_EARLY_PREFILL_ENGRAM.into(), "false".into()),
             (DSPARK_EARLY_PREFILL_PLAN.into(), "true".into()),
             (PREFILL_STREAMED_LOWERING.into(), "true".into()),
         ]);
@@ -440,7 +440,7 @@ mod tests {
                 dspark_hc_fusion: true,
                 dspark_markov_staged: true,
                 dspark_mixed_prepared_engram: false,
-                dspark_early_prefill_engram: true,
+                dspark_early_prefill_engram: false,
                 dspark_early_prefill_plan: true,
                 prefill_streamed_lowering: true,
             }

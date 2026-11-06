@@ -427,7 +427,7 @@ pub(crate) mod tests {
             (DSPARK_HC_FUSION, true.into()),
             (DSPARK_MARKOV_STAGED, true.into()),
             (DSPARK_MIXED_PREPARED_ENGRAM, false.into()),
-            (DSPARK_EARLY_PREFILL_ENGRAM, true.into()),
+            (DSPARK_EARLY_PREFILL_ENGRAM, false.into()),
             (DSPARK_EARLY_PREFILL_PLAN, true.into()),
             (PREFILL_STREAMED_LOWERING, true.into()),
         ] {
@@ -453,7 +453,7 @@ pub(crate) mod tests {
                 dspark_hc_fusion: true,
                 dspark_markov_staged: true,
                 dspark_mixed_prepared_engram: false,
-                dspark_early_prefill_engram: true,
+                dspark_early_prefill_engram: false,
                 dspark_early_prefill_plan: true,
                 prefill_streamed_lowering: true,
             }

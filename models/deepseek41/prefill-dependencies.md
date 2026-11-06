@@ -237,6 +237,25 @@ mixed step from 254.8 and 256.8 ms to 237.7 and 237.0 ms (about 7.2% less
 time, a 7.8% higher step rate, pair spread 1.2 points), with identical
 outputs; steps without a prefill did not change.
 
+Served traffic of long agentic contexts rarely repeats a key: each prompt
+appends a different number of rows, so most prefills lower in full and keep
+one more template, dropping the oldest. On a release build of the fake host
+on 2026-11-06, the identical request of a 1536- to 3072-row prefill after a
+93,000-token context beside eight decode items planned from scratch in 12
+to 14 ms when its row count was a multiple of 64 (about 2,340 to 2,410
+launches a rank) and in 20 to 26 ms otherwise (3,060 to 3,750 launches),
+6 to 7 ms more when the full cache dropped a template (3.7 to 5.3 ms of it
+freeing the dropped one), and in 0.5 to 0.7 ms from its template. The
+default-off DSpark option
+`dspark_early_prefill_plan` takes that host time out of the step's lead-in
+where the device would idle: the step plans its prefill once the drafter's
+launch returned, while the drafter runs, from the ids it hashed before
+drafting, and the templates that planning drops are freed once the prefill
+launched. The plan is the one the target would make, from the same inputs,
+caches and gathers, and planning issues no device work, so every launch,
+upload and result is unchanged; the fake-host tests compare whole journals
+with the option on and off, every reused plan lowered again too.
+
 For the implemented 64-row outward alignment, the 32K equal-cost layer-row
 estimate is 20.07% at chunk size 2048 and 42.20% at 8192. These are CPU
 work-count estimates. On 2026-10-19 at TP4 with 8192-row chunks and 250 W, the

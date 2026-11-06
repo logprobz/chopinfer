@@ -243,7 +243,7 @@ A single-install job may also pass `--content-proof NAME=FILE` for its one
 build; the proof is checked against every arm's fresh recipe the same way.
 
 Multi-install jobs require one shared keeper and each build's own
-[content proof](weight-keeper.md#identity-across-builds). Supply existing
+[content proof](operations-observability.md#weight-keeper). Supply existing
 lane-staged `content.json` files with `--content-proof base="$BASE_PROOF"
 --content-proof head="$HEAD_PROOF"`. The stage copies and seals them, so the
 job no longer depends on the original proof paths. Without these flags it

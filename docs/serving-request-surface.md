@@ -3,8 +3,7 @@
 `chopinfer serve` exposes an OpenAI-compatible HTTP API modeled on vLLM's.
 This page is the reference for its endpoints, request parameters, defaults,
 refusals and queueing. Server flags are listed by `chopinfer serve --help` and
-described in [operator commands](developer-preview.md) and
-[deployment](developer-preview.md); metrics are in
+described in [build and serve](developer-preview.md); metrics are in
 [metrics and traces](operations-observability.md).
 
 ## Endpoints
@@ -64,12 +63,6 @@ cut. Everything after it is plain answer text, with no reasoning, tool calls
 or format refusals. Client stops and special-token visibility still apply.
 This differs from vLLM, whose parsers keep reading post-end output. Raw
 completions are unchanged.
-
-From 2026-11-02, `ignore_eos` replays and generated-history traces (such as
-`tools/qual/agentic_mixed.py --workload trace --trace-history generated`)
-change behavior: sessions no longer abort on post-end markup, and the
-post-end tail returns as content, so it enters the next turn's rendered
-history. An A/B across this change compares different workloads.
 
 **Choices.** `n` may be 1 through 128. Completion prompts may be a list of
 strings or token-ID arrays, with at most 128 choices in total; choice indexes
@@ -364,7 +357,7 @@ package's `batch_limits` bound them further: startup refuses
 `maximum_prefill_tokens`, and `--prefill-chunk-tokens` must be a multiple of
 `prefill_granule` (64 for Qwen3.8). Decode items run first and a prefill chunk
 fills the rest of the step. `--prefill-policy fixed|tbt|adaptive` caps
-prefill beside decoding requests; see [mixed scheduling](serving-profiles.md#prefill-policy).
+prefill beside decoding requests; see [prefill policy](developer-preview.md#prefill-policy).
 
 ### Batched prompts
 
@@ -390,7 +383,7 @@ does not disable capture.
 ## Media inputs
 
 `/health` and `/v1/models` report the served `modalities`, for example
-`["text", "image"]` (see `--modalities` in [operator commands](developer-preview.md)). A
+`["text", "image"]` (see `--modalities` in [build and serve](developer-preview.md#native-build)). A
 chat media part outside that set returns 400 before any fetch or decode.
 
 - Images: PNG (1 to 8-bit, any color type, interlaced or not; not 16-bit)
@@ -580,10 +573,3 @@ and the reasoning/content split match.
 | Stream chunks | `prompt_token_ids`/`token_ids: null`; first tool delta has no `arguments` | `usage: null` with `include_usage`; first tool delta has `arguments: ""`; concatenated deltas are identical |
 | Identifiers | `chatcmpl-<hex>`, `chatcmpl-tool-<hex>` | `chatcmpl_<request>`, `call_<request>_<choice>_<index>` |
 | Model name | the served name chosen at launch | `local-<checkpoint identity>` by default, from a `qwen38-package` package and through `serve --model` alike, the pinned revision included ([compatible checkpoints](developer-preview.md#checkpoints)); `--served-model-name` chooses another, as the qualification runner does with `Qwen3.8-Flash-Next-FP8` |
-
-To check parity offline, `models/qwen38/compiler/tests/frontend_replay.rs`
-(part of `ci/cpu.sh`, skipped without `CHOPINFER_QWEN38_CHECKPOINT`) replays
-the capture's render and tokenizer requests through `/tokenize` and requires
-identical HF token IDs. Compare recorded server frontend observations with
-`python3 tools/qual/frontend_goldens.py CAPTURE`
-([qualification tools](../tools/qual/README.md)).

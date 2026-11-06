@@ -159,7 +159,7 @@ at the defaults, and its buffers for 128 rows held 32 to 64 MiB more before
 the KV pool.
 
 For persistent weight images and cross-build content proofs, see
-[the weight keeper](weight-keeper.md).
+[the weight keeper](operations-observability.md#weight-keeper).
 
 ## Drafter confidence
 

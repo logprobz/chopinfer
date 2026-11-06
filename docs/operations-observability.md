@@ -82,7 +82,7 @@ count lookups; the vLLM ones count tokens.
 | `chop_prefill_budget_selected_tokens{model_name,engine}` | `tbt` and `adaptive` only: histogram of the prefill cap selected for each step beside decoding requests, whether or not prefill used it; prefill-only steps select none |
 | `chop_mixed_step_predicted_seconds{model_name,engine}`, `chop_mixed_step_actual_over_predicted{model_name,engine}` | `tbt` and `adaptive` only: histograms of each mixed step's predicted time, for the batch as packed, and of its execution time over that prediction |
 | `chop_prefill_timing_cut_steps_total{model_name,engine}`, `chop_prefill_timing_cut_chunks_total{model_name,engine,end}`, `chop_prefill_timing_cut_forced_steps_total`, `chop_prefill_timing_cut_over_target_steps_total` | Timing cuts only (`--prefill-policy adaptive` on a grid bundle): steps whose grid chunks were sized against the tbt cap while requests decoded, those chunks by where they ended (`grid`, `capture`, `prompt`, `timing`, `floor` or `progress`), steps where a chunk exceeded the cap only to progress (neither the cap nor the floor reached a granule multiple within the step's room), and steps whose predicted time exceeded the target |
-| `chop_mixed_budget_term_seconds{model_name,engine,term}`, `chop_mixed_budget_samples`, `chop_mixed_budget_trained`, `chop_mixed_budget_decode_estimate_seconds{items_le}` | `tbt` and `adaptive` only: the fitted fixed, mixed, per-token and per-attention-pair terms, prefill steps in the fit window, whether the fit sets budgets, and the decode estimate per power-of-two item bucket ([mixed scheduling](serving-profiles.md#prefill-policy)) |
+| `chop_mixed_budget_term_seconds{model_name,engine,term}`, `chop_mixed_budget_samples`, `chop_mixed_budget_trained`, `chop_mixed_budget_decode_estimate_seconds{items_le}` | `tbt` and `adaptive` only: the fitted fixed, mixed, per-token and per-attention-pair terms, prefill steps in the fit window, whether the fit sets budgets, and the decode estimate per power-of-two item bucket ([prefill policy](developer-preview.md#prefill-policy)) |
 | `chop_prefix_cache_{queries,hits}_total`, `chop_prefix_cache_{queried,reused}_tokens_total` | Prefix-cache lookups and restored hits, and their prompt and reused tokens |
 | `chop_prefix_cache_recomputed_seen_tokens_total` | Prompt tokens a committed prefill computed although an earlier request's committed prefill had computed the same leading full pages, short of the last prompt token: repeats and shared prefixes no anchor covered ([where anchors are captured](numerics.md#kv-offload-and-prefix-state)) |
 | `chop_prefix_cache_recomputed_generated_tokens_total` | Whole generated pages from earlier completed replies that a later prompt successfully prefills; requires the optional reply-history observer |
@@ -107,7 +107,7 @@ count lookups; the vLLM ones count tokens.
 | `chop_media_host_{limit,preparing,payload}_bytes`, `chop_media_host_cached_idle_{images,bytes}` | The process's media preparation budget, the bytes preparations hold beyond their payloads, the bytes prepared payloads keep (cached ones included), and the cached images no request holds. They bound accounted media buffers, not resident memory ([request surface](serving-request-surface.md)) |
 | `chop_media_refusals_total{reason}` | Media requests refused by the backend: `context` (a prompt of inline images over the context, before decoding), `memory` (media over the request's preparation memory) and `codec` (a source that could not be read, probed or decoded, or outside its modality's limits) |
 | `chop_process_uptime_seconds` | Seconds on the server's monotonic metrics clock, which starts when the listener opens; it resets when the server restarts |
-| `chop_device_memory_{total,own,kv,reserve}_bytes{rank}` | Each rank's device memory when the serving KV pool was sized: the device's total, what this process's own allocations held before the pool, the pool, and the reserve kept for what is allocated after it ([GPU memory](serving-profiles.md#gpu-memory)) |
+| `chop_device_memory_{total,own,kv,reserve}_bytes{rank}` | Each rank's device memory when the serving KV pool was sized: the device's total, what this process's own allocations held before the pool, the pool, and the reserve kept for what is allocated after it ([GPU memory](developer-preview.md#gpu-memory)) |
 | `chop_device_memory_free_bytes{rank}`, `chop_device_memory_free_low_bytes{rank}` | Each rank's free device memory after the latest CUDA graph capture (or the sizing), and the lowest seen since the sizing. Graphs captured later come out of it |
 | `chop_mapped_view_bytes` | Gauge of live mapped views in whole pages, including partial edge pages, not raw tensor bytes |
 | `chop_mapped_view_resident_bytes` | Gauge of those whole pages resident in the host page cache; absent when residency is hidden |
@@ -147,7 +147,9 @@ and shared or not yet passed ancestors (ordered by recency with the
 The total anchor gauge includes private anchors. The cached-block gauge
 counts unique pages held only by anchors; class snapshot counts do not
 partition physical occupancy. Live sequences, restore pins and transfer
-leases can retain pages after an anchor disappears.
+leases can retain pages after an anchor disappears. `CHOPINFER_PREFIX_ANCESTRY=1`
+enables the default-off ancestry eviction candidate, a candidate switch
+rather than a serving option ([KV state](numerics.md#kv-offload-and-prefix-state)).
 
 ### KV offload and the RAM prefix tier
 
@@ -158,7 +160,7 @@ offload arena (`--kv-offload-gib` above 0 with a bundle that declares
 `chop_kv_offload_bytes_total` and `chop_kv_offload_pending_transfers` are
 exported from startup. The tier's stay zero while it is off and the gauge
 stays zero without an arena; the byte counter and the gauge count swaps too
-([option and bounds](serving-profiles.md#kv-offload-and-the-ram-prefix-tier)).
+([option and bounds](developer-preview.md#kv-offload-and-the-ram-prefix-tier)).
 `chop_prefix_cache_hits_total` and `chop_prefix_cache_reused_tokens_total`
 count every hit, RAM hits included; recomputation stays
 `chop_prefix_cache_recomputed_seen_tokens_total`.
@@ -218,196 +220,19 @@ digests, lengths, completion order and numeric region masks. They retain no
 text, token IDs, raw salts, prompt token storage or KV handles. The active
 partial page is discarded at completion. Warmup does not enter live history.
 
-Only accepted tokens after a successful model commit enter the observer.
-Rejected drafts, placeholders, rolled-back steps and cancellations do not
-become histories. Frontend completion selects the delivered prefix when a
-text stop interrupts a speculative run. Histories remain pending until the
-terminal event reaches the frontend channel. Parser, outbox and relay
-failures discard the observation. Channel handoff does not prove remote
-client receipt. Engine-only users finalize on engine completion. Late
-annotations cannot recreate evicted entries.
-
-A consumer compares only histories completed before its successful submit.
-Salt and media identity participate in the same chain as the prefix cache.
-Salt equality alone is not ancestry. Unsalted requests share one scope and
-do not identify unique sessions. The longest matching ancestry supplies the
-request diagnosis; distinct replies to the same exact prompt are ambiguous.
-Duplicate histories and compatible nested turns do not duplicate row counts.
-
-For page size B, prior prompt end P, generated end R, successful cache hit H,
-common prefix end L and current prompt length N, a matching generated-page
-interval is:
-
-```text
-[ceil(max(H,P)/B)*B, floor(min(L,R-1,N-1)/B)*B)
-```
-
-The generated counter counts the union of these intervals as original prompt
-rows commit. A row counts once even after preemption. Refused restores use
-the actual cold fallback. `rounding` rows are the matching generated-row
-union minus the full-page union. The existing recomputed-seen counter and
-the generated counter may overlap and must not be added.
-
-The separate `eligible` interval requires exact identity through R-1 and
-R-1 <= N-1. It counts committed rows in [max(H,P),R-1) without page rounding.
-A complete reply and a difference only in its final emitted token both
-qualify: that final token has no KV. An earlier mismatch gives zero
-reply-end opportunity even if many pages repeat. Across alternatives, one
-deepest valid terminal boundary supplies the eligible interval. A short
-reply can have eligible rows and no eligible full page.
-
-`chop_reply_history_rows_total` uses `candidate`, `eligible`, `repeated`,
-`rounding`, `unobserved`, `ambiguous` and `prefilled` kinds. Candidate rows are
-the union of prior generated ranges whose exact prompt boundary matches,
-whether their replies match or differ. Prefilled counts all successfully
-committed original prompt rows before N-1. Unobserved counts rows without
-that ancestry or whose observation was dropped. Ambiguous counts rows in
-consumers with alternative histories and overlaps the other kinds. Each
-interval is split at context positions 32768, 65536, 131072 and 196608, with
-fixed labels `0_32k`, `32_64k`, `64_128k`, `128_192k` and `192k_plus`.
-
-Observation outcomes distinguish `no_history`, `scope_without_ancestry`,
-`before_reply`, `inside_reply`, `final_token`, `complete_reply` and
-`shorter_consumer`. Whole-reply equality includes the emitted final token.
-`any_page` and `eligible_turn` count consumers with at least one committed
-row in the corresponding interval, once per consumer. Their denominator is
-`submitted`; the whole-reply rate uses `compared`. Finish counts distinguish
-natural stops, length cuts, frontend text stops, cancellation and delivery
-failure; `finish_tool_calls` is a subset of successful finishes.
-
-Mismatch labels describe the prior generated token: `reasoning`, `content`,
-`tool_calls`, `end_token`, `unknown` or `mixed`. Only declared end-token IDs
-are end markers. Ignored EOS is counted separately. Hidden delimiters,
-partial stops, unfinished calls and tokens crossing channels stay unknown
-or mixed. Position buckets are the first quarter, middle half and last
-quarter of the prior reply. None of these labels establishes a renderer
-cause. Annotation coverage counts annotated, unknown and mixed tokens;
-late annotations, evictions, drops and possible retention loss remain
-separate outcomes. All labels are fixed, with no salt hashes, request IDs,
-token values or prompt-derived strings.
-
-### Passive reply-end report
-
-Use [the model-owned report](../models/deepseek41/tools/reply_history_report.py)
-on two metrics snapshots from the same deployed process and profile during
-ordinary continued agentic turns, including tools, returned reasoning and
-natural endings. Each external JSON snapshot contains `deployment`,
-`profile`, `captured_at` (Unix seconds) and `metrics` (the unmodified
-Prometheus response). Record the actual deployment identity and window.
-Prefer boundaries between requests; overlapping request lifetimes can make
-request-level rate denominators incomplete. Keep snapshots, optional request
-traces and report output under `$CHOPINFER_DATA`. No service restart or
-special traffic is required by collection.
-
-```sh
-python3 -B models/deepseek41/tools/reply_history_report.py \
-  --before "$CHOPINFER_DATA/reply-before.json" \
-  --after "$CHOPINFER_DATA/reply-after.json" \
-  --out "$CHOPINFER_DATA/reply-report.json"
-```
-
-The report rejects disabled collection, resets, mismatched deployments,
-missing counters and inconsistent overlapping totals. Optional request
-traces are diagnostic only and incomplete traces are flagged. All inputs
-needed for the estimate are counters. Requests with no history are not
-silently classified as mismatches. Their committed rows bound missing
-candidate work; ambiguity and retention loss widen the interval further.
-
-For comparable DeepSeek `tp4-dspark` agentic traffic, the historical
-2026-11-01 all-reply busy-time bound is U = 79/2025, about 3.90%. The
-potential single reply-end saving is S = U*q, where q is the cost-weighted
-share of candidate reply-prefill rows eligible at the exact R-1 boundary.
-Any-page match rates do not enter this estimate. They describe repeated work
-and the potential of a different design with anchors inside replies.
-
-Supply five positive per-row cost lower/upper bounds with `--cost-low` and
-`--cost-high`, a workload-transfer multiplier interval with `--transfer`,
-and their evidence and assumptions with `--assumptions`. The default raw
-eligible-row fraction is an equal-cost scenario, not a conservative bound.
-The report shows 1:1, 2:1, 4:1 and 10:1 row-cost sensitivity. Near-end tool
-mismatches may correlate with costly replies. Existing kernel-interval
-union evidence can justify narrower costs; host elapsed time cannot supply
-a missing GPU busy/wall ratio. No fresh GPU timing is required.
-
-A fully observed window with zero eligible rows has zero reply-end
-opportunity even without calibration. Other supported upper bounds below
-2% recommend stopping; an interval crossing 2% is inconclusive. A lower
-bound above 2% warrants discussion before reuse work. These are potential
-savings, excluding future capture/restore overhead; current serving saves
-no time from these observations. Future traffic retains sampling
-uncertainty. `--independent-turns` and `--turn-cost-ratio` can state explicit
-independence and bounded per-turn cost assumptions for a conditional 95%
-envelope. Correlated sessions invalidate that assumption.
-
-### Observer CPU cost
-
-The explicit release harness `reply_observer_cpu_cost` measures paired
-observer-enabled and disabled work with identical synthetic tokens and
-schedules. It includes lookup, annotation, counters, reserved allocation,
-eviction, commit and finalization work; the existing prompt chain is common
-setup. It reports thread CPU time and elapsed distributions, per-token and
-per-request totals, C1/C8 cycles and the 32-request decode/verify ceiling.
-Normal contexts are 100-160k with 550-token replies; stress cases include
-262k contexts, 16k replies, many salts and separate/joint entry and byte caps.
-Run it through the shared heavy launcher in an open CPU window:
-
-```sh
-bash tools/dev/heavy.sh cargo test --locked --offline --release \
-  -p runtime-engine --lib reply_observer_cpu_cost -- --ignored --nocapture
-```
-
-Default-on collection requires additional p99 elapsed work, with measurement
-uncertainty, below 140 microseconds in every tested cycle. That budget is
-1% of the historical 14 ms lower end of the 14-25 ms step reference, not a
-new GPU result or a guarantee for every model. Unresolved or exceeded cost
-keeps the declared option default off.
-
-On 2026-11-02 the release CPU harness executed all nine cases with 1,000
-measured paired batches and eight warmup batches each. It restored the
-retained-history fixture before each pair, so matches, misses and near-end
-mismatches remained present throughout measurement. Every consumer lookup,
-commit, annotation, eviction and delivery receipt was inside timing.
-The following are incremental elapsed p99 values and mean CPU/elapsed
-costs per completed request, in microseconds. They are synthetic host
-measurements, not GPU timings or measured serving speedups.
-
-| Case | Lookup p99 | Finish p99 | Coincident cycle p50 | Coincident cycle p99 | Mean elapsed/request | Mean CPU/request |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| 100k_c1_ar | 404.7 | 4.3 | 352.8 | 408.2 | 484.1 | 390.1 |
-| 160k_c8_verify | 8175.5 | 34.0 | 8070.3 | 8205.6 | 1134.1 | 1133.3 |
-| 160k_c32_ar | 823.4 | 167.3 | 858.4 | 988.7 | 163.1 | 164.7 |
-| 160k_c32_verify64 | 30901.3 | 161.9 | 30913.4 | 31052.9 | 1096.6 | 1098.1 |
-| 160k_c32_verify192 | 32101.6 | 156.7 | 32146.4 | 32255.8 | 1136.6 | 1137.1 |
-| 160k_c8_salts | 442.2 | 32.7 | 465.5 | 471.8 | 182.7 | 182.2 |
-| long_reply_c1 | 1935.6 | 79.3 | 1969.7 | 2011.3 | 5648.2 | 5649.6 |
-| byte_pressure_c8 | 906.7 | 29.7 | 869.7 | 931.2 | 191.0 | 192.2 |
-| joint_pressure_c8 | 1937.3 | 28.5 | 1822.9 | 1962.3 | 309.7 | 309.3 |
-
-Mean incremental elapsed cost was 0.296-2.067 microseconds per committed
-token for the 550-token cases and 0.345 for the 16,384-token case.
-The normal cases retained 256 entries; byte pressure retained 30 at
-about 63.8 MiB, long replies retained 92 at about 62.9 MiB, and joint
-pressure retained 256 at about 63.8 MiB. All capacity assertions passed.
-
-The scheduler CPU clock updated in roughly 1 ms increments. Its per-cycle
-CPU quantiles therefore do not resolve sub-millisecond costs; the table
-reports aggregate paired CPU differences. Elapsed controls and alternating
-pair order expose variability. Other CPU work was present in the open
-window, so these measurements do not establish idle-host performance.
-Every case exceeded the 140-microsecond elapsed budget. Collection remains
-default off; an explicit on setting is a diagnostic choice. No default-on
-claim depends on noisy or quantized CPU measurements.
-
-### Prefix eviction candidate
-
-`CHOPINFER_PREFIX_ANCESTRY=1` enables the default-off ancestry eviction
-candidate in the host. Unset or any other value keeps global LRU. This is a
-candidate switch, not a serving option. Its
-[stateful replay acceptance](contributing.md#stateful-replay-acceptance)
-screen on 2026-11-04 was a tradeoff, and adoption was refused
-([KV offload and prefix state](numerics.md#kv-offload-and-prefix-state)).
-Adopting it as the default would remove the switch and the old LRU path;
-a declared serving option would keep both policies.
+`chop_reply_history_rows_total` counts committed prompt rows by `kind`
+(`candidate`, `eligible`, `repeated`, `rounding`, `unobserved`, `ambiguous`
+and `prefilled`) and context bucket (`0_32k`, `32_64k`, `64_128k`,
+`128_192k`, `192k_plus`): rows of earlier generated replies that a later
+prompt prefills again, and whether reuse at an exact reply end would have
+been eligible. `chop_reply_history_observations_total{outcome}` classifies
+each consumer (`no_history`, `scope_without_ancestry`, `before_reply`,
+`inside_reply`, `final_token`, `complete_reply`, `shorter_consumer` and
+finish and mismatch counts). All labels are fixed, with no salt hashes,
+request IDs, token values or prompt-derived strings. The generated counter
+and `chop_prefix_cache_recomputed_seen_tokens_total` may overlap and must
+not be added. Collection has measured host cost, so it stays off by
+default.
 
 ## Refused batches
 
@@ -507,139 +332,35 @@ visible on the documented read-only bind mount; keep that mount read-only.
 
 Keep the option `off` for cold-cache measurements. Since the sampler runs
 even with `off`, timing A/Bs should build both arms from a base that includes
-it. On 2026-11-01, DeepSeek V4.1 Flash with four GPUs at 250 W each and
-251 GB of host RAM measured mean GPU gather waits of 0.04, 0.06, 0.08 and
-0.03 ms per step at C1, C8, C16 and C32 with warm tables (0.1-0.3% of a
-step). Evicted tables caused up to 1,150 major faults per visit and
-multi-millisecond gather waits. An external sequential read restored 99%
-residency in about 60-70 seconds. The in-process background warm has not
-been timed at this size.
+it. `CHOPINFER_MAPPED_READ_AHEAD=0` disables adaptive read-ahead advice for
+synchronous and asynchronous mapped gathers (`=1` enables both), and
+`CHOPINFER_MAPPED_ASYNC_READ_AHEAD` overrides only the asynchronous path;
+the advice never changes gather bytes, row order or synchronization.
 
-On 2026-10-21, the loader changes were compared with the round-8 serving
-baseline using DeepSeek V4.1 Flash, TP4, release binaries, four GPUs capped at
-250 W each, 48 CPUs and `--load-threads 16`. Both arms used prefix caching,
-32 maximum sequences and 8192-token prefill chunks. Each condition used an
-ABBA sequence with two starts per arm on an idle host and idle selected GPUs.
-Readiness includes the same model construction and warmup in both arms.
+### Weight keeper
 
-| Profile | Checkpoint cache condition | Baseline mean (range), seconds | Loader mean (range), seconds | Mean reduction |
-|---|---|---:|---:|---:|
-| `tp4-ar` | Cold | 105.9 (104.3-107.5) | 94.4 (90.0-98.9) | 10.8% |
-| `tp4-ar` | Recent restart | 106.3 (104.8-107.8) | 96.9 (95.9-98.0) | 8.8% |
-| `tp4-dspark` | Cold | 145.1 (141.9-148.3) | 135.5 (130.0-141.1) | 6.6% |
-| `tp4-dspark` | Recent restart | 148.3 (144.8-151.7) | 131.8 (131.4-132.2) | 11.1% |
+A keeper owns immutable rank images after a serving process exits, so a
+restarted server maps them read-only instead of loading weights again:
 
-Cold runs evicted only checkpoint files with `POSIX_FADV_DONTNEED` and
-recorded resulting residency. Recent restarts followed a priming startup;
-the text loader still read almost all of its approximately 339 GB through
-direct I/O. Both conditions retained validated metadata-plan cache entries.
-These are paired observations with two samples per arm, including the
-variation shown above. The earlier 95.9-second diagnostic startup used
-different cache conditions and is not the baseline for these percentages.
+```sh
+chopinfer weights keep --keeper-dir "$KEEPER_DIR" \
+  --model "$CHECKPOINT" --tensor-parallel-size 4
+chopinfer serve --model "$CHECKPOINT" --tensor-parallel-size 4 \
+  --weight-keeper "$KEEPER_DIR" --weight-keeper-policy require
+```
 
-Mean text-weight production and upload fell from 80.9 to 73.1 seconds for
-cold AR, 81.3 to 75.8 for recent AR, 83.6 to 77.5 for cold DSpark and 87.4
-to 74.2 for recent DSpark. Cached text planning and validation took 1.8-1.9
-seconds, versus 5.4 seconds without reuse. DSpark warmup remained about
-38 seconds. The largest server peak RSS observed by readiness was 9.26
-versus 8.91 GiB for AR and 15.09 versus 14.78 GiB for DSpark. Reading,
-preparing and uploading text weights remains the largest loading phase.
-
-Separate diagnostic starts matched all eight arena digests in each profile
-and all token IDs and log-probability bits for three fixed 32-token responses
-per profile. An unequal-rank upload probe checked all 208,666,687 bytes on
-four GPUs. Diagnostic readback and detailed timing counters were disabled in
-the performance runs. Every job passed its before/after power and Xid checks
-and released the GPUs. The quick and full CPU gates also passed.
-
-### Package reuse and packed-input follow-up
-
-A second comparison on 2026-10-21 used the round-9 serving baseline, including
-its wider 97-shape DSpark warmup. Both arms used the same serving code and
-the TP4 settings above. The follow-up reuses a verified direct package before
-emission, shares an owned checkpoint-header snapshot during preparation,
-reuses scale inputs across packed sections, omits unused packed outputs and
-reads cold input windows directly into owned aligned storage. Exact BF16
-operand admission remains mandatory, including code-dependent checks for
-extreme scales. Ordinary exact scale ranges avoid expanding a temporary
-floating-point grid.
-
-| Profile | Cache condition | Baseline mean (range), seconds | Follow-up mean (range), seconds | Mean reduction |
-|---|---|---:|---:|---:|
-| `tp4-dspark` | Cold payload, reused metadata | 137.5 (137.2-137.8) | 117.5 (117.4-117.6) | 14.5% |
-| `tp4-dspark` | Recent restart | 140.4 (137.3-143.4) | 120.3 (120.3-120.4) | 14.3% |
-| `tp4-dspark` | First package and plan, cold payload | 141.0 (139.6-142.4) | 132.7 (132.5-132.8) | 5.9% |
-| `tp4-ar` | Recent restart | 94.5 (93.4-95.6) | 76.6 (76.5-76.8) | 18.9% |
-
-Each condition used four starts in ABBA order on a quiet host, two per arm.
-Cold and first-preparation starts recorded zero resident checkpoint pages
-before launch after file-scoped eviction. Recent restarts followed a priming
-start and had 52-84 MiB of checkpoint pages resident, far less than the model.
-The first-preparation condition used a new private package and metadata-plan
-cache for each start. Diagnostic readbacks and detailed timing counters were
-disabled. These percentages compare only this matched serving baseline;
-the earlier round-8 figures used different warmup coverage.
-
-The recent-restart DSpark means break down as follows. The two residual rows
-subtract nested timers from their enclosing elapsed timer; they do not name
-individual functions. Reading, packing and transfers overlap within the
-weight pipeline and cannot be added as separate elapsed phases.
-
-| Startup work | Baseline, seconds | Follow-up, seconds |
-|---|---:|---:|
-| Package preparation/reuse | 12.1 | 0.5 |
-| Other host startup, residual | 2.3 | 1.6 |
-| Weight planning and validation | 1.9 | 2.0 |
-| Text-weight read, prepare and upload | 75.7 | 67.5 |
-| Encoder weight upload | 0.5 | 0.6 |
-| Other model initialization, residual | 2.3 | 2.3 |
-| Generation warmup | 45.5 | 45.9 |
-| Total readiness | 140.4 | 120.3 |
-
-First package preparation fell from 12.0 to 7.8 seconds; uncached host weight
-planning still took about 6.2 seconds in both arms. A valid package hit skips
-emission and topology planning, but still verifies its inputs and package.
-One package continues to serve its supported TP2 and TP4 topologies. Actual
-checkpoint dimensions, headers and precision contracts determine the layout.
-
-Text-weight source reads fell from 339.0 to 321.7 GB, and loader requests from
-143,948 to 96,995. The largest retained shared-input/output allocation across
-these timing runs rose from 0.58 to 0.80 GiB, within the unchanged 1 GiB cap.
-The idle buffer pool stayed within 64 MiB, and two 64 MiB pinned upload buffers
-per rank remain the limit. The largest server peak RSS observed by readiness
-was 16.59 versus 16.85 GiB for DSpark and 8.92 versus 8.79 GiB for AR.
-These are server process peaks, not aggregate peaks of exited preparation
-helpers. Live-process major faults were 1,127-1,128 in cold DSpark starts and
-zero in the recent-restart comparisons.
-
-Separate diagnostic starts matched all eight weight-arena digests and all
-1,088 token IDs and selected/top log-probability positions per profile,
-including 62 concurrent requests. DSpark captured the same 1,536 startup
-graph keys in both arms. The baseline graph cache was full: both arms refused
-100 capture attempts covering the same 13 keys. Concurrent serving formed
-different batches and therefore different later refusal sets, including
-between two executions of the unchanged baseline. Those dynamic refusals
-were recorded separately; exact startup coverage, no new serving captures,
-served bits, capture/release failures and pressure checks remained required.
-AR matched all 24 startup graph keys. The unequal-rank upload probe and five
-shared-format loading fixtures also passed. Every job checked the 250 W caps,
-Xid records and device release.
-
-Shorter per-shape warmup requests were rejected after GPU testing: some
-requests ended before an accepted draft exercised the required catch-up
-graphs. The retained change preserves the original output budgets and full
-warmup work. Larger source-read windows were also not retained: 4, 8 and
-16 MiB windows each delivered about 6.8 GB/s in a bounded 16 GiB source-only
-probe with four readers. This is a sampled storage rate, not an end-to-end
-startup guarantee.
-
-A later same-candidate ABBA sweep compared 16 with eight loading workers per
-rank. Readiness averaged 109.1 versus 111.9 seconds; eight workers were 2.6%
-slower despite using about 0.9 GiB less peak server memory. All arena hashes,
-startup graph coverage and served bits matched. The 16-worker default for
-this CPU/rank configuration is retained. These runs used a separate quiet
-window, so their absolute times should not replace the paired baseline
-comparison above.
+A borrower holds a lease until its mappings are released; stopping it never
+stops the keeper. Without a content proof, the recipe identity (checkpoint
+identity, encoded weight plan and transform implementations) decides
+whether images match. To lend across builds, each build prepares its own CPU
+proof with `chopinfer weights identity --content --output FILE --model
+"$CHECKPOINT" --tensor-parallel-size 4` and passes it to both keeper and
+server with `--weight-keeper-identity FILE`; the keeper verifies it against
+the uploaded allocation before lending. `prefer` loads refused images
+normally, `require` fails instead, and a malformed or stale proof is an
+input error. Cross-install reuse still requires the same unchanged
+checkpoint files. Record loaded versus borrowed bytes with the startup
+receipt.
 
 ## Readiness and shutdown
 
@@ -921,10 +642,9 @@ histogram bucket counts, interpolated linearly within a bucket as Prometheus
 Output stays on stderr, so capping and retention belong to the supervisor:
 journald (`SystemMaxUse=`, and `LogRateLimitIntervalSec=` with
 `LogRateLimitBurst=` per unit) or Docker (`--log-driver local`, or
-`json-file` with `--log-opt max-size=` and `--log-opt max-file=`). As an
-estimate from the traffic of 2026-10-25, not a bound, a plain `2>> file` at
-`info` grows by tens of MB over two days. Sustained failures, cancellations
-or unrecognized bundle output can write much more.
+`json-file` with `--log-opt max-size=` and `--log-opt max-file=`). Sustained
+failures, cancellations or unrecognized bundle output can write much more
+than ordinary traffic.
 
 Lines can be lost: request lines over their budget or a full queue (counted
 in the dropped-count line), and routine traces when their queue is full
@@ -994,7 +714,7 @@ Step and request logs are not replay inputs; they omit token contents.
   so align steps with client timings by this field, not by when a line is
   read.
 - `prefill_cap`, `predicted_us`: the
-  [mixed scheduling](serving-profiles.md#prefill-policy) cap and TBT prediction;
+  [prefill policy](developer-preview.md#prefill-policy) cap and TBT prediction;
   null under the fixed budget or before an estimate exists.
 - `decode_estimate_us` is always null and `trained` is always false. These
   retired decode-aware slots retain their names and types in `chopinfer.step.v1`.
@@ -1039,27 +759,9 @@ Step and request logs are not replay inputs; they omit token contents.
   contention that page faults cause, and it is invalid for a change that
   alters Engram timing itself; judge those on raw time.
 
-In DeepSeek's DSpark phase timings in `chopinfer.step.v1`, legacy prefill
-planning is now charged to `upload` instead of `target_lower` because it
-runs inside the staging upload timer.
-
-The served A/B tuner records per-window clocks, per-visit major faults and
-job/visit enforced power limits. A changing limit voids the whole job.
-Its [cold Engram workload](depth-tuning.md#cold-engram-workload) pairs an
-acknowledged mapped-row control epoch with file-page advice and `mincore`
-residency. Cache reset and page-table release do not evict file pages.
-Residual residency is reported as partly warm. Cold reports are labelled
-"cold, unmatched prompts" and cannot automatically
-accept a change. Prompt assignment is deterministic and length-balanced by
-nearest length across arms, with source order restored within each arm and
-length differences recorded. Standard windows open only after all slots
-finish priming and retain replacement counts, prefill share and observed
-duration. Supported undrafted or declared untouched control shapes check
-for a first-visit A1 offset; a detected offset invalidates timing acceptance.
-The cold window also retains
-`host.mapped_gather_us` and `host.mapped_gather_exposed_us` from step.v1,
-TTFT and prefill execution times. These fields can overlap other host phases.
-A/B jobs can decide on [Engram-adjusted step time](depth-tuning.md#engram-adjusted-step-time).
+The served A/B tuner (`tools/tune`) records per-window clocks, per-visit
+major faults and job and visit enforced power limits; a changing limit voids
+the whole job. A/B jobs can decide on the Engram-adjusted step time above.
 
 ## Inspect sampled steps
 
@@ -1114,17 +816,4 @@ metrics retain their names and meanings.
 
 A mixed step's `prefill_cap` is its chosen cap, or null when uncapped. The
 cut counters and step records show whether eligible mixed steps actually
-cut chunks. The measurements below describe the retired fixed timing-cut
-arm, not the current fixed token-budget policy.
-
-On 2026-10-28, DeepSeek TP4 DSpark C8 replay (eight sessions, three turns,
-32K/64K contexts, session-specific cache salts, temperature 1, 150 ms TBT
-target, 512-token floor) measured 75.7% and 84.0% less stall time above
-250 ms per 1,000 gaps in the two pairs, with no gaps above 1 s with `fixed`.
-TTFT p95 rose from 1.764 to 3.061 s (+73.6%) and from 1.911 to 3.046 s
-(+59.4%). Energy per output token rose from 3.353 to 3.764 J (+12.3%) and
-from 3.440 to 3.746 J (+8.9%). Output tok/s fell 4.0% and 3.0%, averaging
-3.5%. These are changes in the measured quantities within each pair.
-The fixed timing-cut arm is now retired. See the
-[fixed timing-cut tradeoff](serving-profiles.md#fixed-timing-cut-tradeoff)
-for the measurement envelope and policy choice.
+cut chunks.

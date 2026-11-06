@@ -236,9 +236,9 @@ fn mixed_verify_rows_land_the_synchronous_bytes_after_the_last_prefill_join() {
                     })
                 })
             };
-            let off = run(&options);
-            options.push((DSPARK_MIXED_PREPARED_ENGRAM, true.into()));
             let on = run(&options);
+            options.push((DSPARK_MIXED_PREPARED_ENGRAM, false.into()));
+            let off = run(&options);
             // Each step's verify rows take one route per Engram layer: the
             // prepared gather with the candidate, the synchronous one per
             // rank and plane without it.

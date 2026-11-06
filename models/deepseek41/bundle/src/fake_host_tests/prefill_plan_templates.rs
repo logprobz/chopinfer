@@ -619,7 +619,7 @@ fn long_context_templates_issue_the_fresh_lowerings_journal() {
         let (name, expected) = if dspark {
             (
                 "flash-tp4-dspark-long-context-templates",
-                (195050, 0x69f33940baa393f1),
+                (195076, 0x3e0280fb3012bdd8),
             )
         } else {
             (

@@ -191,7 +191,7 @@ impl Schedule<'_> {
             &host,
             true,
             MappedHost::with_row_ids(Rc::clone(&host)),
-            options,
+            &opted_out(options),
         )
         .unwrap_or_else(|e| panic!("{e:?}: {:?}", host.logs.borrow()));
         self.run_on(&host, instance)
@@ -205,7 +205,7 @@ impl Schedule<'_> {
         let instance = create_media_backend_with_options(
             &host,
             MappedHost::with_row_ids(Rc::clone(&host)),
-            options,
+            &opted_out(options),
         )
         .unwrap_or_else(|e| panic!("{e:?}: {:?}", host.logs.borrow()));
         self.run_on(&host, instance)
@@ -430,6 +430,16 @@ fn mixed_began_after_device_work(run: &Run) -> Vec<bool> {
         .collect()
 }
 
+/// The candidates adopted since these comparisons were written, at their
+/// former defaults, ahead of `options`: an arm that names no candidate
+/// runs the default each comparison was written against.
+fn opted_out<'a>(options: &[(&'a str, serde_json::Value)]) -> Vec<(&'a str, serde_json::Value)> {
+    [(DSPARK_MIXED_PREPARED_ENGRAM, false.into())]
+        .into_iter()
+        .chain(options.iter().cloned())
+        .collect()
+}
+
 fn with(
     options: &[(&'static str, serde_json::Value)],
     more: &[(&'static str, serde_json::Value)],
@@ -554,7 +564,8 @@ fn prompted(
     host.speculation.set(Some((5, 32)));
     host.kv_pages.set(24 * SLOT_PAGES);
     let mut instance =
-        create_backend_with_options(&host, true, backend(Rc::clone(&host)), options).unwrap();
+        create_backend_with_options(&host, true, backend(Rc::clone(&host)), &opted_out(options))
+            .unwrap();
     for slot in 0..8 {
         run(
             &mut instance,

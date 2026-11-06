@@ -21,6 +21,7 @@ use model_deepseek41_contract::execution_options::{
 use runtime_bundle_sdk::prefill::{Boundary, encode};
 
 mod plan;
+mod streamed;
 
 /// KV pages of a slot: slot `s` takes pages from `s * SLOT_PAGES`, room
 /// for a prompt of about 100K tokens.

@@ -10,6 +10,10 @@
 //! pre-check of every output and status byte, clean and with a poisoned
 //! final row, then three visits of an A/A control and both A/B pairs in
 //! rotating order, on two idle GPUs within the same timeout.
+//! `compact_rows_pair_grid` runs the same pairs for one projection over a
+//! dense grid of row counts (`CHOPINFER_COMPACT_GRID`), and
+//! `compact_rows_bitwise_every_row` checks one compact stage bitwise at
+//! every count of a band (`CHOPINFER_COMPACT_SWEEP`) on one GPU.
 use bundle_deepseek41::sm120::{self, mxfp8_fold as registration};
 use kernel_core::{
     backend::{Backend, Counts, Launch, Need, View},
@@ -780,9 +784,105 @@ fn compact_rows_bitwise_every_row() {
     assert!(ran.is_some(), "the bitwise sweep must run");
 }
 
-#[test]
-#[ignore = "pair-lab: two idle GPUs, CUDA events, A/A control, at most five minutes"]
-fn compact_live_rows_pair() {
+/// The served partition (arm 0) against each of `compacts` at every count
+/// of `rows` on one device: the bitwise pre-check of `compact_arms`, then
+/// three visits of an A/A control and one A/B pair per compact entry, in
+/// rotating order. The A/A arms issue the very same served plan over the
+/// same operands. One result per count.
+fn compact_pairs(
+    session: &Session,
+    backend: &Sm120,
+    e: &Entry,
+    compacts: &[&Compact],
+    rows: &[u32],
+    deadline: Instant,
+    snapshot: &dyn Fn() -> LabResult<serde_json::Value>,
+) -> LabResult<Vec<serde_json::Value>> {
+    let mut arena = Arena {
+        session,
+        views: Vec::new(),
+    };
+    let q = e.query;
+    let weights = compact_weights(&mut arena, e)?;
+    let names: Vec<String> = std::iter::once("aa".to_string())
+        .chain(compacts.iter().map(|c| format!("ab-s{}", c.stages)))
+        .collect();
+    let mut results = Vec::new();
+    for &count in rows {
+        let keep = arena.views.len();
+        let arms = compact_arms(&mut arena, backend, e, compacts, count, weights)?;
+        let label = format!("compact-n{}-k{}-g{}-r{count}", q.n, q.k, q.groups);
+        let mut visits = Vec::new();
+        for visit in 0..3 {
+            if Instant::now() >= deadline {
+                return Err("pair-lab time budget exhausted; no complete result".into());
+            }
+            // Rotate the control and the comparisons each visit.
+            let visit_start = snapshot()?;
+            let mut timings = BTreeMap::new();
+            for step in 0..names.len() {
+                let which = (visit + step) % names.len();
+                let name = &names[which];
+                let timing = kernel_harness::with_timing_label(&format!("{label}-{name}"), || {
+                    kernel_harness::time_ab(
+                        session,
+                        1,
+                        3,
+                        [EvictionMode::Read; 2],
+                        |arm, stream| {
+                            let plan = if which == 0 || arm == 0 { 0 } else { which };
+                            arms[plan].issue(&arena, stream)
+                        },
+                    )
+                })?;
+                timings.insert(name.clone(), timing);
+            }
+            let spread = (1.0 - timings["aa"].paired_ratio).abs() * 100.0;
+            let mut record = json!({"gpu_start": visit_start, "aa_spread_pct": spread,
+                "served_ms": timings[&names[1]].arms[0].median_ms});
+            for c in compacts {
+                let ab = &timings[&format!("ab-s{}", c.stages)];
+                let gain = (1.0 - ab.paired_ratio) * 100.0;
+                println!(
+                    "device={} {label} visit={visit} stages={} served_ms={} compact_ms={} gain_pct={gain} aa_spread_pct={spread}",
+                    session.ordinal, c.stages, ab.arms[0].median_ms, ab.arms[1].median_ms
+                );
+                record[format!("s{}", c.stages)] = json!({"compact_ms": ab.arms[1].median_ms,
+                    "served_ms": ab.arms[0].median_ms, "gain_pct": gain, "gain_exceeds_control": gain > spread});
+            }
+            if spread > 3.0 {
+                println!("{label}: wide A/A spread ({spread}%); rerun on an idle host");
+            }
+            record["gpu_end"] = snapshot()?;
+            visits.push(record);
+        }
+        results.push(
+            json!({"n": q.n, "k": q.k, "groups": q.groups, "rows": count, "bitwise": true,
+            "served_symbols": arms[0].launches.iter().map(|c| &c.symbol).collect::<Vec<_>>(),
+            "compact_symbols": arms[1..].iter()
+                .map(|arm| arm.launches.iter().map(|c| &c.symbol).collect::<Vec<_>>())
+                .collect::<Vec<_>>(),
+            "visits": visits}),
+        );
+        drop(arms);
+        arena.views.truncate(keep);
+    }
+    Ok(results)
+}
+
+/// Runs `pairs` on each of two idle GPUs in turn under one power limit per
+/// device, writing `receipt` per device and a job receipt. Pairs stop at
+/// 280 seconds, within the 295-second process timeout.
+fn on_two_gpus(
+    receipt: &str,
+    case: serde_json::Value,
+    pairs: impl Fn(
+        &Session,
+        &Sm120,
+        Instant,
+        &dyn Fn() -> LabResult<serde_json::Value>,
+    ) -> LabResult<Vec<serde_json::Value>>,
+) {
     assert_eq!(
         kernel_harness::selected_ordinals()
             .unwrap()
@@ -791,9 +891,13 @@ fn compact_live_rows_pair() {
         2
     );
     let start = Instant::now();
+    let deadline = start + Duration::from_secs(280);
     let backend = backend().unwrap();
     kernel_harness::gpu_test_multi_with(probe().unwrap(), 4 << 30, |sessions| {
-        let job_start = sessions.iter().map(gpu_snapshot).collect::<LabResult<Vec<_>>>()?;
+        let job_start = sessions
+            .iter()
+            .map(gpu_snapshot)
+            .collect::<LabResult<Vec<_>>>()?;
         for (session, initial) in sessions.iter().zip(&job_start) {
             let limit = initial["enforced_power_w"]
                 .as_f64()
@@ -805,90 +909,179 @@ fn compact_live_rows_pair() {
                 }
                 Ok(state)
             };
-            let mut results = Vec::new();
-            for e in registration::prefill_entries(&FLASH, 4)? {
-                let compacts = compact_entries(&e)?;
-                let mut arena = Arena {
-                    session,
-                    views: Vec::new(),
-                };
-                let q = e.query;
-                let weights = compact_weights(&mut arena, &e)?;
-                for rows in LIVE_ROWS {
-                    let keep = arena.views.len();
-                    // Arm 0 is the served partition; arms 1 and 2 the compact stages.
-                    let arms = compact_arms(&mut arena, &backend, &e, &[&compacts[0], &compacts[1]], rows, weights)?;
-                    let label = format!("compact-n{}-k{}-g{}-r{rows}", q.n, q.k, q.groups);
-                    let mut visits = Vec::new();
-                    for visit in 0..3 {
-                        if start.elapsed() >= Duration::from_secs(280) {
-                            return Err("pair-lab time budget exhausted; no complete result".into());
-                        }
-                        // Rotate the control and the two comparisons each visit. The
-                        // A/A arms issue the very same served plan over the same operands.
-                        let visit_start = snapshot()?;
-                        let mut timings = BTreeMap::new();
-                        for step in 0..3 {
-                            let which = (visit + step) % 3;
-                            let name = ["aa", "ab-s2", "ab-s3"][which];
-                            let timing = kernel_harness::with_timing_label(&format!("{label}-{name}"), || {
-                                kernel_harness::time_ab(session, 1, 3, [EvictionMode::Read; 2], |arm, stream| {
-                                    let plan = if which == 0 || arm == 0 { 0 } else { which };
-                                    arms[plan].issue(&arena, stream)
-                                })
-                            })?;
-                            timings.insert(name, timing);
-                        }
-                        let spread = (1.0 - timings["aa"].paired_ratio).abs() * 100.0;
-                        let mut record = json!({"gpu_start": visit_start, "aa_spread_pct": spread,
-                            "served_ms": timings["ab-s2"].arms[0].median_ms});
-                        for (name, stages) in [("ab-s2", 2), ("ab-s3", 3)] {
-                            let ab = &timings[name];
-                            let gain = (1.0 - ab.paired_ratio) * 100.0;
-                            println!(
-                                "device={} {label} visit={visit} stages={stages} served_ms={} compact_ms={} gain_pct={gain} aa_spread_pct={spread}",
-                                session.ordinal, ab.arms[0].median_ms, ab.arms[1].median_ms
-                            );
-                            record[format!("s{stages}")] = json!({"compact_ms": ab.arms[1].median_ms,
-                                "served_ms": ab.arms[0].median_ms, "gain_pct": gain, "gain_exceeds_control": gain > spread});
-                        }
-                        if spread > 3.0 {
-                            println!("{label}: wide A/A spread ({spread}%); rerun on an idle host");
-                        }
-                        record["gpu_end"] = snapshot()?;
-                        visits.push(record);
-                    }
-                    results.push(json!({"n": q.n, "k": q.k, "groups": q.groups, "rows": rows, "bitwise": true,
-                        "served_symbols": arms[0].launches.iter().map(|c| &c.symbol).collect::<Vec<_>>(),
-                        "compact_symbols": [&arms[1].launches.iter().map(|c| &c.symbol).collect::<Vec<_>>(),
-                                            &arms[2].launches.iter().map(|c| &c.symbol).collect::<Vec<_>>()],
-                        "visits": visits}));
-                    drop(arms);
-                    arena.views.truncate(keep);
-                }
-            }
+            let results = pairs(session, &backend, deadline, &snapshot)?;
             session.receipt(
-                "deepseek41-compact-live-rows",
+                receipt,
                 BTreeMap::from([
+                    ("case".into(), case.clone()),
                     ("results".into(), json!(results)),
                     ("gpu_start".into(), initial.clone()),
                     ("gpu_end".into(), snapshot()?),
                 ]),
             )?;
         }
-        let job_end = sessions.iter().map(gpu_snapshot).collect::<LabResult<Vec<_>>>()?;
+        let job_end = sessions
+            .iter()
+            .map(gpu_snapshot)
+            .collect::<LabResult<Vec<_>>>()?;
         for (before, after) in job_start.iter().zip(&job_end) {
             if before["enforced_power_w"] != after["enforced_power_w"] {
                 return Err("power limit changed across the two-device job; result is void".into());
             }
         }
         sessions[0].receipt(
-            "deepseek41-compact-live-rows-job",
-            BTreeMap::from([("gpu_start".into(), json!(job_start)), ("gpu_end".into(), json!(job_end))]),
+            &format!("{receipt}-job"),
+            BTreeMap::from([
+                ("case".into(), case.clone()),
+                ("gpu_start".into(), json!(job_start)),
+                ("gpu_end".into(), json!(job_end)),
+            ]),
         )?;
         Ok(())
     })
     .unwrap()
     .expect("the two-GPU probe must execute");
     assert!(start.elapsed() < Duration::from_secs(295));
+}
+
+#[test]
+#[ignore = "pair-lab: two idle GPUs, CUDA events, A/A control, at most five minutes"]
+fn compact_live_rows_pair() {
+    on_two_gpus(
+        "deepseek41-compact-live-rows",
+        json!({"rows": LIVE_ROWS}),
+        |session, backend, deadline, snapshot| {
+            let mut results = Vec::new();
+            for e in registration::prefill_entries(&FLASH, 4)? {
+                let compacts = compact_entries(&e)?;
+                results.extend(compact_pairs(
+                    session,
+                    backend,
+                    &e,
+                    &[&compacts[0], &compacts[1]],
+                    &LIVE_ROWS,
+                    deadline,
+                    snapshot,
+                )?);
+            }
+            Ok(results)
+        },
+    );
+}
+
+/// One projection, its compact stages and the row counts of a dense timing
+/// grid: `CHOPINFER_COMPACT_GRID={"n":..,"k":..,"groups":..,"stages":[..],
+/// "rows":[..]}`, at most 128 ascending counts within 129..=8191.
+fn grid_case() -> LabResult<(Entry, Vec<Compact>, Vec<u32>)> {
+    grid_case_from(&std::env::var("CHOPINFER_COMPACT_GRID").map_err(|e| e.to_string())?)
+}
+
+fn grid_case_from(text: &str) -> LabResult<(Entry, Vec<Compact>, Vec<u32>)> {
+    let value: serde_json::Value = serde_json::from_str(text).map_err(|e| e.to_string())?;
+    let keys = ["n", "k", "groups", "stages", "rows"];
+    let object = value.as_object().ok_or("the grid case must be an object")?;
+    if object.len() != keys.len() || keys.iter().any(|key| !object.contains_key(*key)) {
+        return Err("the grid case has missing or unknown fields".into());
+    }
+    let [n, k, groups] = ["n", "k", "groups"].map(|key| {
+        value[key]
+            .as_u64()
+            .and_then(|v| u32::try_from(v).ok())
+            .unwrap_or(0)
+    });
+    let counts = |key: &str| -> LabResult<Vec<u32>> {
+        value[key]
+            .as_array()
+            .ok_or(format!("the grid case's {key} must be a list"))?
+            .iter()
+            .map(|v| {
+                v.as_u64()
+                    .and_then(|v| u32::try_from(v).ok())
+                    .ok_or(format!("the grid case's {key} must hold counts"))
+            })
+            .collect()
+    };
+    let (stages, rows) = (counts("stages")?, counts("rows")?);
+    if rows.is_empty()
+        || rows.len() > 128
+        || rows[0] < 129
+        || rows[rows.len() - 1] > 8191
+        || rows.windows(2).any(|w| w[0] >= w[1])
+    {
+        return Err("grid rows must be 1 to 128 ascending counts within 129..=8191".into());
+    }
+    if stages.is_empty() || stages.windows(2).any(|w| w[0] >= w[1]) {
+        return Err("grid stages must be ascending and not empty".into());
+    }
+    let e = registration::prefill_entries(&FLASH, 4)?
+        .into_iter()
+        .find(|e| (e.query.n, e.query.k, e.query.groups) == (n, k, groups))
+        .ok_or("the grid case names no TP4 prefill projection")?;
+    let compacts = compact_entries(&e)?;
+    let selected = stages
+        .iter()
+        .map(|&s| {
+            compacts
+                .iter()
+                .find(|c| c.stages == s)
+                .cloned()
+                .ok_or("the grid case's stages must be 2 or 3".to_string())
+        })
+        .collect::<LabResult<Vec<_>>>()?;
+    Ok((e, selected, rows))
+}
+
+#[test]
+fn the_grid_case_names_one_tp4_projection_and_its_rows() {
+    let case = grid_case_from;
+    let (e, compacts, rows) =
+        case(r#"{"n":512,"k":5120,"groups":1,"stages":[2],"rows":[1153,1185,1408]}"#).unwrap();
+    assert_eq!(e.query.n, 512);
+    assert_eq!(compacts.iter().map(|c| c.stages).collect::<Vec<_>>(), [2]);
+    assert_eq!(rows, [1153, 1185, 1408]);
+    let all = (129..=257)
+        .map(|r| r.to_string())
+        .collect::<Vec<_>>()
+        .join(",");
+    for bad in [
+        r#"{"n":512,"k":5120,"groups":1,"stages":[2],"rows":[]}"#,
+        r#"{"n":512,"k":5120,"groups":1,"stages":[2],"rows":[128]}"#,
+        r#"{"n":512,"k":5120,"groups":1,"stages":[2],"rows":[8192]}"#,
+        r#"{"n":512,"k":5120,"groups":1,"stages":[2],"rows":[1200,1200]}"#,
+        r#"{"n":512,"k":5120,"groups":1,"stages":[2],"rows":[1300,1200]}"#,
+        r#"{"n":512,"k":5120,"groups":1,"stages":[4],"rows":[1200]}"#,
+        r#"{"n":512,"k":5120,"groups":1,"stages":[],"rows":[1200]}"#,
+        r#"{"n":513,"k":5120,"groups":1,"stages":[2],"rows":[1200]}"#,
+        r#"{"n":512,"k":5120,"groups":1,"rows":[1200]}"#,
+        &format!(r#"{{"n":512,"k":5120,"groups":1,"stages":[2],"rows":[{all}]}}"#),
+    ] {
+        assert!(case(bad).is_err(), "{bad}");
+    }
+}
+
+/// The dense timing grid of one projection: the served partition against
+/// the named compact stages at every count of the case, bitwise first, then
+/// the A/A-controlled pairs, on two idle GPUs in turn.
+#[test]
+#[ignore = "pair-lab: two idle GPUs, CUDA events, A/A control, at most five minutes"]
+fn compact_rows_pair_grid() {
+    let (e, compacts, rows) = grid_case().unwrap();
+    let q = e.query;
+    let case = json!({"n": q.n, "k": q.k, "groups": q.groups,
+        "stages": compacts.iter().map(|c| c.stages).collect::<Vec<_>>(), "rows": rows});
+    on_two_gpus(
+        "deepseek41-compact-rows-grid",
+        case,
+        |session, backend, deadline, snapshot| {
+            let refs = compacts.iter().collect::<Vec<_>>();
+            compact_pairs(session, backend, &e, &refs, &rows, deadline, snapshot)
+        },
+    );
+    println!(
+        "COMPACT_GRID_COMPLETE n={} k={} groups={} rows={}",
+        q.n,
+        q.k,
+        q.groups,
+        rows.len()
+    );
 }

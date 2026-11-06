@@ -119,7 +119,7 @@ impl Templates {
         }
         plan.keep_engram();
         let plan = Rc::new(plan);
-        let dropped = self.kept.keep(key, Rc::clone(&plan));
+        let dropped = self.kept.keep(key, Rc::clone(&plan)).is_some();
         let counts = self.kept.counts();
         let refused = if counts.refused > refused {
             ", its key's templates refused"

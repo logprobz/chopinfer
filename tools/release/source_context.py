@@ -8,6 +8,8 @@ import stat
 
 MAX_SOURCE_BYTES = 64 << 20
 MAX_INPUTS = 50000
+# A clone with many branches packs its refs into one file far larger than a ref.
+MAX_PACKED_REFS_BYTES = 16 << 20
 IGNORED_DIRECTORIES = {'.git', '.agents', '__pycache__', 'target', 'node_modules'}
 
 
@@ -51,10 +53,10 @@ def file_identity(path, limit=MAX_SOURCE_BYTES, destination=None):
         return {'size': size, 'sha256': digest.hexdigest()}
 
 
-def read_text(path):
+def read_text(path, limit=64 << 10):
     with os.fdopen(regular(path), 'rb') as stream:
-        value = stream.read(65537)
-    if len(value) > 65536:
+        value = stream.read(limit + 1)
+    if len(value) > limit:
         raise ValueError('Git metadata exceeds its byte bound')
     return value.decode().strip()
 
@@ -84,7 +86,8 @@ def revision(root, supplied=None):
             found = read_text(loose) if loose.is_file() else ''
             packed = common / 'packed-refs'
             if not found and packed.is_file():
-                found = next((line.split()[0] for line in read_text(packed).splitlines()
+                lines = read_text(packed, MAX_PACKED_REFS_BYTES).splitlines()
+                found = next((line.split()[0] for line in lines
                               if len(line.split()) == 2 and line.split()[1] == ref), '')
     except FileNotFoundError:
         found = ''

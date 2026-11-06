@@ -21,6 +21,12 @@ pub const WIDE_DRAFT: &str = "wide_draft";
 /// Candidate: Flash TP4 decode and verify all-reduces whose round no HC
 /// boundary defers take the phased F32 rounding entries.
 pub const PHASED_DECODE_REDUCE: &str = "phased_decode_reduce";
+/// Candidate: a TP4 DMA prefill reduction of any row count splits its MoE
+/// producer (the routed sum with its shared expert addend) over the
+/// transport's owner intervals, `ceil(rows / 4)` rows clipped at the end,
+/// at every layer, so each owner's rows are sent as soon as they are
+/// produced. Every row's bytes and the owner sums are unchanged.
+pub const PREFILL_DMA_PRODUCER_INTERVALS: &str = "prefill_dma_producer_intervals";
 /// Candidate: DSpark drafter Markov steps of two or more items load each
 /// thread's rank-256 weight chain into registers before the dependency
 /// wait and read each position's base logits in place, so no row copy
@@ -67,6 +73,7 @@ pub struct Options {
     pub wide_verify: bool,
     pub wide_draft: bool,
     pub phased_decode_reduce: bool,
+    pub prefill_dma_producer_intervals: bool,
     pub dspark_markov_staged: bool,
     pub dspark_hc_fusion: bool,
     pub dspark_confidence_staged: bool,
@@ -75,7 +82,7 @@ pub struct Options {
     pub dspark_mixed_prepared_engram: bool,
 }
 
-pub fn declarations() -> [ModelOptionV1; 14] {
+pub fn declarations() -> [ModelOptionV1; 15] {
     [
         (
             DIAGNOSTIC_STEP_LOGS,
@@ -115,6 +122,10 @@ pub fn declarations() -> [ModelOptionV1; 14] {
         ),
         (
             PHASED_DECODE_REDUCE,
+            OptionDefinitionV1::Boolean { default: false },
+        ),
+        (
+            PREFILL_DMA_PRODUCER_INTERVALS,
             OptionDefinitionV1::Boolean { default: false },
         ),
         (
@@ -190,6 +201,7 @@ impl Options {
             wide_verify,
             wide_draft,
             phased_decode_reduce: flag(PHASED_DECODE_REDUCE),
+            prefill_dma_producer_intervals: flag(PREFILL_DMA_PRODUCER_INTERVALS),
             dspark_hc_draft_rows: flag(DSPARK_HC_DRAFT_ROWS),
             dspark_moe_direct: flag(DSPARK_MOE_DIRECT),
             dspark_confidence_staged: flag(DSPARK_CONFIDENCE_STAGED),
@@ -310,6 +322,7 @@ mod tests {
             wide_verify: false,
             wide_draft: false,
             phased_decode_reduce: false,
+            prefill_dma_producer_intervals: false,
             dspark_hc_draft_rows: false,
             dspark_moe_direct: false,
             dspark_confidence_staged: false,
@@ -334,6 +347,7 @@ mod tests {
             (WIDE_VERIFY.into(), "true".into()),
             (WIDE_DRAFT.into(), "true".into()),
             (PHASED_DECODE_REDUCE.into(), "true".into()),
+            (PREFILL_DMA_PRODUCER_INTERVALS.into(), "true".into()),
             (DSPARK_HC_DRAFT_ROWS.into(), "true".into()),
             (DSPARK_MOE_DIRECT.into(), "true".into()),
             (DSPARK_CONFIDENCE_STAGED.into(), "true".into()),
@@ -353,6 +367,7 @@ mod tests {
                 wide_verify: true,
                 wide_draft: true,
                 phased_decode_reduce: true,
+                prefill_dma_producer_intervals: true,
                 dspark_hc_draft_rows: true,
                 dspark_moe_direct: true,
                 dspark_confidence_staged: true,
@@ -378,6 +393,7 @@ mod tests {
             (WIDE_VERIFY, "1"),
             (WIDE_DRAFT, "1"),
             (PHASED_DECODE_REDUCE, "1"),
+            (PREFILL_DMA_PRODUCER_INTERVALS, "1"),
             (DSPARK_HC_DRAFT_ROWS, "1"),
             (DSPARK_MOE_DIRECT, "1"),
             (DSPARK_CONFIDENCE_STAGED, "1"),

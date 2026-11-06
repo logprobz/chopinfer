@@ -16,20 +16,9 @@ pub(crate) mod host_work {
         Box<dyn FnOnce(&[u8], &mut [&mut [u8]]) -> Result<(), String> + Send>;
     pub(crate) type HostResult = Arc<Mutex<Option<(u64, Result<(), String>)>>>;
 
-    /// When the work's outputs are zeroed for their uploads
-    /// (`HostTransformInit`).
-    #[derive(Clone, Debug, Eq, PartialEq)]
-    pub(crate) enum Init {
-        /// Every output zeroed before the work.
-        Extents,
-        /// Each output's uploaded `ranges` zeroed only after work that fails.
-        OnFailure { ranges: Vec<Vec<(usize, usize)>> },
-    }
-
     struct Work {
         input: (usize, usize),
         outputs: Vec<(usize, usize)>,
-        init: Init,
         call: HostWork,
         result: HostResult,
     }
@@ -46,64 +35,38 @@ pub(crate) mod host_work {
     extern "C" fn run(pointer: *mut c_void) {
         // SAFETY-REVIEWED: enqueue transfers one Box to CUDA, invoked exactly once.
         let work = unsafe { Box::from_raw(pointer.cast::<Work>()) };
-        let Work {
-            input,
-            outputs,
-            init,
-            call,
-            result,
-        } = *work;
+        let result = Arc::clone(&work.result);
         let start = std::time::Instant::now();
-        let slices = || -> Vec<&mut [u8]> {
-            outputs
-                .iter()
-                .map(|&(pointer, length)| {
-                    // SAFETY-REVIEWED: each range belongs to a distinct retained allocation,
-                    // and no other slice of it is live when this one is made.
-                    unsafe { std::slice::from_raw_parts_mut(pointer as *mut u8, length) }
-                })
-                .collect()
-        };
-        let mut outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             // SAFETY-REVIEWED: private pinned allocations remain retained and inaccessible
             // to the caller until completion; the preceding D2H has finished.
-            let input = unsafe { std::slice::from_raw_parts(input.0 as *const u8, input.1) };
-            let mut outputs = slices();
-            if init == Init::Extents {
-                for output in &mut outputs {
-                    output.fill(0);
-                }
+            let input =
+                unsafe { std::slice::from_raw_parts(work.input.0 as *const u8, work.input.1) };
+            let mut outputs: Vec<_> = work
+                .outputs
+                .iter()
+                .map(|&(pointer, length)| {
+                    // SAFETY-REVIEWED: each range belongs to a distinct retained allocation.
+                    unsafe { std::slice::from_raw_parts_mut(pointer as *mut u8, length) }
+                })
+                .collect();
+            for output in &mut outputs {
+                output.fill(0);
             }
-            call(input, &mut outputs)
+            (work.call)(input, &mut outputs)
         }))
         .unwrap_or_else(|_| Err("host transform panicked".into()));
-        // Failed work's uploads still copy, so its ranges are zeroed now.
-        if outcome.is_err()
-            && let Init::OnFailure { ranges } = &init
-            && std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                for (output, ranges) in slices().iter_mut().zip(ranges) {
-                    for &(start, length) in ranges {
-                        output[start..start + length].fill(0);
-                    }
-                }
-            }))
-            .is_err()
-        {
-            outcome = Err("host transform output initialization panicked".into());
-        }
         let elapsed = u64::try_from(start.elapsed().as_nanos()).unwrap_or(u64::MAX);
         *result.lock().unwrap_or_else(|error| error.into_inner()) = Some((elapsed, outcome));
     }
 
     /// The owner must keep every allocation alive and inaccessible until the
-    /// enqueued work completes, including when a later enqueue fails. Each
-    /// output's `OnFailure` ranges lie within its bytes.
+    /// enqueued work completes, including when a later enqueue fails.
     pub(crate) fn enqueue(
         stream: StreamHandle,
         input: &PinnedAllocation,
         input_bytes: usize,
         outputs: &[(&PinnedAllocation, usize)],
-        init: Init,
         call: HostWork,
     ) -> (c_int, HostResult) {
         let result = Arc::new(Mutex::new(None));
@@ -113,7 +76,6 @@ pub(crate) mod host_work {
                 .iter()
                 .map(|(buffer, bytes)| (buffer.pointer as usize, *bytes))
                 .collect(),
-            init,
             call,
             result: Arc::clone(&result),
         });
@@ -137,15 +99,6 @@ pub(crate) mod host_work {
             outputs: &mut [&mut [u8]],
             call: HostWork,
         ) -> (u64, Result<(), String>) {
-            invoke_with(input, outputs, Init::Extents, call)
-        }
-
-        fn invoke_with(
-            input: &[u8],
-            outputs: &mut [&mut [u8]],
-            init: Init,
-            call: HostWork,
-        ) -> (u64, Result<(), String>) {
             let result = Arc::new(Mutex::new(None));
             let work = Box::new(Work {
                 input: (input.as_ptr() as usize, input.len()),
@@ -153,7 +106,6 @@ pub(crate) mod host_work {
                     .iter_mut()
                     .map(|bytes| (bytes.as_mut_ptr() as usize, bytes.len()))
                     .collect(),
-                init,
                 call,
                 result: Arc::clone(&result),
             });
@@ -202,49 +154,6 @@ pub(crate) mod host_work {
                     }
                 );
                 assert_eq!(output, [0; 4]);
-            }
-        }
-
-        /// Two uploaded ranges of a six-byte output, a gap between them.
-        fn on_failure() -> Init {
-            Init::OnFailure {
-                ranges: vec![vec![(0, 2), (4, 2)]],
-            }
-        }
-
-        #[test]
-        fn failure_initialization_leaves_written_bytes_and_zeroes_a_failure() {
-            // Work that succeeds wrote every uploaded byte: nothing else is touched.
-            let mut output = [0xff; 6];
-            let (_, result) = invoke_with(
-                &[9],
-                &mut [&mut output],
-                on_failure(),
-                Box::new(|input, output| {
-                    output[0][..2].fill(input[0]);
-                    output[0][4..].fill(input[0]);
-                    Ok(())
-                }),
-            );
-            assert_eq!(result, Ok(()));
-            assert_eq!(output, [9, 9, 0xff, 0xff, 9, 9]);
-            // Failed or panicking work leaves its uploaded ranges zeroed.
-            for panic in [false, true] {
-                let mut output = [0xff; 6];
-                let (_, result) = invoke_with(
-                    &[9],
-                    &mut [&mut output],
-                    on_failure(),
-                    Box::new(move |input, output| {
-                        output[0][0] = input[0];
-                        if panic {
-                            panic!("injected host failure");
-                        }
-                        Err("row outside table".into())
-                    }),
-                );
-                assert!(result.is_err());
-                assert_eq!(output, [0, 0, 0xff, 0xff, 0, 0]);
             }
         }
     }

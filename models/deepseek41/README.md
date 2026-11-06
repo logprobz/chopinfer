@@ -108,7 +108,9 @@ rows on its own thread. Copying that fanout on up to 16 threads
 (`CHOPINFER_MAPPED_FANOUT_COPIERS`) was tried and removed on 2026-11-06
 without a served measurement: in a CPU benchmark of a four-rank layer
 gather at 1,536 to 4,096 prefill rows it saved 0.3 to 0.4 ms of the 0.7 to
-2.5 ms fanout, under 1% of a live mixed step.
+2.5 ms fanout, under 1% of a live mixed step. Leaving the gather's pinned
+outputs unzeroed until a gather failed (`CHOPINFER_MAPPED_GATHER_INIT`) was
+removed the same way: it saved the 2.3 ms of zeroing in that gather.
 
 The Engram codes and scales are about 203 GB of checkpoint tables, mapped
 from the file and read through the host page cache. The weight plan keeps

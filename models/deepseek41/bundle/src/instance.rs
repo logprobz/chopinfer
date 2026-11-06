@@ -27,6 +27,8 @@ mod media;
 mod memory;
 pub(crate) mod prefill;
 mod prefill_cache;
+#[cfg(test)]
+pub(crate) use prefill_cache::with_refused;
 pub(crate) mod prefill_engram;
 mod prefill_reduce;
 mod prefix;

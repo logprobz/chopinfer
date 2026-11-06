@@ -27,6 +27,8 @@ pub(crate) struct Planned {
     /// Whether the step's Engram plan was a kept template's, none without
     /// an Engram plan.
     pub engram: Option<bool>,
+    /// Rank 0's body launches as (symbol, stage), and its head's symbols.
+    pub symbols: (Vec<(String, crate::program::Stage)>, Vec<String>),
 }
 
 /// Plans the prefill of the original batch `request` on the instance
@@ -45,11 +47,9 @@ pub(crate) fn plan(handle: BundleHandleV1, request: &[u8]) -> Result<Planned, St
             .plan_run(step.prefill, None, hashed)
             .map_err(|e| format!("plan: {e:?}"))?;
         let elapsed = started.elapsed();
-        let launches = run
-            .execution
-            .skip()
-            .ok_or("not an upper-skip plan")?
-            .launches();
+        let skip = run.execution.skip().ok_or("not an upper-skip plan")?;
+        let launches = skip.launches();
+        let symbols = skip.symbols(0);
         let engram = run
             .execution
             .prefill_engram()
@@ -58,6 +58,7 @@ pub(crate) fn plan(handle: BundleHandleV1, request: &[u8]) -> Result<Planned, St
             elapsed,
             launches,
             engram,
+            symbols,
         })
     })
 }

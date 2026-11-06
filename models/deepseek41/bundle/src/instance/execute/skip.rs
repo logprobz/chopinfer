@@ -702,6 +702,19 @@ impl Plan {
             .collect()
     }
 
+    /// Rank `rank`'s body launches as (symbol, stage), then its head's
+    /// symbols.
+    #[cfg(test)]
+    pub(super) fn symbols(&self, rank: usize) -> (Vec<(String, Stage)>, Vec<String>) {
+        let body = self.body.0[rank]
+            .iter()
+            .zip(&self.body.2[rank])
+            .map(|(launch, &stage)| (launch.symbol.clone(), stage))
+            .collect();
+        let head = self.head.0[rank].iter().map(|l| l.symbol.clone()).collect();
+        (body, head)
+    }
+
     pub(super) fn uses_dma(&self) -> bool {
         self.dma.is_some()
     }

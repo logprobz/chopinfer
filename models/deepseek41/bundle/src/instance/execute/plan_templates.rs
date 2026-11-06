@@ -126,9 +126,13 @@ impl Templates {
     }
 
     /// Frees the templates this step dropped: after its prefill launched,
-    /// or at the next step's entry.
+    /// or at the next step's entry. The vector keeps its room, so holding
+    /// a step's drops allocates nothing once the cache is full.
     pub(super) fn release(&self) {
-        drop(self.retired.take());
+        let mut retired = self.retired.borrow_mut();
+        if !retired.is_empty() {
+            retired.clear();
+        }
     }
 
     /// The dropped templates held for the step's launch.

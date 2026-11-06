@@ -27,8 +27,8 @@ pub(super) struct Gathers {
     verify: Vec<Span>,
     columns: usize,
     pending: Cell<bool>,
-    /// The pending gathers began before their step's planning
-    /// (`dspark_early_prefill_engram`), and its target has not taken them.
+    /// The pending gathers began before their step's planning (a DSpark
+    /// step's early begin), and its target has not taken them.
     early: Cell<bool>,
     failed: Cell<bool>,
     joined: Cell<usize>,
@@ -308,15 +308,14 @@ impl Instance {
     }
 
     /// Whether a DSpark step's prefill hashes its rows and begins its
-    /// prepared gathers before catch-up and drafting
-    /// (`dspark_early_prefill_engram`).
+    /// prepared gathers before catch-up and drafting: wherever it takes
+    /// the prepared gathers.
     pub(super) fn admits_early_prefill_engram(
         &self,
         request: &[u8],
         prefill: &PhaseInputs,
     ) -> bool {
-        self.config.execution.dspark_early_prefill_engram
-            && self.takes_prepared_prefill(request, prefill)
+        self.takes_prepared_prefill(request, prefill)
     }
 
     /// Whether a DSpark step plans its prefill while its drafter runs

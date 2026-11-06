@@ -3,7 +3,7 @@
 //! the plan templates that planning drops once the prefill launched.
 //! Planning issues no device work, so each step's journal (every launch
 //! with its arguments, every upload with its bytes), every log line and
-//! every result is the default's, with or without the early Engram begin.
+//! every result is the default's, beside the early Engram begin.
 use super::*;
 use crate::instance::execute::plan_templates;
 
@@ -42,8 +42,8 @@ fn mixed_steps(run: &Run) -> u64 {
 /// The early Engram begin's schedules (template reuse and misses, 511 to
 /// 8000 rows, two prefill items, a prefill step without verify rows, a
 /// cancel and its retry; graphed, eager and every reused plan lowered
-/// again, each beside the mixed verify-row gathers), with and without the early
-/// begin in both arms: every mixed step plans early, and nothing else.
+/// again, each beside the mixed verify-row gathers and the early begin):
+/// every mixed step plans early, and nothing else.
 #[test]
 fn early_plans_issue_the_default_journal() {
     use Then::*;
@@ -68,16 +68,10 @@ fn early_plans_issue_the_default_journal() {
         steps: &steps,
     };
     let plan = [(DSPARK_EARLY_PREFILL_PLAN, true.into())];
-    let early: [(&str, serde_json::Value); 1] = [(DSPARK_EARLY_PREFILL_ENGRAM, true.into())];
     for (name, options) in [
         ("graphed", vec![]),
         ("eager", vec![(DSPARK_GRAPH_HANDLES_PER_RANK, 0.into())]),
         ("verified", vec![(PREFILL_PLAN_CACHE_VERIFY, true.into())]),
-        ("early begin", early.to_vec()),
-        (
-            "early begin, verified",
-            with(&early, &[(PREFILL_PLAN_CACHE_VERIFY, true.into())]),
-        ),
     ] {
         let (off, none) = planned(&schedule, &options);
         let staged = crate::dspark::staging::early_stagings();
@@ -86,13 +80,8 @@ fn early_plans_issue_the_default_journal() {
         assert_eq!(none, 0, "{name}");
         assert_eq!(plans, mixed_steps(&on), "{name}");
         assert_eq!(plans, 8, "{name}");
-        // Planning alone stages only the mixed steps' prefills, which plan
-        // beside the drafter; the early begin stages every prefill.
-        let begins = options
-            .iter()
-            .any(|(option, _)| *option == DSPARK_EARLY_PREFILL_ENGRAM);
-        let expected = if begins { on.steps.len() as u64 } else { plans };
-        assert_eq!(staged, expected, "{name}");
+        // The early begin stages every prefill.
+        assert_eq!(staged, on.steps.len() as u64, "{name}");
         assert_same_runs(&off, &on, name);
     }
 }
@@ -134,25 +123,21 @@ fn long_context_and_eager_verify_early_plans_issue_the_default_journal() {
             },
         ),
     ] {
-        for options in [
-            verify.to_vec(),
-            with(&verify, &[(DSPARK_EARLY_PREFILL_ENGRAM, true.into())]),
-        ] {
-            let (off, _) = planned(&schedule, &options);
-            let (on, plans) = planned(
-                &schedule,
-                &with(&options, &[(DSPARK_EARLY_PREFILL_PLAN, true.into())]),
-            );
-            assert_eq!(plans, mixed_steps(&on), "{name}");
-            assert_same_runs(&off, &on, name);
-        }
+        let options = verify.to_vec();
+        let (off, _) = planned(&schedule, &options);
+        let (on, plans) = planned(
+            &schedule,
+            &with(&options, &[(DSPARK_EARLY_PREFILL_PLAN, true.into())]),
+        );
+        assert_eq!(plans, mixed_steps(&on), "{name}");
+        assert_same_runs(&off, &on, name);
     }
 }
 
 /// With diagnostic step logs, each step-shape record says whether its
 /// step's prefill began its gathers early and whether it planned early:
-/// every prefill begins early with the begin option, and only the mixed
-/// step, which drafts, plans early with the plan option.
+/// every prefill begins early, and only the mixed step, which drafts,
+/// plans early with the plan option.
 #[test]
 fn step_shape_records_report_early_begins_and_plans() {
     use Then::*;
@@ -164,11 +149,8 @@ fn step_shape_records_report_early_begins_and_plans() {
         restored: &[],
         steps: &steps,
     };
-    for (begin, plan) in [(false, false), (true, false), (false, true), (true, true)] {
+    for plan in [false, true] {
         let mut options = vec![(DIAGNOSTIC_STEP_LOGS, true.into())];
-        if begin {
-            options.push((DSPARK_EARLY_PREFILL_ENGRAM, true.into()));
-        }
         if plan {
             options.push((DSPARK_EARLY_PREFILL_PLAN, true.into()));
         }
@@ -179,10 +161,13 @@ fn step_shape_records_report_early_begins_and_plans() {
             .filter(|line| line.contains("\"early_prefill_begin\":"))
             .collect();
         let count = |text: &str| records.iter().filter(|line| line.contains(text)).count();
-        let arm = format!("early begin {begin}, early plan {plan}");
+        let arm = format!("early plan {plan}");
         assert!(!records.is_empty(), "{arm}");
-        let began = if begin { records.len() } else { 0 };
-        assert_eq!(count("\"early_prefill_begin\":true"), began, "{arm}");
+        assert_eq!(
+            count("\"early_prefill_begin\":true"),
+            records.len(),
+            "{arm}"
+        );
         assert_eq!(
             count("\"early_prefill_plan\":true"),
             usize::from(plan),
@@ -215,13 +200,8 @@ fn step_shape_records_count_each_steps_template_reuse() {
     };
     let logs = (DIAGNOSTIC_STEP_LOGS, serde_json::Value::from(true));
     let plan = (DSPARK_EARLY_PREFILL_PLAN, true.into());
-    let begin = (DSPARK_EARLY_PREFILL_ENGRAM, true.into());
     plan_templates::with_limit(2, || {
-        for options in [
-            vec![logs.clone()],
-            vec![logs.clone(), plan.clone()],
-            vec![logs.clone(), begin.clone(), plan.clone()],
-        ] {
+        for options in [vec![logs.clone()], vec![logs.clone(), plan.clone()]] {
             let run = schedule.run(&options);
             // The run's lines have their host times masked, so only the
             // templates object is parsed.
@@ -262,10 +242,10 @@ fn step_shape_records_count_each_steps_template_reuse() {
 
 /// On an instance that also serves images, as every served instance does,
 /// text-only mixed steps take the prepared verify-row gathers
-/// (`admits_mixed_engram` admits them per step). Beside those
-/// gathers the early begin moves only the prefill gathers' begin, the
+/// (`admits_mixed_engram` admits them per step). Beside those gathers
+/// every prompt and mixed step begins its prefill gathers early, and the
 /// early plan plans every mixed step while its drafter runs and issues the
-/// default's journal, and both together issue the early begin's journal.
+/// same journal.
 #[test]
 fn early_candidates_beside_mixed_gathers_on_an_instance_serving_images() {
     use Then::*;
@@ -280,8 +260,6 @@ fn early_candidates_beside_mixed_gathers_on_an_instance_serving_images() {
         restored: &[],
         steps: &steps,
     };
-    let mixed: [(&str, serde_json::Value); 0] = [];
-    let begin = with(&mixed, &[(DSPARK_EARLY_PREFILL_ENGRAM, true.into())]);
     let plan = [(DSPARK_EARLY_PREFILL_PLAN, true.into())];
     // The prepared verify-row gathers each step launched, as the route
     // records count them.
@@ -296,23 +274,17 @@ fn early_candidates_beside_mixed_gathers_on_an_instance_serving_images() {
             .collect()
     };
     bundle_runtime::routes::with_logging(|| {
-        let (off, none) = planned_serving_images(&schedule, &mixed);
+        let (off, none) = planned_serving_images(&schedule, &[]);
         assert_eq!(none, 0);
         let layers = u64::from(FLASH.engram_layers());
         assert_eq!(prepared(&off).iter().sum::<u64>(), 3 * layers);
-        let (early, none) = planned_serving_images(&schedule, &begin);
-        assert_eq!(none, 0);
         // Eight prompts and three mixed steps begin early.
-        assert_eq!(assert_moved_begins(&off, &early, "early begin"), 8 + 3);
-        for (name, base, options) in [
-            ("early plan", &off, with(&mixed, &plan)),
-            ("both", &early, with(&begin, &plan)),
-        ] {
-            let (on, plans) = planned_serving_images(&schedule, &options);
-            assert_eq!(plans, 3, "{name}");
-            assert_eq!(prepared(&on), prepared(base), "{name}");
-            assert_same_runs(base, &on, name);
-        }
+        assert_eq!(assert_early_begins(&off, "early begin"), 8 + 3);
+        let (name, base, options) = ("early plan", &off, plan.to_vec());
+        let (on, plans) = planned_serving_images(&schedule, &options);
+        assert_eq!(plans, 3, "{name}");
+        assert_eq!(prepared(&on), prepared(base), "{name}");
+        assert_same_runs(base, &on, name);
     });
 }
 
@@ -331,8 +303,7 @@ fn planned_serving_images(
 
 /// A reused template's stale Engram plan, which the verify mode refuses,
 /// planned while the drafter ran, refuses the step at its target as the
-/// default's lowering there does: the same journal, logs and state, with
-/// or without the early begin.
+/// default's lowering there does: the same journal, logs and state.
 #[test]
 fn a_refused_early_plan_refuses_the_target_as_the_default_does() {
     let refuse = |options: &[(&str, serde_json::Value)]| {
@@ -368,23 +339,19 @@ fn a_refused_early_plan_refuses_the_target_as_the_default_does() {
         (journal, logs, state)
     };
     let verify = [(PREFILL_PLAN_CACHE_VERIFY, true.into())];
-    for options in [
-        verify.to_vec(),
-        with(&verify, &[(DSPARK_EARLY_PREFILL_ENGRAM, true.into())]),
-    ] {
-        let off = refuse(&options);
-        let on = refuse(&with(&options, &[(DSPARK_EARLY_PREFILL_PLAN, true.into())]));
-        assert_same_lines(&off.0, &on.0, "the refused step");
-        assert_same_lines(&off.1, &on.1, "its logs");
-        assert_eq!(off.2, on.2);
-    }
+    let options = verify.to_vec();
+    let off = refuse(&options);
+    let on = refuse(&with(&options, &[(DSPARK_EARLY_PREFILL_PLAN, true.into())]));
+    assert_same_lines(&off.0, &on.0, "the refused step");
+    assert_same_lines(&off.1, &on.1, "its logs");
+    assert_eq!(off.2, on.2);
 }
 
 /// A mixed step that fails after its prefill was planned while the drafter
 /// ran, at the draft readback (an id outside the vocabulary, before the
 /// target) or at the target's last upload, refuses as the default does:
-/// the same journal, status and poisoning, with or without the early
-/// begin, and no device access touches a pending gather's ids or rows.
+/// the same journal, status and poisoning, beside the early begin, and no
+/// device access touches a pending gather's ids or rows.
 /// Only the plan made before a readback failure differs: the default never
 /// planned that step, so the candidate's logs hold one more template line.
 #[test]
@@ -394,78 +361,76 @@ fn failures_after_an_early_plan_refuse_as_the_default_does() {
             .filter(|line| line.contains("prefill plan templates:"))
             .count()
     };
-    for early in [false, true] {
-        let begin = [(DSPARK_EARLY_PREFILL_ENGRAM, early.into())];
-        for failure in ["readback", "upload"] {
-            let fail = |options: &[(&str, serde_json::Value)]| {
-                // The step's uploads, for failing its last one.
-                let uploads = {
-                    let (host, mut instance, mixed) = prompted(options, MappedHost::with_row_ids);
-                    let begin = host.journal.borrow().len();
-                    run(&mut instance, &host, &mixed);
-                    let uploads = host.journal.borrow()[begin..]
-                        .iter()
-                        .filter(|line| line.starts_with("upload "))
-                        .count();
-                    instance.cancel().unwrap();
-                    instance.destroy().unwrap();
-                    uploads as u32
-                };
+    let begin: [(&str, serde_json::Value); 0] = [];
+    for failure in ["readback", "upload"] {
+        let fail = |options: &[(&str, serde_json::Value)]| {
+            // The step's uploads, for failing its last one.
+            let uploads = {
                 let (host, mut instance, mixed) = prompted(options, MappedHost::with_row_ids);
                 let begin = host.journal.borrow().len();
-                let logs = host.logs.borrow().len();
-                if failure == "readback" {
-                    host.injected.replace(Some(vec![0xff; 8 * 5 * 4]));
-                } else {
-                    host.fail_upload.set(Some(uploads - 1));
-                }
-                let status = instance.execute_prefill(&mixed, &mut Sink::default());
-                assert!(status.is_err(), "{failure}");
-                let journal = host.journal.borrow()[begin..].to_vec();
-                let logs: Vec<_> = host.logs.borrow()[logs..]
+                run(&mut instance, &host, &mixed);
+                let uploads = host.journal.borrow()[begin..]
                     .iter()
-                    .map(|line| untimed(line))
-                    .collect();
-                let expected = if failure == "readback" {
-                    "outside the vocabulary"
-                } else {
-                    "execute failed"
-                };
-                assert!(
-                    logs.iter().any(|line| line.contains(expected)),
-                    "{failure}: {logs:#?}"
-                );
-                let state = crate::instance::prefill_engram::refusal_state(instance.handle());
-                let _ = instance.cancel();
-                match instance.destroy() {
-                    Ok(()) => assert_eq!(host.acquired.get(), host.released.get()),
-                    Err(_) => assert!(instance.is_poisoned()),
-                }
-                assert!(host.races.borrow().is_empty(), "{:#?}", host.races.borrow());
-                (journal, logs, state, format!("{status:?}"))
+                    .filter(|line| line.starts_with("upload "))
+                    .count();
+                instance.cancel().unwrap();
+                instance.destroy().unwrap();
+                uploads as u32
             };
-            let context = format!("early begin {early}, failed {failure}");
-            let (off, plans) = planned_with(|| fail(&begin));
-            let (on, early_plans) =
-                planned_with(|| fail(&with(&begin, &[(DSPARK_EARLY_PREFILL_PLAN, true.into())])));
-            assert_eq!(plans, 0, "{context}");
-            // Both runs of the candidate plan early: the dry run and the step.
-            assert_eq!(early_plans, 2, "{context}");
-            assert_same_lines(&off.0, &on.0, &context);
-            assert_eq!((&off.2, &off.3), (&on.2, &on.3), "{context}");
+            let (host, mut instance, mixed) = prompted(options, MappedHost::with_row_ids);
+            let begin = host.journal.borrow().len();
+            let logs = host.logs.borrow().len();
             if failure == "readback" {
-                assert_eq!(rows(&on.1), rows(&off.1) + 1, "{context}");
+                host.injected.replace(Some(vec![0xff; 8 * 5 * 4]));
+            } else {
+                host.fail_upload.set(Some(uploads - 1));
             }
-            let other = |logs: &[String]| -> Vec<String> {
-                logs.iter()
-                    .filter(|line| !line.contains("prefill plan templates:"))
-                    .cloned()
-                    .collect()
+            let status = instance.execute_prefill(&mixed, &mut Sink::default());
+            assert!(status.is_err(), "{failure}");
+            let journal = host.journal.borrow()[begin..].to_vec();
+            let logs: Vec<_> = host.logs.borrow()[logs..]
+                .iter()
+                .map(|line| untimed(line))
+                .collect();
+            let expected = if failure == "readback" {
+                "outside the vocabulary"
+            } else {
+                "execute failed"
             };
-            assert_same_lines(&other(&off.1), &other(&on.1), &format!("{context}: logs"));
-            if failure == "upload" {
-                assert_same_lines(&off.1, &on.1, &format!("{context}: logs"));
+            assert!(
+                logs.iter().any(|line| line.contains(expected)),
+                "{failure}: {logs:#?}"
+            );
+            let state = crate::instance::prefill_engram::refusal_state(instance.handle());
+            let _ = instance.cancel();
+            match instance.destroy() {
+                Ok(()) => assert_eq!(host.acquired.get(), host.released.get()),
+                Err(_) => assert!(instance.is_poisoned()),
             }
+            assert!(host.races.borrow().is_empty(), "{:#?}", host.races.borrow());
+            (journal, logs, state, format!("{status:?}"))
+        };
+        let context = format!("failed {failure}");
+        let (off, plans) = planned_with(|| fail(&begin));
+        let (on, early_plans) =
+            planned_with(|| fail(&with(&begin, &[(DSPARK_EARLY_PREFILL_PLAN, true.into())])));
+        assert_eq!(plans, 0, "{context}");
+        // Both runs of the candidate plan early: the dry run and the step.
+        assert_eq!(early_plans, 2, "{context}");
+        assert_same_lines(&off.0, &on.0, &context);
+        assert_eq!((&off.2, &off.3), (&on.2, &on.3), "{context}");
+        if failure == "readback" {
+            assert_eq!(rows(&on.1), rows(&off.1) + 1, "{context}");
+        }
+        let other = |logs: &[String]| -> Vec<String> {
+            logs.iter()
+                .filter(|line| !line.contains("prefill plan templates:"))
+                .cloned()
+                .collect()
+        };
+        assert_same_lines(&other(&off.1), &other(&on.1), &format!("{context}: logs"));
+        if failure == "upload" {
+            assert_same_lines(&off.1, &on.1, &format!("{context}: logs"));
         }
     }
 }

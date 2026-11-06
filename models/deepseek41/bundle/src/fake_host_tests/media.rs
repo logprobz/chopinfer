@@ -729,20 +729,17 @@ fn prefill_engram_keeps_media_reason() {
     });
 }
 
-/// With `dspark_early_prefill_engram`, `dspark_early_prefill_plan` or both
-/// on an instance serving images, an image prefill keeps its synchronous
+/// On an instance serving images, an image prefill keeps its synchronous
 /// gather and begins and plans nothing early, as a prompt and beside a
-/// verify item: its journal is the default's. A text prefill on the same
-/// instance begins its prepared gathers before any device work with the
-/// begin option, and beside a verify item plans while its drafter runs with
-/// the plan option; every other line of its journal is the default's, and
-/// no device access touches a pending gather's ids or rows.
+/// verify item, with and without `dspark_early_prefill_plan`. A text
+/// prefill on the same instance begins its prepared gathers before any
+/// device work, and beside a verify item plans while its drafter runs with
+/// the plan option; every other line of its journal is the same without
+/// it, and no device access touches a pending gather's ids or rows.
 #[test]
 fn early_prefill_engram_begins_only_prefills_without_image_rows() {
     use crate::config::tests::with_option;
-    use model_deepseek41_contract::execution_options::{
-        DSPARK_EARLY_PREFILL_ENGRAM, DSPARK_EARLY_PREFILL_PLAN,
-    };
+    use model_deepseek41_contract::execution_options::DSPARK_EARLY_PREFILL_PLAN;
     type Sink = bundle_runtime::fake_host::RecordingSink<super::conformance::Limits>;
     // Verify item rows of request 9 in slot 2 from `start`.
     let verify = |start: u64| {
@@ -785,16 +782,12 @@ fn early_prefill_engram_begins_only_prefills_without_image_rows() {
         .encode()
         .unwrap()
     };
-    let run = |early: bool, plan: bool| {
+    let run = |plan: bool| {
         let host = MediaHost::new(Shape::new(&FLASH, Ranks::TP4).unwrap(), KV_LAYOUTS[0]);
         host.drafter.set(true);
         host.speculation.set(Some((3, 32)));
         let record = with_option(
-            with_option(
-                crate::config::tests::media_record(&host.shape, host.kv, 4),
-                DSPARK_EARLY_PREFILL_ENGRAM,
-                early.into(),
-            ),
+            crate::config::tests::media_record(&host.shape, host.kv, 4),
             DSPARK_EARLY_PREFILL_PLAN,
             plan.into(),
         );
@@ -870,29 +863,25 @@ fn early_prefill_engram_begins_only_prefills_without_image_rows() {
             .collect();
         (steps, logs)
     };
-    let (off, off_logs) = run(false, false);
+    let (off, off_logs) = run(false);
     for text in [1, 2, 4] {
         assert_eq!(off[text].0.len(), 4, "step {text}");
     }
-    for (early, plan) in [(true, false), (false, true), (true, true)] {
-        let (on, on_logs) = run(early, plan);
-        let arm = format!("early begin {early}, early plan {plan}");
-        assert_eq!(off_logs, on_logs, "{arm}");
-        for (step, (off, on)) in off.iter().zip(&on).enumerate() {
-            let context = format!("{arm}, step {step}");
-            assert_eq!(off.1, on.1, "{context}");
-            assert_eq!((&off.2, &off.3), (&on.2, &on.3), "{context}");
-            // Only the mixed text prefill plans early.
-            assert_eq!(on.5, u64::from(plan && step == 4), "{context}");
-            if step == 0 || step == 3 {
-                // An image prefill gathers synchronously.
-                assert!(off.0.is_empty() && on.0.is_empty(), "{context}");
-            } else {
-                // A text prefill's two layers begin before its first launch
-                // with the begin option.
-                assert_eq!(off.0, on.0, "{context}");
-                assert!(!early || on.4, "{context}");
-            }
+    let (on, on_logs) = run(true);
+    assert_eq!(off_logs, on_logs);
+    for (step, (off, on)) in off.iter().zip(&on).enumerate() {
+        let context = format!("early plan, step {step}");
+        assert_eq!(off.1, on.1, "{context}");
+        assert_eq!((&off.2, &off.3), (&on.2, &on.3), "{context}");
+        // Only the mixed text prefill plans early.
+        assert_eq!(on.5, u64::from(step == 4), "{context}");
+        if step == 0 || step == 3 {
+            // An image prefill gathers synchronously.
+            assert!(off.0.is_empty() && on.0.is_empty(), "{context}");
+        } else {
+            // A text prefill's two layers begin before its first launch.
+            assert_eq!(off.0, on.0, "{context}");
+            assert!(off.4 && on.4, "{context}");
         }
     }
 }

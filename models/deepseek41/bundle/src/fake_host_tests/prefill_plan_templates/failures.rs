@@ -4,28 +4,25 @@
 //! settling the gathers it began. A plan lowered while it issues
 //! (`prefill_streamed_lowering`) keeps the same contract, fails with the
 //! batch lowering's journal and keeps nothing when it fails. Each test runs
-//! AR, and DSpark with neither, each and both of the early Engram begin and
-//! the early plan.
+//! AR, and DSpark with the early Engram begin, without and with the early
+//! plan.
 use super::*;
 use crate::instance::execute::skip;
 use crate::program::Stage;
 use model_deepseek41_contract::execution_options::{
-    DSPARK_EARLY_PREFILL_ENGRAM, DSPARK_EARLY_PREFILL_PLAN, PREFILL_PLAN_CACHE_VERIFY,
-    PREFILL_STREAMED_LOWERING,
+    DSPARK_EARLY_PREFILL_PLAN, PREFILL_PLAN_CACHE_VERIFY, PREFILL_STREAMED_LOWERING,
 };
 use std::cell::Cell;
 
-/// The early DSpark candidates of the instances `create` makes: the early
-/// Engram begin (`dspark_early_prefill_engram`) and the early plan
-/// (`dspark_early_prefill_plan`).
+/// The early DSpark candidate of the instances `create` makes: the early
+/// plan (`dspark_early_prefill_plan`).
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 struct Early {
-    begin: bool,
     plan: bool,
 }
 
 thread_local! {
-    static EARLY: Cell<Early> = const { Cell::new(Early { begin: false, plan: false }) };
+    static EARLY: Cell<Early> = const { Cell::new(Early { plan: false }) };
 }
 
 /// Makes `create` turn on the early candidates it holds until it drops.
@@ -42,11 +39,11 @@ fn using(early: Early) -> Using {
 }
 
 /// Each configuration a failure test runs, DSpark or not with its early
-/// candidates: AR, and DSpark with neither, each and both.
+/// plan: AR, and DSpark without and with it.
 fn configs() -> Vec<(bool, Early)> {
     let mut configs = vec![(false, Early::default())];
-    for (begin, plan) in [(false, false), (true, false), (false, true), (true, true)] {
-        configs.push((true, Early { begin, plan }));
+    for plan in [false, true] {
+        configs.push((true, Early { plan }));
     }
     configs
 }
@@ -62,7 +59,6 @@ fn create(host: &Rc<Host>, streamed: bool) -> BundleInstanceV1 {
         &[
             (PREFILL_PLAN_CACHE_VERIFY, false.into()),
             (PREFILL_STREAMED_LOWERING, streamed.into()),
-            (DSPARK_EARLY_PREFILL_ENGRAM, early.begin.into()),
             (DSPARK_EARLY_PREFILL_PLAN, early.plan.into()),
         ],
     )

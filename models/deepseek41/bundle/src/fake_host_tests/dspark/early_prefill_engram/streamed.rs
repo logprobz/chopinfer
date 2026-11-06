@@ -3,11 +3,10 @@
 //! while it issues. Each step's journal (every launch with its arguments,
 //! every upload with its bytes, the prepared gathers' begins and joins),
 //! every log line and every result is the batch lowering's, with and
-//! without each of `dspark_early_prefill_engram` and
-//! `dspark_early_prefill_plan`, beside the mixed steps' prepared verify-row
-//! gathers, with the upper-skip DMA and without. Each combination of the
-//! two runs. A mixed step
-//! fails streamed where it fails batch, and keeps nothing.
+//! without `dspark_early_prefill_plan`, beside the early Engram begin and
+//! the mixed steps' prepared verify-row gathers, with the upper-skip DMA
+//! and without. A mixed step fails streamed where it fails batch, and
+//! keeps nothing.
 //! Only the line that keeps a streamed plan moves: it follows the launch's
 //! own lines, as the plan is kept once its launch completed. The streamed
 //! plans are the ones the batch run lowered before their launch, but for
@@ -81,42 +80,28 @@ fn assert_streamed(schedule: &Schedule<'_>, options: &[(String, Options)], launc
 /// Instance options.
 type Options = Vec<(&'static str, serde_json::Value)>;
 
-/// Every combination of the two DSpark candidates, from none to both,
-/// named by the candidates it turns on, those with the early plan when
-/// `plan`.
+/// The DSpark early plan on when `plan`, else the default, named.
 fn candidates(plan: bool) -> Vec<(String, Options)> {
-    let named = [
-        (DSPARK_EARLY_PREFILL_ENGRAM, "early begin"),
-        (DSPARK_EARLY_PREFILL_PLAN, "early plan"),
-    ];
-    (0..4)
-        .filter(|mask| (mask & 2 != 0) == plan)
-        .map(|mask| {
-            let on: Vec<_> = (0..2).filter(|bit| mask & (1 << bit) != 0).collect();
-            let name = on.iter().map(|&bit| named[bit].1).collect::<Vec<_>>();
-            let options = on.iter().map(|&bit| (named[bit].0, true.into())).collect();
-            (
-                if name.is_empty() {
-                    "default".into()
-                } else {
-                    name.join(", ")
-                },
-                options,
-            )
-        })
-        .collect()
+    if plan {
+        vec![(
+            "early plan".into(),
+            vec![(DSPARK_EARLY_PREFILL_PLAN, true.into())],
+        )]
+    } else {
+        vec![("default".into(), vec![])]
+    }
 }
 
-/// Every combination of the two DSpark candidates.
+/// The early plan off and on.
 fn every_candidate() -> Vec<(String, Options)> {
     [candidates(false), candidates(true)].concat()
 }
 
 /// The early Engram begin's schedule (template reuse and misses, 511 to
 /// 8000 rows, two prefill items, a prefill step without verify rows, a
-/// cancel and its retry), with the candidate combinations `plan` selects
-/// (`candidates`), and both eager (no graph handles) or with every
-/// reused plan lowered again.
+/// cancel and its retry), with the early plan when `plan` (`candidates`),
+/// and the same eager (no graph handles) or with every reused plan lowered
+/// again.
 fn assert_early_begin_schedule(plan: bool) {
     use Then::*;
     let steps = [
@@ -143,12 +128,12 @@ fn assert_early_begin_schedule(plan: bool) {
     let all = options.last().unwrap().1.clone();
     options.push(if plan {
         (
-            "both, verified".into(),
+            "early plan, verified".into(),
             with(&all, &[(PREFILL_PLAN_CACHE_VERIFY, true.into())]),
         )
     } else {
         (
-            "early begin, eager".into(),
+            "eager".into(),
             with(&all, &[(DSPARK_GRAPH_HANDLES_PER_RANK, 0.into())]),
         )
     });
@@ -156,15 +141,13 @@ fn assert_early_begin_schedule(plan: bool) {
     assert_streamed(&schedule, &options, 7);
 }
 
-/// The early begin's schedule with the combinations without the early
-/// plan, and two of them eager.
+/// The early begin's schedule without the early plan, and eager.
 #[test]
 fn streamed_plans_issue_the_batch_journal_beside_the_dspark_candidates() {
     assert_early_begin_schedule(false);
 }
 
-/// The early begin's schedule with the combinations with the early plan,
-/// and both verified.
+/// The early begin's schedule with the early plan, and verified.
 #[test]
 fn streamed_plans_issue_the_batch_journal_beside_the_early_dspark_plan() {
     assert_early_begin_schedule(true);
@@ -478,10 +461,7 @@ fn step_shape_records_say_whether_the_prefill_was_streamed() {
     };
     let logs = (DIAGNOSTIC_STEP_LOGS, serde_json::Value::from(true));
     let streamed = (PREFILL_STREAMED_LOWERING, true.into());
-    let early = [
-        (DSPARK_EARLY_PREFILL_ENGRAM, true.into()),
-        (DSPARK_EARLY_PREFILL_PLAN, true.into()),
-    ];
+    let early = [(DSPARK_EARLY_PREFILL_PLAN, true.into())];
     // Eight prompts, the first a miss, then a 512-row miss, its template's
     // reuse by another request and a 600-row miss.
     let on = [vec![true], vec![false; 7], vec![true, false, true]].concat();

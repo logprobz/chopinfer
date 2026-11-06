@@ -80,8 +80,7 @@ pub trait Program {
     }
 
     /// Whether this step's prefill begins its prepared gathers before
-    /// catch-up and drafting, where its target takes them
-    /// (`dspark_early_prefill_engram`).
+    /// catch-up and drafting, where its target takes them.
     fn begins_prefill_engram(&self) -> bool {
         false
     }
@@ -517,9 +516,9 @@ pub(crate) fn early_stagings() -> u64 {
 /// Catch-up, drafting and readback end in device synchronizations, so they
 /// include their device time. Prefill target includes upload, submission and
 /// status waits; a device-resident decode target records its own phases.
-/// The phases are disjoint: an early prefill begin is part of `gather`
-/// (`dspark_early_prefill_engram`), and a prefill planned while the drafter
-/// runs is `prefill_plan`, outside `target` (`dspark_early_prefill_plan`).
+/// The phases are disjoint: an early prefill begin is part of `gather`,
+/// and a prefill planned while the drafter runs is `prefill_plan`, outside
+/// `target` (`dspark_early_prefill_plan`).
 /// The record also says whether the step's prefill began its gathers or
 /// planned early, whether it was lowered while it issued
 /// (`prefill_streamed_lowering`), and holds the prefill plan templates

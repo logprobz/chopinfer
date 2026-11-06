@@ -1,12 +1,8 @@
-//! The `dspark_early_prefill_engram` candidate: a DSpark step's prefill
-//! hashes its rows and begins its prepared gathers before catch-up and
-//! drafting instead of just before its launch. Each step's prefill id
-//! uploads and gather enqueues are the ones the default begins, moved
-//! ahead of the step's first launch; every other journal line (launches
-//! with their arguments, uploads with their bytes, gathered rows, joins,
-//! graph captures and replays, readbacks), every log line and every result
-//! is unchanged. Steps the prepared gathers do not serve begin nothing
-//! early, and a step refused after the early begin settles its gathers.
+//! A DSpark step's prefill hashes its rows and begins its prepared gathers
+//! before catch-up and drafting: each step's prefill id uploads and gather
+//! enqueues come ahead of its first launch, replay or capture. Steps the
+//! prepared gathers do not serve begin nothing early, and a step refused
+//! after the early begin settles its gathers.
 use super::*;
 use crate::fake_host_tests::ar_engram::order;
 use crate::fake_host_tests::media::MediaHost;
@@ -15,8 +11,8 @@ use crate::fake_host_tests::prefill_engram::{
 };
 use crate::instance::execute::plan_timing::restore_without_snapshot;
 use model_deepseek41_contract::execution_options::{
-    DSPARK_EARLY_PREFILL_ENGRAM, DSPARK_EARLY_PREFILL_PLAN, DSPARK_GRAPH_HANDLES_PER_RANK,
-    PREFILL_PLAN_CACHE_VERIFY, PREFILL_STREAMED_LOWERING,
+    DSPARK_EARLY_PREFILL_PLAN, DSPARK_GRAPH_HANDLES_PER_RANK, PREFILL_PLAN_CACHE_VERIFY,
+    PREFILL_STREAMED_LOWERING,
 };
 use runtime_bundle_sdk::prefill::{Boundary, encode};
 
@@ -376,39 +372,30 @@ fn is_device_work(line: &str) -> bool {
     line.starts_with("launch ") || line.starts_with("replay ") || line.starts_with("capture ")
 }
 
-/// Each step of `on` issues `off`'s step with only the prefill gathers'
-/// begin moved, and the same results; every log line matches. Returns how
+/// Each step of `run` that begins prefill gathers begins both layers' (their
+/// id uploads, then their enqueues) before any device work. Returns how
 /// many steps began early.
 #[track_caller]
-fn assert_moved_begins(off: &Run, on: &Run, context: &str) -> usize {
-    assert_eq!(off.indices, on.indices);
-    assert_eq!(off.steps.len(), on.steps.len(), "{context}");
+fn assert_early_begins(run: &Run, context: &str) -> usize {
     let mut early = 0;
-    for (index, (a, b)) in off.steps.iter().zip(&on.steps).enumerate() {
+    for (index, step) in run.steps.iter().enumerate() {
         let context = format!("{context}, step {index}");
-        let (begin_off, rest_off) = split(&a.journal, &off.indices);
-        let (begin_on, rest_on) = split(&b.journal, &on.indices);
-        assert_same_lines(&begin_off, &begin_on, &format!("{context}: the begins"));
-        assert_same_lines(&rest_off, &rest_on, &context);
-        assert_eq!(a.drafts, b.drafts, "{context}");
-        assert_eq!(a.views, b.views, "{context}");
-        if begin_on.is_empty() {
+        let (begin, _) = split(&step.journal, &run.indices);
+        if begin.is_empty() {
             continue;
         }
-        // Two layers: their id uploads, then their enqueues.
-        assert_eq!(begin_on.len(), 4, "{context}: {begin_on:?}");
-        let last = b
+        assert_eq!(begin.len(), 4, "{context}: {begin:?}");
+        let last = step
             .journal
             .iter()
-            .rposition(|line| line == &begin_on[3])
+            .rposition(|line| line == &begin[3])
             .unwrap();
         assert!(
-            !b.journal[..last].iter().any(|line| is_device_work(line)),
+            !step.journal[..last].iter().any(|line| is_device_work(line)),
             "{context}: the gathers began after device work"
         );
         early += 1;
     }
-    assert_same_lines(&off.logs, &on.logs, &format!("{context}: logs"));
     early
 }
 
@@ -435,7 +422,6 @@ fn mixed_began_after_device_work(run: &Run) -> Vec<bool> {
 /// runs the default each comparison was written against.
 fn opted_out<'a>(options: &[(&'a str, serde_json::Value)]) -> Vec<(&'a str, serde_json::Value)> {
     [
-        (DSPARK_EARLY_PREFILL_ENGRAM, false.into()),
         (DSPARK_EARLY_PREFILL_PLAN, false.into()),
         (PREFILL_STREAMED_LOWERING, false.into()),
     ]
@@ -460,7 +446,7 @@ fn with(
 /// every reused plan lowered again, each beside the mixed verify-row
 /// gathers. Every prompt and mixed step begins early, after nothing.
 #[test]
-fn early_begins_move_only_the_prefill_gather_begin() {
+fn every_prompt_and_mixed_step_begins_its_gathers_before_device_work() {
     use Then::*;
     let steps = [
         step(&[prefill(7, 8, 0, 512)], true, Commit),
@@ -482,27 +468,24 @@ fn early_begins_move_only_the_prefill_gather_begin() {
         restored: &[],
         steps: &steps,
     };
-    let on = [(DSPARK_EARLY_PREFILL_ENGRAM, true.into())];
     for (name, options) in [
         ("graphed", vec![]),
         ("eager", vec![(DSPARK_GRAPH_HANDLES_PER_RANK, 0.into())]),
         ("verified", vec![(PREFILL_PLAN_CACHE_VERIFY, true.into())]),
     ] {
-        let off = schedule.run(&options);
-        let early = schedule.run(&with(&options, &on));
+        let run = schedule.run(&options);
         // Sixteen prompts (eight again after the cancel), seven mixed
         // steps, the retry and the prefill step.
-        assert_eq!(off.steps.len(), 16 + 8 + 1);
-        assert_eq!(assert_moved_begins(&off, &early, name), 16 + 8 + 1);
-        assert_eq!(mixed_began_after_device_work(&off), [true; 8], "{name}");
-        assert_eq!(mixed_began_after_device_work(&early), [false; 8], "{name}");
+        assert_eq!(run.steps.len(), 16 + 8 + 1);
+        assert_eq!(assert_early_begins(&run, name), 16 + 8 + 1);
+        assert_eq!(mixed_began_after_device_work(&run), [false; 8], "{name}");
     }
 }
 
 /// A verify phase above the graphed 64 rows (eleven six-row items, 66
 /// rows, eager) beside a 512-row prefill, as a new template and reused.
 #[test]
-fn eager_verify_early_begins_move_only_the_prefill_gather_begin() {
+fn eager_verify_steps_begin_their_prefill_gathers_before_device_work() {
     use Then::*;
     let steps = [
         step(&[prefill(7, 11, 0, 512)], true, Commit),
@@ -514,10 +497,9 @@ fn eager_verify_early_begins_move_only_the_prefill_gather_begin() {
         restored: &[],
         steps: &steps,
     };
-    let off = schedule.run(&[]);
-    let on = schedule.run(&[(DSPARK_EARLY_PREFILL_ENGRAM, true.into())]);
-    assert_eq!(assert_moved_begins(&off, &on, "eager verify"), 11 + 2);
-    assert_eq!(mixed_began_after_device_work(&on), [false; 2]);
+    let run = schedule.run(&[]);
+    assert_eq!(assert_early_begins(&run, "eager verify"), 11 + 2);
+    assert_eq!(mixed_began_after_device_work(&run), [false; 2]);
 }
 
 /// The live shape: a 1536-row prefill after a 93,000-token context beside
@@ -525,7 +507,7 @@ fn eager_verify_early_begins_move_only_the_prefill_gather_begin() {
 /// another 128 tokens (cancelled and run again too), and a 1537-row miss.
 /// With every reused plan lowered again.
 #[test]
-fn long_context_early_begins_move_only_the_prefill_gather_begin() {
+fn long_context_steps_begin_their_prefill_gathers_before_device_work() {
     use Then::*;
     let steps = [
         step(&[prefill(20, 8, 93_000, 1536)], true, Commit),
@@ -538,23 +520,17 @@ fn long_context_early_begins_move_only_the_prefill_gather_begin() {
         restored: &[(20, 8, 93_000), (21, 9, 93_128), (22, 10, 93_000)],
         steps: &steps,
     };
-    let verify = [(PREFILL_PLAN_CACHE_VERIFY, true.into())];
-    let off = schedule.run(&verify);
-    let on = schedule.run(&with(
-        &verify,
-        &[(DSPARK_EARLY_PREFILL_ENGRAM, true.into())],
-    ));
+    let run = schedule.run(&[(PREFILL_PLAN_CACHE_VERIFY, true.into())]);
     // Sixteen prompts, three mixed steps and the retry.
-    assert_eq!(assert_moved_begins(&off, &on, "long context"), 16 + 4);
-    let kept = |run: &Run| {
-        run.logs
-            .iter()
-            .filter(|line| line.contains("prefill plan templates: kept"))
-            .count()
-    };
+    assert_eq!(assert_early_begins(&run, "long context"), 16 + 4);
+    let kept = run
+        .logs
+        .iter()
+        .filter(|line| line.contains("prefill plan templates: kept"))
+        .count();
     // The 1536 and 1537 rows keep templates; the shifted context and the
     // retry reuse the first.
-    assert_eq!((kept(&off), kept(&on)), (2, 2));
+    assert_eq!(kept, 2);
 }
 
 /// Eight three-token prompts on an upper-skip instance with `options` on
@@ -598,16 +574,14 @@ fn spans(instance: &BundleInstanceV1) -> Vec<DeviceBufferSpanV1> {
         .collect()
 }
 
-/// A failed prefill join or completion refuses the mixed step as the
-/// default's does, with the same journal but for the moved begin, and
-/// publishes nothing. A failed enqueue, of the first layer or of the second
-/// after the first began, now before catch-up and drafting, refuses the
-/// step before any device work. Planning while the drafter runs changes
-/// none of these journals, with or without the early begin, and no device
-/// access touches a pending gather's ids or rows in any arm.
+/// A failed prefill join or completion after the early begin refuses the
+/// mixed step and publishes nothing. A failed enqueue, of the first layer
+/// or of the second after the first began, before catch-up and drafting,
+/// refuses the step before any device work. Planning while the drafter
+/// runs changes none of these journals, and no device access touches a
+/// pending gather's ids or rows in either arm.
 #[test]
-fn gather_failures_after_an_early_begin_refuse_as_the_default_does() {
-    let early = [(DSPARK_EARLY_PREFILL_ENGRAM, true.into())];
+fn gather_failures_after_the_early_begin_refuse_the_step() {
     let plan = [(DSPARK_EARLY_PREFILL_PLAN, true.into())];
     // Eight prompts join two layers on four ranks each and complete both.
     for (stage, after) in [
@@ -636,22 +610,15 @@ fn gather_failures_after_an_early_begin_refuse_as_the_default_does() {
             (step, indices)
         };
         let context = format!("{stage} after {after}");
-        let (off, indices) = run(&[]);
-        let (begun, _) = run(&early);
+        let (begun, indices) = run(&[]);
         let (planned, _) = run(&plan);
-        let (both, _) = run(&with(&early, &plan));
-        assert_same_lines(&off, &planned, &format!("{context}: early plans"));
-        assert_same_lines(&begun, &both, &format!("{context}: both"));
+        assert_same_lines(&begun, &planned, &format!("{context}: early plans"));
         if stage == "enqueue" {
             assert!(!begun.iter().any(|line| is_device_work(line)), "{begun:#?}");
-            assert!(off.iter().any(|line| is_device_work(line)));
             continue;
         }
-        let (begin_off, rest_off) = split(&off, &indices);
-        let (begin_on, rest_on) = split(&begun, &indices);
-        assert_eq!(begin_off.len(), 4, "{context}");
-        assert_same_lines(&begin_off, &begin_on, &format!("{context}: the begins"));
-        assert_same_lines(&rest_off, &rest_on, &context);
+        let (begins, _) = split(&begun, &indices);
+        assert_eq!(begins.len(), 4, "{context}");
     }
 }
 
@@ -665,10 +632,7 @@ fn gather_failures_after_an_early_begin_refuse_as_the_default_does() {
 /// the poison check (`settle_refused`), then finds nothing pending.
 #[test]
 fn a_step_refused_after_an_early_begin_settles_its_gathers_before_it_returns() {
-    let options = [
-        (DSPARK_EARLY_PREFILL_ENGRAM, true.into()),
-        (PREFILL_PLAN_CACHE_VERIFY, true.into()),
-    ];
+    let options = [(PREFILL_PLAN_CACHE_VERIFY, true.into())];
     let (host, mut instance, mixed) = prompted(&options, MappedHost::with_row_ids);
     run(&mut instance, &host, &mixed);
     let kept: Vec<_> = (0..8).map(|slot| kept(verifier(slot), 4)).collect();

@@ -1943,13 +1943,22 @@ def judged_check(run, context, check, declared, arm_dir, arm, label, inputs):
     code = run_call(run, command, directory / 'checks.log', declared['timeout_seconds'] + 300, env)
     try:
         check_run = one_receipt(directory, '*/check.json')
-        status, row, receipt = check_verdict(code, read(check_run), check, declared)
+        result = read(check_run)
         rescored = {}
-        if run.replay and (status in ('pass', 'waived', 'not_applicable')
-                           or (status == 'fail' and row.get('error') == 'threshold predicate failed')):
-            # Only a judged verdict is judged again; a failed run stays failed.
-            rescored = rescore_check(row['receipt'], run.facts['model'], config, check)
+        if run.replay and unjudged(code, result, check):
+            # A run refused before its judge is judged from the inputs it
+            # recorded when they hold its receipt; otherwise it stays failed.
+            rescored = rescore_check(check_run, run.facts['model'], config, check)
             status = rescored['status']
+            row = {'receipt': rescored.get('receipt'), 'predicates': rescored.get('predicates')}
+            receipt = read(row['receipt']) if status in PASSING and row['receipt'] else None
+        else:
+            status, row, receipt = check_verdict(code, result, check, declared)
+            if run.replay and (status in ('pass', 'waived', 'not_applicable')
+                               or (status == 'fail' and row.get('error') == 'threshold predicate failed')):
+                # Only a judged verdict is judged again; a failed run stays failed.
+                rescored = rescore_check(check_run, run.facts['model'], config, check)
+                status = rescored['status']
     except (ValueError, KeyError, TypeError, OSError, subprocess.SubprocessError) as error:
         return run.row(config, arm, label, 'fail', error=str(error), exit=code,
                        seconds=round(time.monotonic() - started, 1))
@@ -1962,7 +1971,15 @@ def judged_check(run, context, check, declared, arm_dir, arm, label, inputs):
                    receipt=row.get('receipt'), check_run=str(check_run), exit=code,
                    error=rescored.get('error') or row.get('error') or (
                        None if status in PASSING else 'the check did not pass'),
-                   differing_metrics=rescored.get('differing_metrics'), seconds=round(time.monotonic() - started, 1))
+                   differing_metrics=rescored.get('differing_metrics'),
+                   **({'unjudged': rescored['unjudged']} if rescored.get('unjudged') else {}),
+                   seconds=round(time.monotonic() - started, 1))
+
+
+def unjudged(code, result, check):
+    """Whether a checks.py check run of `check` was refused before its judge:
+    exit 1, a failed check.json of this check holding no row."""
+    return code == 1 and result.get('check') == check and result.get('status') == 'fail' and result.get('row') is None
 
 
 def check_verdict(code, result, check, declared):
@@ -2579,17 +2596,19 @@ def rescore_run(root, out=None):
     return run.rows
 
 
-def rescore_check(receipt, model, config, check):
-    """A declared check's stored receipt, re-judged by checks.py rescore
-    against the current declaration as `check`, the check its row ran (two
-    checks' receipt patterns may match one file); a passing status holds
+def rescore_check(check_run, model, config, check):
+    """A declared check's stored check run (its check.json), re-judged by
+    checks.py rescore against the current declaration as `check`, the check
+    it ran: its receipt (a log, for a check whose module prints it) and its
+    recorded inputs held to the digests the run recorded, and a run refused
+    before its judge judged from its recorded inputs. A passing status holds
     only with exit 0, and any exit but 0, 1 or 3 (insufficient) refuses."""
     import tempfile
     with tempfile.TemporaryDirectory() as temporary:
         output = Path(temporary) / 'rescore.json'
         done = subprocess.run([sys.executable, '-B', str(TOOLS / 'checks.py'), 'rescore', '--model',
-                               declaration_name(model, config), '--check', check, '--json', str(output), receipt],
-                              cwd=ROOT, capture_output=True, text=True, timeout=3600)
+                               declaration_name(model, config), '--check', check, '--json', str(output),
+                               str(check_run)], cwd=ROOT, capture_output=True, text=True, timeout=3600)
         require(done.returncode in (0, 1, 3) and output.is_file(),
                 f'checks.py rescore exited {done.returncode}: {done.stderr.strip()[-300:]}')
         rows = read(output)['checks']
@@ -2598,7 +2617,8 @@ def rescore_check(receipt, model, config, check):
     require((done.returncode == 0) == (value['status'] in PASSING),
             f"checks.py rescore exited {done.returncode} with status {value['status']!r}")
     return {'status': value['status'], 'differing_metrics': value.get('differing_metrics'),
-            'error': value.get('error')}
+            'error': value.get('error'), 'receipt': value.get('receipt'), 'predicates': value.get('predicates'),
+            'unjudged': value.get('unjudged')}
 
 
 def rescore_legacy(root, model):

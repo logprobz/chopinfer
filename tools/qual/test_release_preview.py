@@ -3070,7 +3070,7 @@ class RescoreTests(FakeRunTests):
         code, result = fake.run('--suite', 'quick')
         return fake, code, result
 
-    def replay(self, fake, judged=lambda receipt, model, config, check: {'status': 'pass'}):
+    def replay(self, fake, judged=lambda check_run, model, config, check: {'status': 'pass'}):
         with patch.object(runner, 'call', fake.call), patch.object(runner, 'rescore_check', judged), \
                 patch.dict(os.environ, {fake.facts['checkpoint']: str(fake.checkpoint)}):
             return self.rescore(fake.base / 'run')
@@ -3214,7 +3214,7 @@ class RescoreTests(FakeRunTests):
             self.assertEqual([row['id'] for row in rows], [row['id'] for row in result['rows']])
             self.assertEqual([row['recorded'] for row in rows], [row['status'] for row in result['rows']])
             # A check judged again under rules that now fail it fails.
-            code, rows = self.replay(fake, lambda receipt, model, config, check: {'status': 'fail', 'error': 'rule'})
+            code, rows = self.replay(fake, lambda check_run, model, config, check: {'status': 'fail', 'error': 'rule'})
             self.assertEqual(code, 1)
             self.assertEqual({row['status'] for row in rows if row['id'].endswith('/teacher')}, {'fail'})
 
@@ -3266,6 +3266,58 @@ class RescoreTests(FakeRunTests):
             (run / 'default/spec/gsm8k/check.log.exit').unlink()
             code, rows = self.replay(fake)
             self.assertIn('exited None', next(row for row in rows if row['id'] == 'default/spec/gsm8k')['error'])
+
+    def test_a_replay_judges_each_check_from_its_check_run(self):
+        """Each recorded check run (its check.json), not its receipt, goes
+        to checks.py rescore; one refused before its judge is judged there
+        from its recorded inputs, and that verdict is its row's."""
+        class Refused(FakeRun):
+            def call(self, command, log, seconds, env):
+                code = super().call(command, log, seconds, env)
+                command = list(map(str, command))
+                if Path(command[2]).name == 'checks.py' and command[4] == 'teacher':
+                    check_run = Path(command[command.index('--receipts') + 1]) / 'run-teacher/check.json'
+                    runner.write(check_run, {'check': 'teacher', 'status': 'fail', 'row': None,
+                                             'error': 'teacher: input predicate failed'})
+                    return 1
+                return code
+
+        with tempfile.TemporaryDirectory() as temporary, \
+                patch.object(runner, 'VALIDATION', Path(temporary) / 'validation'):
+            fake = Refused(Path(temporary), model(lambda facts: 'teacher' in facts['quick']))
+            code, result = fake.run('--suite', 'quick')
+            self.assertEqual(code, 1)
+            refused = [row for row in result['rows'] if row['id'].endswith('/teacher')]
+            self.assertTrue(refused)
+            self.assertTrue(all(row['status'] == 'fail' and 'holds no row' in row['error'] for row in refused))
+            receipt = fake.base / 'teacher-record.json'
+            runner.write(receipt, {'passed': True, 'mean_abs_dlogprob': 0.05})
+            seen = []
+
+            def judged(check_run, model, config, check):
+                seen.append((Path(check_run), check))
+                if check != 'teacher':
+                    return {'status': 'pass'}
+                return {'status': 'pass', 'receipt': str(receipt), 'unjudged': 'teacher: input predicate failed',
+                        'predicates': [{'path': ['mean_abs_dlogprob'], 'op': 'le', 'value': 0.1, 'passed': True}]}
+
+            code, rows = self.replay(fake, judged)
+            self.assertEqual(code, 0, [row for row in rows if row['status'] not in runner.PASSING])
+            self.assertTrue(seen)
+            self.assertTrue(all(path.name == 'check.json' and runner.read(path)['check'] == check
+                                for path, check in seen))
+            rejudged = [row for row in rows if row['id'].endswith('/teacher')]
+            self.assertEqual([(row['status'], row['recorded'], row['receipt'], row['unjudged'],
+                               [value['value'] for value in row['values']]) for row in rejudged],
+                             [('pass', 'fail', str(receipt), 'teacher: input predicate failed', [0.05])] * len(refused))
+            # Evidence checks.py finds insufficient, or a run whose receipt
+            # its module writes, is not a pass here either.
+            for status in ('insufficient', 'fail'):
+                code, rows = self.replay(fake, lambda check_run, model, config, check: {
+                    'status': status if check == 'teacher' else 'pass', 'error': 'spec: changed'})
+                self.assertEqual(code, 1)
+                self.assertEqual({(row['status'], row['error']) for row in rows if row['id'].endswith('/teacher')},
+                                 {(status, 'spec: changed')})
 
     @staticmethod
     def snapshot(root):

@@ -598,8 +598,12 @@ No rule or baseline may be changed to hide a mismatch.
 
 `release_preview.sh rescore RUN` replays a run with the current code and
 declarations. It only reads the run, and writes what it judges anew under
-`RUN/rescore/<UTC>/`, or with `--out DIR` under a new directory DIR. A
-record, server or check whose recorded child failed stays failed.
+`RUN/rescore/<UTC>/`, or with `--out DIR` under a new directory DIR. Each
+declared check is judged again from its recorded check run (`checks.py
+rescore` of its `check.json`), its receipt and inputs held to the digests
+the run recorded; a check its preflight refused is judged from its recorded
+inputs when they hold its receipt. A record, server or check whose child
+failed otherwise stays failed.
 
 ## Declarative agentic traces
 

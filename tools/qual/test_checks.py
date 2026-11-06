@@ -10,6 +10,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -547,13 +548,14 @@ class CheckRunRescoreTests(unittest.TestCase):
                 "timeout_seconds": 60, "files": ["record"], "rules": [self.RULE],
                 "input_rules": {"record": rules or [dict(self.RULE, path=["arm"], value="ram")]}}
 
-    def check_run(self, root, config, name, inputs, printed=None, server=None):
+    def check_run(self, root, config, name, inputs, printed=None, server=None, model="mechanics", receipts=None):
         """`checks.py check` of `name` under `config` against a faked server
         (`server`, or an exception it raises), its worker printing
         `printed`: the run's check.json."""
         path = root / "declaration.json"
         path.write_text(json.dumps(config))
         (root / "inputs.json").write_text(json.dumps(inputs))
+        receipts = receipts or root / "checks"
 
         def worker(command, **kwargs):
             if printed is not None:
@@ -565,14 +567,14 @@ class CheckRunRescoreTests(unittest.TestCase):
                 raise server
             return copy.deepcopy(server or self.SERVER)
 
-        args = SimpleNamespace(model="mechanics", id=name, inputs=root / "inputs.json", with_receipt=[],
-                               receipts=root / "checks", cohort="full", url="http://unused", served_model=None)
+        args = SimpleNamespace(model=model, id=name, inputs=root / "inputs.json", with_receipt=[],
+                               receipts=receipts, cohort="full", url="http://unused", served_model=None)
         with patch.object(checks, "load", return_value=(config, path)), \
                 patch.object(checks, "Client", lambda *a, **k: SimpleNamespace(identity=identity)), \
                 patch.object(gate.subprocess, "check_output", return_value="revision\n"), \
                 patch.object(gate.subprocess, "run", side_effect=worker), contextlib.redirect_stdout(io.StringIO()):
             checks.check_command(args)
-        return next((root / "checks").glob("*/check.json"))
+        return next(receipts.glob("*/check.json"))
 
     def rescore(self, config, *paths, limits="current", selected=None):
         """rescore's exit status and rows under the current `config`."""
@@ -747,6 +749,103 @@ class CheckRunRescoreTests(unittest.TestCase):
                 self.assertEqual(status, 1 if expected[0] == "fail" else 3)
                 self.assertIn(expected[1], rows[0]["error"])
                 self.assertNotIn("unjudged", rows[0])
+
+
+    @staticmethod
+    def holding(value, rules, context):
+        """`value` with the value at each of `rules`' paths that holds it."""
+        for rule in rules:
+            node = value
+            for key in rule["path"][:-1]:
+                node = node.setdefault(key, {})
+            if rule["op"] not in ("eq", "ge", "le"):
+                raise AssertionError(f"no value holds {rule}")
+            required = rule["value"]
+            node[rule["path"][-1]] = required.format_map(context) if isinstance(required, str) else required
+        return value
+
+    @staticmethod
+    def opt_in():
+        """(model, configuration, declaration name, config) of the first
+        shipped configuration whose full cohort runs a printed prefix_exact
+        with input rules and determinism of one recorded arm against another."""
+        import release_preview as preview
+        for model in preview.declaration.previewed(preview.ROOT):
+            facts = preview.model_facts(model)
+            for configuration in preview.configurations(model):
+                name = model if configuration == "default" else f"{model}.{configuration}"
+                config, _ = checks.load(name)
+                declared = {check["id"]: check for check in config["checks"]}
+                prefix, determinism = declared.get("prefix_exact", {}), declared.get("determinism", {})
+                if ({"prefix_exact", "determinism"} <= set(preview.configuration_facts(facts, configuration)["full"])
+                        and prefix.get("stdout_json") and prefix.get("input_rules")
+                        and determinism.get("json_file") and determinism.get("reference_file")):
+                    return model, configuration, name, config
+        raise AssertionError("no shipped configuration runs both checks")
+
+    def test_the_runner_replays_a_printed_receipt_and_a_refused_run_from_their_check_runs(self):
+        import release_preview as preview
+        import test_determinism
+        model, configuration, name, config = self.opt_in()
+        declared = {check["id"]: check for check in config["checks"]}
+        facts = preview.model_facts(model)
+        served = facts["name"]
+        context = {"model": served}
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            inputs = {}
+            for key, rules in declared["prefix_exact"]["input_rules"].items():
+                inputs[key] = str(root / f"{key}.json")
+                Path(inputs[key]).write_text(json.dumps(self.holding(printed_receipt("prefix_exact"), rules, context)))
+            pair = declared["determinism"]
+            receipt, reference = (pair[field].strip("{}") for field in ("json_file", "reference_file"))
+            for key, arm in ((reference, "ar"), (receipt, "spec")):
+                rules = pair["input_rules"].get(key, [])
+                # The two arms of one run and build, as the pair's paths require.
+                bound = [{"path": path, "op": "eq", "value": f"bound-{index}"}
+                         for index, path in enumerate(pair.get("reference_equal", []))
+                         if path != ["run_id"] and path not in [rule["path"] for rule in rules]]
+                value = self.holding(test_determinism.recorded(arm=arm), [*rules, *bound], context)
+                inputs[key] = str(root / f"{key}.json")
+                Path(inputs[key]).write_text(json.dumps(value))
+            spec = root / "spec"
+            self.check_run(root, config, "prefix_exact", inputs, printed_receipt("prefix_exact"), {"model": served},
+                           name, spec / "checks/prefix_exact")
+            (spec / "checks/prefix_exact/checks.log.exit").write_text("0\n")
+            # The determinism run was refused under a rule the declaration
+            # no longer states.
+            refusing = copy.deepcopy(config)
+            next(check for check in refusing["checks"] if check["id"] == "determinism")["input_rules"][reference].append(
+                {"path": ["server", "model"], "op": "eq", "value": "another", "source": "a former rule"})
+            run = self.check_run(root, refusing, "determinism", inputs, None, {"model": served}, name,
+                                 spec / "checks/determinism")
+            refusal = json.loads(run.read_text())["error"]
+            self.assertIn(f"{reference}: input predicate failed", refusal)
+            (spec / "checks/determinism/checks.log.exit").write_text("1\n")
+
+            def replay():
+                replayed = []
+                run = SimpleNamespace(replay=True, inputs=inputs, used_features=set(), facts=facts,
+                                      install=root / "install",
+                                      row=lambda config, arm, label, status, **fields: replayed.append(
+                                          (label, status, fields.get("error"), fields.get("unjudged"))),
+                                      stores={store: SimpleNamespace(receipt=lambda *a: None)
+                                              for store in preview.STORES})
+                context = {"facts": preview.configuration_facts(facts, configuration), "config_name": configuration,
+                           "records": {}, "checks": {}, "suite": "full", "fill": {"url": "http://127.0.0.1:1"},
+                           "env": dict(os.environ)}
+                for check in ("prefix_exact", "determinism"):
+                    preview.run_check(run, context, {"check": check}, spec, "spec")
+                return replayed
+
+            self.assertEqual(replay(), [("prefix_exact", "pass", None, None), ("determinism", "pass", None, refusal)])
+            log = next((spec / "checks/prefix_exact").glob("*/prefix_exact.log"))
+            log.write_text(json.dumps({**json.loads(log.read_text()), "passed": True, "extra": 1}))
+            Path(inputs[reference]).write_text(Path(inputs[reference]).read_text() + " ")
+            self.assertEqual(replay(), [
+                ("prefix_exact", "insufficient", "receipt missing or changed after the gate ran", None),
+                ("determinism", "insufficient",
+                 f"{reference}: the input the gate judged is missing, unrecorded or changed", None)])
 
 
 class CheckCommandTests(unittest.TestCase):
@@ -938,9 +1037,9 @@ class EvalsCompareGateTests(unittest.TestCase):
                 self.assertEqual(status, 0 if sharing == ["evals_compare"] else 2)
 
                 for label in labels:
+                    # The replay judges the recorded check run, its policy beside it.
                     directory = root / "spec/checks" / label.replace("/", "-")
-                    (directory / "run").mkdir(parents=True)
-                    (directory / "run/check.json").write_text(json.dumps(result))
+                    shutil.copytree(check_run.parent, directory / "run")
                     (directory / "inputs.json").write_text(json.dumps(inputs))
                     (directory / "checks.log.exit").write_text("0\n")
                 facts = preview.model_facts(model)

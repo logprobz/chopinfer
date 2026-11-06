@@ -160,7 +160,7 @@
           ],
           "op": "eq",
           "value": "4f01392ef1a9b0ad73a852865916066ebc8c81cd0e88502be286ce9022fb2bea",
-          "source": "fixtures/mimo26/README.md#reference-code-references"
+          "source": "models/mimo26/README.md#reference-code-references"
         },
         {
           "path": [
@@ -168,7 +168,7 @@
           ],
           "op": "eq",
           "value": "2c83e750967b169d4381b0b56eb6ce15afa2640ccdc77b54770654f563a67cbd",
-          "source": "fixtures/mimo26/README.md#reference-code-references"
+          "source": "models/mimo26/README.md#reference-code-references"
         }
       ],
       "constants": {
@@ -392,7 +392,7 @@
             ],
             "op": "eq",
             "value": "4f01392ef1a9b0ad73a852865916066ebc8c81cd0e88502be286ce9022fb2bea",
-            "source": "fixtures/mimo26/README.md#reference-code-references"
+            "source": "models/mimo26/README.md#reference-code-references"
           },
           {
             "path": [
@@ -400,7 +400,7 @@
             ],
             "op": "eq",
             "value": "2c83e750967b169d4381b0b56eb6ce15afa2640ccdc77b54770654f563a67cbd",
-            "source": "fixtures/mimo26/README.md#reference-code-references"
+            "source": "models/mimo26/README.md#reference-code-references"
           }
         ],
         "verify_candidate": [
@@ -445,7 +445,7 @@
             ],
             "op": "eq",
             "value": "4f01392ef1a9b0ad73a852865916066ebc8c81cd0e88502be286ce9022fb2bea",
-            "source": "fixtures/mimo26/README.md#reference-code-references"
+            "source": "models/mimo26/README.md#reference-code-references"
           },
           {
             "path": [
@@ -453,7 +453,7 @@
             ],
             "op": "eq",
             "value": "2c83e750967b169d4381b0b56eb6ce15afa2640ccdc77b54770654f563a67cbd",
-            "source": "fixtures/mimo26/README.md#reference-code-references"
+            "source": "models/mimo26/README.md#reference-code-references"
           }
         ]
       }
@@ -643,7 +643,7 @@
             ],
             "op": "eq",
             "value": "4f01392ef1a9b0ad73a852865916066ebc8c81cd0e88502be286ce9022fb2bea",
-            "source": "fixtures/mimo26/README.md#reference-code-references"
+            "source": "models/mimo26/README.md#reference-code-references"
           },
           {
             "path": [
@@ -738,7 +738,7 @@
             ],
             "op": "eq",
             "value": "4f01392ef1a9b0ad73a852865916066ebc8c81cd0e88502be286ce9022fb2bea",
-            "source": "fixtures/mimo26/README.md#reference-code-references"
+            "source": "models/mimo26/README.md#reference-code-references"
           },
           {
             "path": [
@@ -1027,7 +1027,7 @@
           ],
           "op": "eq",
           "value": "4f01392ef1a9b0ad73a852865916066ebc8c81cd0e88502be286ce9022fb2bea",
-          "source": "fixtures/mimo26/README.md#reference-code-references"
+          "source": "models/mimo26/README.md#reference-code-references"
         },
         {
           "path": [
@@ -1035,7 +1035,7 @@
           ],
           "op": "eq",
           "value": "25fa52da1e7043aebde5220f5576f6eeb4ab1ca5d9be63d6dfd34b6f45becce9",
-          "source": "fixtures/mimo26/README.md#reference-code-references"
+          "source": "models/mimo26/README.md#reference-code-references"
         },
         {
           "path": [
@@ -2082,7 +2082,7 @@
         "profile_name": "tp2-ar",
         "speculation_tokens": 0
       },
-      "source": "docs/serving-profiles.md#mimo-evidence",
+      "source": "models/mimo26/README.md#qualification",
       "media": false,
       "keep_references": [
         "teacher"
@@ -2100,7 +2100,7 @@
               ],
               "op": "eq",
               "value": 2,
-              "source": "docs/serving-profiles.md#mimo-evidence"
+              "source": "models/mimo26/README.md#qualification"
             },
             {
               "path": [
@@ -2113,7 +2113,7 @@
               ],
               "op": "eq",
               "value": 0,
-              "source": "docs/serving-profiles.md#mimo-evidence"
+              "source": "models/mimo26/README.md#qualification"
             }
           ]
         },
@@ -2129,7 +2129,7 @@
               ],
               "op": "eq",
               "value": 2,
-              "source": "docs/serving-profiles.md#mimo-evidence"
+              "source": "models/mimo26/README.md#qualification"
             },
             {
               "path": [
@@ -2142,7 +2142,7 @@
               ],
               "op": "eq",
               "value": 0,
-              "source": "docs/serving-profiles.md#mimo-evidence"
+              "source": "models/mimo26/README.md#qualification"
             }
           ],
           "stored_teacher": [
@@ -2153,7 +2153,7 @@
               ],
               "op": "eq",
               "value": "{model}",
-              "source": "docs/serving-profiles.md#mimo-evidence",
+              "source": "models/mimo26/README.md#qualification",
               "unless_present": true
             },
             {
@@ -2166,7 +2166,7 @@
               ],
               "op": "eq",
               "value": 2,
-              "source": "docs/serving-profiles.md#mimo-evidence"
+              "source": "models/mimo26/README.md#qualification"
             },
             {
               "path": [
@@ -2179,7 +2179,7 @@
               ],
               "op": "eq",
               "value": 0,
-              "source": "docs/serving-profiles.md#mimo-evidence"
+              "source": "models/mimo26/README.md#qualification"
             }
           ],
           "teacher": [
@@ -2190,7 +2190,7 @@
               ],
               "op": "eq",
               "value": "{model}",
-              "source": "docs/serving-profiles.md#mimo-evidence",
+              "source": "models/mimo26/README.md#qualification",
               "unless_present": true
             },
             {
@@ -2203,7 +2203,7 @@
               ],
               "op": "eq",
               "value": 2,
-              "source": "docs/serving-profiles.md#mimo-evidence"
+              "source": "models/mimo26/README.md#qualification"
             },
             {
               "path": [
@@ -2216,7 +2216,7 @@
               ],
               "op": "eq",
               "value": 0,
-              "source": "docs/serving-profiles.md#mimo-evidence"
+              "source": "models/mimo26/README.md#qualification"
             }
           ]
         },
@@ -2230,7 +2230,7 @@
               ],
               "op": "eq",
               "value": 2,
-              "source": "docs/serving-profiles.md#mimo-evidence"
+              "source": "models/mimo26/README.md#qualification"
             },
             {
               "path": [
@@ -2241,7 +2241,7 @@
               ],
               "op": "eq",
               "value": 0,
-              "source": "docs/serving-profiles.md#mimo-evidence"
+              "source": "models/mimo26/README.md#qualification"
             }
           ],
           "prefix_record": [
@@ -2252,7 +2252,7 @@
               ],
               "op": "eq",
               "value": "{model}",
-              "source": "docs/serving-profiles.md#mimo-evidence",
+              "source": "models/mimo26/README.md#qualification",
               "unless_present": true
             },
             {
@@ -2265,7 +2265,7 @@
               ],
               "op": "eq",
               "value": 2,
-              "source": "docs/serving-profiles.md#mimo-evidence"
+              "source": "models/mimo26/README.md#qualification"
             },
             {
               "path": [
@@ -2278,7 +2278,7 @@
               ],
               "op": "eq",
               "value": 0,
-              "source": "docs/serving-profiles.md#mimo-evidence"
+              "source": "models/mimo26/README.md#qualification"
             }
           ]
         }

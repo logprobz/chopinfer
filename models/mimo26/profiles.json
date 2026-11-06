@@ -33,9 +33,8 @@
       "graph_memory_reserve_mib": 320,
       "status": "qualified",
       "evidence": [
-        "docs/serving-profiles.md#tp4-concurrency-qualification-2026-10-04",
-        "docs/serving-profiles.md#mimo-evidence",
-        "docs/serving-profiles.md#selecting-a-profile"
+        "models/mimo26/README.md#qualification",
+        "docs/developer-preview.md#selecting-a-profile"
       ]
     },
     "tp4-mtp": {
@@ -68,9 +67,8 @@
       "graph_memory_reserve_mib": 832,
       "status": "experimental",
       "evidence": [
-        "docs/serving-profiles.md#mimo-evidence",
-        "docs/serving-profiles.md#mimo-evidence",
-        "docs/serving-profiles.md#selecting-a-profile"
+        "models/mimo26/README.md#qualification",
+        "docs/developer-preview.md#selecting-a-profile"
       ],
       "decode_tbt_target_ms": 150
     },
@@ -104,11 +102,8 @@
       "graph_memory_reserve_mib": 384,
       "status": "qualified",
       "evidence": [
-        "docs/serving-profiles.md#row-local-decode-requalification-2026-10-05",
-        "docs/serving-profiles.md#tp4-concurrency-qualification-2026-10-04",
-        "docs/serving-profiles.md#mimo-evidence",
-        "docs/serving-profiles.md#selecting-a-profile",
-        "docs/serving-profiles.md#mimo-evidence"
+        "models/mimo26/README.md#qualification",
+        "docs/developer-preview.md#selecting-a-profile"
       ],
       "decode_tbt_target_ms": 150
     },
@@ -140,8 +135,8 @@
       "graph_memory_reserve_mib": 320,
       "status": "experimental",
       "evidence": [
-        "docs/serving-profiles.md#mimo-evidence",
-        "docs/serving-profiles.md#selecting-a-profile"
+        "models/mimo26/README.md#qualification",
+        "docs/developer-preview.md#selecting-a-profile"
       ]
     }
   }

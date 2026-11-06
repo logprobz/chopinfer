@@ -5,14 +5,11 @@
 //! envelope, packed, anchored and unscored items, AR with device and
 //! host-mapped Engram tables, and DSpark, each with DMA on and off. The
 //! pins were recorded before the lowering became incremental and hold it
-//! to the plans it made before. Each shape also runs as a step lowered
-//! while it issues (`prefill_streamed_lowering`), whose plan holds the
-//! same pin.
+//! to the plans it made before. Each shape also runs as a step, which
+//! lowers its plan while it issues; that plan holds the same pin.
 use super::*;
 use crate::instance::execute::skip;
-use model_deepseek41_contract::execution_options::{
-    PREFILL_PLAN_CACHE_VERIFY, PREFILL_STREAMED_LOWERING,
-};
+use model_deepseek41_contract::execution_options::PREFILL_PLAN_CACHE_VERIFY;
 
 /// The committed tokens before each single item.
 const PREFIX: u64 = 100_032;
@@ -228,9 +225,8 @@ fn check(model: Model, dma: bool, pins: &[(&str, (usize, u64))]) {
 }
 
 /// A fresh instance on `model` with request 1 holding slot 0 at `prefix`
-/// tokens and request 2 slot 1 at 40,960, lowering each plan no template
-/// serves while it issues when `streamed`.
-fn restored(model: Model, prefix: u64, streamed: bool) -> BundleInstanceV1 {
+/// tokens and request 2 slot 1 at 40,960.
+fn restored(model: Model, prefix: u64) -> BundleInstanceV1 {
     let host = host(matches!(model, Model::DSpark));
     if matches!(model, Model::ArMapped) {
         host.drafter.set(true);
@@ -239,10 +235,7 @@ fn restored(model: Model, prefix: u64, streamed: bool) -> BundleInstanceV1 {
         &host,
         8192,
         true,
-        &[
-            (PREFILL_PLAN_CACHE_VERIFY, false.into()),
-            (PREFILL_STREAMED_LOWERING, streamed.into()),
-        ],
+        &[(PREFILL_PLAN_CACHE_VERIFY, false.into())],
     );
     for (request, slot, prefix) in [(1, 0, prefix), (2, 1, 40_960)] {
         let ids: Vec<_> = (0..prefix).map(|p| token(0, p)).collect();
@@ -261,7 +254,7 @@ fn check_streamed(model: Model, dma: bool, pins: &[(&str, (usize, u64))]) {
     let mut mismatches = Vec::new();
     for shape in served() {
         let name = &shape.name;
-        let mut instance = restored(model, shape.prefix, true);
+        let mut instance = restored(model, shape.prefix);
         let (executed, described) = skip::describing_streamed(|| {
             skip::with_dma(dma, || {
                 if shape.cuts {
@@ -286,7 +279,7 @@ fn check_streamed(model: Model, dma: bool, pins: &[(&str, (usize, u64))]) {
                 .unwrap_or_else(|| panic!("{name} is pinned"))
                 .1
         } else {
-            let mut instance = restored(model, shape.prefix, false);
+            let mut instance = restored(model, shape.prefix);
             let fresh = skip::with_dma(dma, || {
                 plan_timing::describe(instance.handle(), &shape.original)
             })

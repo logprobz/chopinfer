@@ -286,8 +286,9 @@ fn a_refused_early_plan_refuses_the_step_at_its_target() {
 /// ran, at the draft readback (an id outside the vocabulary, before the
 /// target) or at the target's last upload, refuses the step, settles its
 /// gathers and poisons the DSpark runtime, and no device access touches a
-/// pending gather's ids or rows. The early plan kept its template before
-/// either failure.
+/// pending gather's ids or rows. The early plan, a miss that keeps its
+/// template once its launch completed, keeps it before the upload failure
+/// only.
 #[test]
 fn failures_after_an_early_plan_refuse_the_step() {
     let rows = |logs: &[String]| {
@@ -345,7 +346,7 @@ fn failures_after_an_early_plan_refuse_the_step() {
         // Both runs plan early: the dry run and the step.
         let ((logs, state), plans) = planned_with(|| fail(&[]));
         assert_eq!(plans, 2, "{context}");
-        assert_eq!(rows(&logs), 1, "{context}");
+        assert_eq!(rows(&logs), usize::from(failure == "upload"), "{context}");
         assert_eq!(state, (true, true), "{context}");
     }
 }

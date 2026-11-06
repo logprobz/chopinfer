@@ -50,8 +50,8 @@ struct Key {
     layout: InputLayout,
 }
 
-/// An upper-skip plan to lower while it issues (`prefill_streamed_lowering`):
-/// its layout, and where its plan is kept once its launch completed.
+/// An upper-skip plan to lower while it issues: its layout, and where its
+/// plan is kept once its launch completed.
 pub(super) struct Pending {
     pub(super) layout: skip::Layout,
     keep: Keep,
@@ -86,20 +86,13 @@ pub(crate) struct Cache {
     evictions: Cell<u64>,
     /// Templates of the plans this cache does not keep.
     templates: plan_templates::Templates,
-    /// Whether a plan no kept plan or template serves is lowered while it
-    /// issues (`prefill_streamed_lowering`).
-    streamed: bool,
     /// The streamed launches that completed so far.
     launched: Cell<u64>,
 }
 
 impl Cache {
-    /// The cache of an instance with `options`, with the DSpark drafter
-    /// when `dspark`.
-    pub(crate) fn new(
-        options: &model_deepseek41_contract::execution_options::Options,
-        dspark: bool,
-    ) -> Self {
+    /// The cache of an instance with `options`.
+    pub(crate) fn new(options: &model_deepseek41_contract::execution_options::Options) -> Self {
         let mode = if options.prefill_plan_cache_verify {
             Mode::Verify
         } else {
@@ -114,8 +107,7 @@ impl Cache {
             hits: Cell::new(0),
             misses: Cell::new(0),
             evictions: Cell::new(0),
-            templates: plan_templates::Templates::new(dspark),
-            streamed: options.prefill_streamed_lowering,
+            templates: plan_templates::Templates::new(),
             launched: Cell::new(0),
         }
     }
@@ -178,16 +170,13 @@ impl Cache {
         self.uses.get()
     }
 
-    /// `run`'s upper-skip plan: the kept plan of its key, or a fresh one,
-    /// kept when the run is eligible; with `prefill_streamed_lowering`, a
-    /// fresh one pending, to lower while it issues.
+    /// `run`'s upper-skip plan: the kept plan of its key or a template, or
+    /// a pending one, to lower while it issues and keep once launched when
+    /// the run is eligible.
     pub(super) fn plan(&self, instance: &Instance, run: &Run) -> Result<SkipPlan, String> {
         let key = key(run);
         let Some(key) = key else {
-            return match self
-                .templates
-                .plan(instance, run, self.verifies(), self.streamed)?
-            {
+            return match self.templates.plan(instance, run, self.verifies())? {
                 plan_templates::Planned::Ready(plan) => Ok(SkipPlan::Ready(plan)),
                 plan_templates::Planned::Miss(miss) => {
                     let plan_templates::Miss {
@@ -216,14 +205,9 @@ impl Cache {
             }
             return Ok(SkipPlan::Ready(plan));
         }
-        if self.streamed {
-            let layout = skip::Layout::of(instance, run)?;
-            let keep = Keep::Short(key);
-            return Ok(SkipPlan::Pending(Box::new(Pending { layout, keep })));
-        }
-        let plan = Rc::new(skip::Plan::prepare(instance, run)?);
-        self.keep(instance, key, &plan);
-        Ok(SkipPlan::Ready(plan))
+        let layout = skip::Layout::of(instance, run)?;
+        let keep = Keep::Short(key);
+        Ok(SkipPlan::Pending(Box::new(Pending { layout, keep })))
     }
 
     /// Keeps `plan`, lowered while it issued, where `pending` says, once
@@ -251,7 +235,7 @@ impl Cache {
         }
     }
 
-    /// Keeps the fresh plan `plan` of `key`, unless it takes DMA.
+    /// Keeps the plan `plan` of `key`, unless it takes DMA.
     fn keep(&self, instance: &Instance, key: Key, plan: &Rc<skip::Plan>) {
         // A DMA plan carries transport state of its own; keep only plain ones.
         if plan.uses_dma() {

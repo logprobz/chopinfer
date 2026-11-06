@@ -1050,7 +1050,7 @@ fn create(services: HostServicesV1, bytes: &[u8]) -> Result<Instance, Failed<Ins
         log(&error);
         BundleStatusV1::InternalError
     })?;
-    let plans = execute::plan_cache::Cache::new(&config.execution, has_drafter);
+    let plans = execute::plan_cache::Cache::new(&config.execution);
     let partial = partial();
     if !partial && let Some(missing) = ops.missing.first() {
         log(missing);

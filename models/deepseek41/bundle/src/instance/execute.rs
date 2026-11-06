@@ -182,9 +182,8 @@ enum Execution {
     },
 }
 
-/// An upper-skip plan: ready, from a kept plan, a template or a fresh
-/// lowering, or pending, to lower while it issues
-/// (`prefill_streamed_lowering`).
+/// An upper-skip plan: ready, from a kept plan or a template, or pending,
+/// to lower while it issues.
 enum SkipPlan {
     Ready(std::rc::Rc<skip::Plan>),
     Pending(Box<plan_cache::Pending>),

@@ -1,4 +1,5 @@
-//! An upper-skip prefill lowered while it issues (`prefill_streamed_lowering`).
+//! An upper-skip prefill lowered while it issues: a run no kept plan or
+//! template serves.
 //!
 //! The body is lowered one group at a time (`Lowerer`). Each issue unit of
 //! the whole-plan launch (`Plan::execute`) issues once every rank lowered

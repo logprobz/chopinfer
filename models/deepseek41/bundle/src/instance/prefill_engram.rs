@@ -55,8 +55,8 @@ impl Gathers {
 
     /// Whether the pending gathers are still those of begin `sequence`,
     /// healthy and joined through `joined` layers: what an Engram plan made
-    /// after the begin, between its own joins, may rely on
-    /// (`prefill_streamed_lowering`), as `plannable` is before the begin.
+    /// after the begin, between its own joins, may rely on (a prefill
+    /// lowered while it issues), as `plannable` is before the begin.
     pub(super) fn owned_by(&self, sequence: u64, joined: usize) -> bool {
         self.pending.get()
             && !self.failed.get()

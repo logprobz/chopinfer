@@ -30,8 +30,8 @@
 //! seeds and ledger request/boundary pairs are rebuilt for each step.
 //!
 //! Freeing a dropped template's launches takes about 4 ms at the served
-//! long-context shapes. On a DSpark instance a dropped template waits
-//! until the step's prefill launched (`release`), so its freeing
+//! long-context shapes. A dropped template waits until the step's prefill
+//! launched (`release`), so its freeing
 //! runs while the device works instead of before the launch; a step that
 //! fails before its launch leaves them to the next step's entry.
 
@@ -102,8 +102,8 @@ pub(crate) fn with_limit<T>(limit: usize, run: impl FnOnce() -> T) -> T {
     run()
 }
 
-/// A run's upper-skip plan: its key's template or a fresh lowering, or a
-/// miss to lower while it issues (`prefill_streamed_lowering`).
+/// A run's upper-skip plan: its key's template, or a miss to lower while
+/// it issues.
 pub(super) enum Planned {
     Ready(Rc<skip::Plan>),
     Miss(Box<Miss>),
@@ -120,15 +120,14 @@ pub(super) struct Miss {
 pub(super) struct Templates {
     kept: Kept<Key, skip::Plan>,
     /// Templates dropped to stay within the limit and held until the
-    /// step's prefill launched (`release`); empty unless `late`.
+    /// step's prefill launched (`release`).
     retired: RefCell<Vec<Rc<skip::Plan>>>,
-    late: bool,
 }
 
 impl Templates {
     /// Templates that free the ones they drop only once the step's prefill
-    /// launched when `late`.
-    pub(super) fn new(late: bool) -> Self {
+    /// launched.
+    pub(super) fn new() -> Self {
         #[cfg(test)]
         let limit = TEST_LIMIT.get();
         #[cfg(not(test))]
@@ -136,7 +135,6 @@ impl Templates {
         Self {
             kept: Kept::new(limit),
             retired: RefCell::new(Vec::new()),
-            late,
         }
     }
 
@@ -171,27 +169,21 @@ impl Templates {
     }
 
     /// `run`'s upper-skip plan: its key's template with the index
-    /// selections lowered again, or a fresh plan, kept when it can be; a
-    /// miss when `streamed`.
+    /// selections lowered again, or a miss.
     pub(super) fn plan(
         &self,
         instance: &Instance,
         run: &Run,
         verify: bool,
-        streamed: bool,
     ) -> Result<Planned, String> {
         let layout = skip::Layout::of(instance, run)?;
         let Some(key) = Key::of(instance, run, &layout) else {
-            if streamed {
-                let (key, refused) = (None, false);
-                return Ok(Planned::Miss(Box::new(Miss {
-                    layout,
-                    key,
-                    refused,
-                })));
-            }
-            return skip::Plan::lower(instance, run, &layout)
-                .map(|plan| Planned::Ready(Rc::new(plan)));
+            let (key, refused) = (None, false);
+            return Ok(Planned::Miss(Box::new(Miss {
+                layout,
+                key,
+                refused,
+            })));
         };
         let refused = self.kept.counts().refused;
         if let Some(plan) = self.kept.reuse(&key, |plan| plan.patch(instance, run))? {
@@ -201,41 +193,19 @@ impl Templates {
             return Ok(Planned::Ready(plan));
         }
         let refused = self.kept.counts().refused > refused;
-        if streamed {
-            let key = Some(key);
-            return Ok(Planned::Miss(Box::new(Miss {
-                layout,
-                key,
-                refused,
-            })));
-        }
-        let plan = skip::Plan::lower(instance, run, &layout)?;
-        Ok(Planned::Ready(
-            self.keep(instance, run, key, refused, plan, None, self.late),
-        ))
+        let key = Some(key);
+        Ok(Planned::Miss(Box::new(Miss {
+            layout,
+            key,
+            refused,
+        })))
     }
 
     /// Keeps `plan`, lowered while it issued and launched, as a template
-    /// of `key`, with the Engram plan `engram` it made; the plan to run. A
-    /// template the keep drops is freed once the launch returns
-    /// (`release`), as it already has.
+    /// of `key` when it can be, with the Engram plan `engram` it made; the
+    /// plan to run. A template the keep drops is freed once the launch
+    /// returns (`release`), as it already has.
     pub(super) fn keep_streamed(
-        &self,
-        instance: &Instance,
-        run: &Run,
-        key: Key,
-        refused: bool,
-        plan: skip::Plan,
-        engram: Option<crate::instance::prefill_engram::Plan>,
-    ) -> Rc<skip::Plan> {
-        self.keep(instance, run, key, refused, plan, engram, true)
-    }
-
-    /// Keeps the fresh `plan` as a template of `key` when it can be, with
-    /// its Engram plan when it made one, holding a template it drops until
-    /// `release` when `hold`.
-    #[allow(clippy::too_many_arguments)]
-    fn keep(
         &self,
         instance: &Instance,
         run: &Run,
@@ -243,7 +213,6 @@ impl Templates {
         refused: bool,
         mut plan: skip::Plan,
         engram: Option<crate::instance::prefill_engram::Plan>,
-        hold: bool,
     ) -> Rc<skip::Plan> {
         if !plan.templatable() {
             return Rc::new(plan);
@@ -256,11 +225,11 @@ impl Templates {
         skip::record_kept(|| plan.describe_template());
         let plan = Rc::new(plan);
         let dropped = match self.kept.keep(key, Rc::clone(&plan)) {
-            Some(old) if hold => {
+            Some(old) => {
                 self.retired.borrow_mut().push(old);
                 true
             }
-            dropped => dropped.is_some(),
+            None => false,
         };
         let counts = self.kept.counts();
         let refused = if refused {

@@ -82,6 +82,14 @@ preserved older rows. An anchor costs 53 pages (2.88 MiB) per rank for AR or
 `prefill_chunk_tokens` remain declared options for diagnostic
 configurations.
 
+An upper-skip prefill that no kept plan or template serves lowers its body
+one group at a time while it issues the units already lowered, with the
+same launches in the same order, and keeps its plan or template once
+launched. A lowering failure after its first launch poisons the instance;
+the templates the step drops are freed after its launch. Adopted at every
+profile on 2026-11-06 with the DSpark prefill steps ([served
+timing](#served-timing)).
+
 `tp4-dspark` serves `--prefill-policy adaptive` at a 750 ms decode cadence
 target with adaptive timing cuts; `tp4-ar` keeps the fixed budget and whole
 grid chunks. See the [prefill policy](../../docs/developer-preview.md#prefill-policy).
@@ -161,7 +169,6 @@ them. A non-default value is unqualified.
 | `prefill_norm_ceil_rows` | `false` | Candidate: Flash prefill steps of 33 to 8192 rows (`norm.input_range.prefill`) run each sublayer input norm as the fused prefill norm-ceil, as the 22 measured rows of `norm.input_admit.prefill` do, instead of the row norm, the widening of its rows and the serial input quantizer; normed, widened, codes, scales and row status are unchanged. On two GPUs on 2026-11-06 (300 W limit), the fused launch matched the chain bit for bit at every row count from 33 to 8192, and in the pair lab with an A/A control it took 51, 69 and 85 us per launch against 180, 186 and 201 us for the chain at 1500, 2300 and 3000 rows. In the 2026-11-06 live-shape mixed-step profile every serial input quantizer at those rows follows its row norm, and the unfused chain spans 148 to 179 us per site, about 100 sites per rank. Not adopted: no served A/B yet. |
 | `prefill_plan_cache_plans` | `16` | Kept short-prompt plans, from 1 to 64; evict the least recently used plan when full. |
 | `prefill_plan_cache_verify` | `false` | Lower each cache hit and each reused plan template again and refuse a differing plan. |
-| `prefill_streamed_lowering` | `true` | Candidate: an upper-skip prefill that no kept plan or template serves lowers its body while it issues the parts already lowered, with the same launches and results, and keeps its plan once launched. A lowering failure after its first launch poisons the instance. A DSpark step-shape record's `streamed_lowering` says whether its prefill was streamed. Not yet measured. |
 | `prefill_upper_skip` | `true` | Use upper-skip prefill; requires nonzero guaranteed chunk ends. |
 | `shared_overlap_max_rows` | `4294967295` | Largest graph bucket that overlaps shared-expert and eligible window-KV work. Positive values only; the default covers every admitted bucket. |
 | `text_config.candidate_topk_blocks` | `2048` | Candidate block pool, checked with index top-k and the partial newest block. |

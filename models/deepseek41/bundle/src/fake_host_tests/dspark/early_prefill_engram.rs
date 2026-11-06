@@ -11,7 +11,7 @@ use crate::fake_host_tests::prefill_engram::{
 };
 use crate::instance::execute::plan_timing::restore_without_snapshot;
 use model_deepseek41_contract::execution_options::{
-    DSPARK_GRAPH_HANDLES_PER_RANK, PREFILL_PLAN_CACHE_VERIFY, PREFILL_STREAMED_LOWERING,
+    DSPARK_GRAPH_HANDLES_PER_RANK, PREFILL_PLAN_CACHE_VERIFY,
 };
 use runtime_bundle_sdk::prefill::{Boundary, encode};
 
@@ -148,12 +148,10 @@ enum Kind {
     Prefill,
 }
 
-/// One executed step: its kind, journal, drafts and logits views.
+/// One executed step: its kind and journal.
 struct Recorded {
     kind: Kind,
     journal: Vec<String>,
-    drafts: Vec<OwnedDraftTokensV1>,
-    views: Vec<OwnedLogitsViewV1>,
 }
 
 /// What one schedule left.
@@ -186,7 +184,7 @@ impl Schedule<'_> {
             &host,
             true,
             MappedHost::with_row_ids(Rc::clone(&host)),
-            &opted_out(options),
+            options,
         )
         .unwrap_or_else(|e| panic!("{e:?}: {:?}", host.logs.borrow()));
         self.run_on(&host, instance)
@@ -200,7 +198,7 @@ impl Schedule<'_> {
         let instance = create_media_backend_with_options(
             &host,
             MappedHost::with_row_ids(Rc::clone(&host)),
-            &opted_out(options),
+            options,
         )
         .unwrap_or_else(|e| panic!("{e:?}: {:?}", host.logs.borrow()));
         self.run_on(&host, instance)
@@ -220,12 +218,10 @@ impl Schedule<'_> {
         let mut steps = Vec::new();
         let mut record = |instance: &mut BundleInstanceV1, kind: Kind, request: &[u8]| {
             let begin = host.journal.borrow().len();
-            let sink = run(instance, host, request);
+            run(instance, host, request);
             steps.push(Recorded {
                 kind,
                 journal: host.journal.borrow()[begin..].to_vec(),
-                drafts: sink.drafts,
-                views: sink.views,
             });
         };
         let prompts =
@@ -326,27 +322,6 @@ fn split(journal: &[String], indices: &[DeviceBufferSpanV1]) -> (Vec<String>, Ve
     })
 }
 
-/// The first line `a` and `b` differ at, with its neighbours.
-#[track_caller]
-fn assert_same_lines(a: &[String], b: &[String], context: &str) {
-    if a == b {
-        return;
-    }
-    let at = a
-        .iter()
-        .zip(b)
-        .position(|(a, b)| a != b)
-        .unwrap_or(a.len().min(b.len()));
-    let near = |lines: &[String]| lines[at.saturating_sub(3)..(at + 3).min(lines.len())].to_vec();
-    panic!(
-        "{context}: {} and {} lines, first difference at {at}:\n{:#?}\n{:#?}",
-        a.len(),
-        b.len(),
-        near(a),
-        near(b)
-    );
-}
-
 /// `line` without the host times a log line reports.
 fn untimed(line: &str) -> String {
     let mut out = String::with_capacity(line.len());
@@ -414,23 +389,6 @@ fn mixed_began_after_device_work(run: &Run) -> Vec<bool> {
             step.journal[..at].iter().any(|line| is_device_work(line))
         })
         .collect()
-}
-
-/// The candidates adopted since these comparisons were written, at their
-/// former defaults, ahead of `options`: an arm that names no candidate
-/// runs the default each comparison was written against.
-fn opted_out<'a>(options: &[(&'a str, serde_json::Value)]) -> Vec<(&'a str, serde_json::Value)> {
-    [(PREFILL_STREAMED_LOWERING, false.into())]
-        .into_iter()
-        .chain(options.iter().cloned())
-        .collect()
-}
-
-fn with(
-    options: &[(&'static str, serde_json::Value)],
-    more: &[(&'static str, serde_json::Value)],
-) -> Vec<(&'static str, serde_json::Value)> {
-    options.iter().chain(more).cloned().collect()
 }
 
 /// Mixed C8 steps (eight four-row verify items) beside fresh prompts:
@@ -539,8 +497,7 @@ fn prompted(
     host.speculation.set(Some((5, 32)));
     host.kv_pages.set(24 * SLOT_PAGES);
     let mut instance =
-        create_backend_with_options(&host, true, backend(Rc::clone(&host)), &opted_out(options))
-            .unwrap();
+        create_backend_with_options(&host, true, backend(Rc::clone(&host)), options).unwrap();
     for slot in 0..8 {
         run(
             &mut instance,

@@ -769,8 +769,9 @@ gathers run before catch-up and count in `gather` instead of
 `target_upload`; a step refused after that begin settles its gathers before
 it returns. A DSpark prefill planned while the drafter runs counts in
 `prefill_plan`, outside `target`.
-With `prefill_streamed_lowering`, an upper-skip prefill lowered while it
-issues, and the keeping of its plan, count in `target_submit`.
+An upper-skip prefill that no kept plan or template serves is lowered while
+it issues; that lowering and the keeping of its plan count in
+`target_submit`.
 `target_lower` keeps the target's own planning and the freeing of the
 templates the step's planning dropped, which runs after the prefill's
 launch; a step after a failed one frees that step's held templates at its
@@ -778,8 +779,7 @@ entry, outside every field. The phase fields stay disjoint and the target's
 four fields stay within `target`. The DSpark step-shape record's
 `early_prefill_begin`, `early_prefill_plan` and `streamed_lowering` say
 whether the step's prefill began its gathers before catch-up, planned while
-the drafter ran and was lowered while it issued; all are false with the
-options off. Its `prefill_templates` holds the instance's prefill plan
+the drafter ran and was lowered while it issued. Its `prefill_templates` holds the instance's prefill plan
 templates after the step: `templates` kept of at most `limit`, and the
 growing counts of `hits`, `misses`, `busy`, `refused`, `kept` and
 `dropped`, so two consecutive records give the later step's template reuse,

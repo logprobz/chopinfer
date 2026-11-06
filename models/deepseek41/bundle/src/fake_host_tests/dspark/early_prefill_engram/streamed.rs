@@ -1,44 +1,12 @@
-//! The `prefill_streamed_lowering` candidate beside the DSpark early steps:
-//! a prefill no kept plan or template serves lowers one layer at a time
-//! while it issues. Each step's journal (every launch with its arguments,
-//! every upload with its bytes, the prepared gathers' begins and joins),
-//! every log line and every result is the batch lowering's, beside the
-//! early Engram begin and plan and the mixed steps' prepared verify-row
-//! gathers, with the upper-skip DMA and without. A mixed step fails
-//! streamed where it fails batch, and keeps nothing.
-//! Only the line that keeps a streamed plan moves: it follows the launch's
-//! own lines, as the plan is kept once its launch completed. The streamed
-//! plans are the ones the batch run lowered before their launch, but for
-//! the verify mode's, and in these schedules each is one the batch run
-//! kept as a plan or template.
+//! Streamed lowering beside the DSpark early steps: a prefill no kept
+//! plan or template serves lowers one layer at a time while it issues,
+//! beside the early Engram begin and plan and the mixed steps' prepared
+//! verify-row gathers, with the upper-skip DMA and without, and keeps its
+//! plan once its launch completed. No plan is lowered whole before its
+//! launch but where the verify mode lowers a reused one again. A mixed step
+//! that fails keeps nothing.
 use super::*;
 use crate::instance::execute::{plan_templates, plan_timing, skip};
-use model_deepseek41_contract::execution_options::PREFILL_STREAMED_LOWERING;
-
-/// Each step of `on` issues `off`'s journal and results exactly, and every
-/// log line matches; the lines that keep a plan or template are compared
-/// apart, in order. Returns how many there are.
-#[track_caller]
-fn assert_same_steps(off: &Run, on: &Run, context: &str) -> usize {
-    assert_eq!(off.steps.len(), on.steps.len(), "{context}");
-    for (index, (a, b)) in off.steps.iter().zip(&on.steps).enumerate() {
-        let context = format!("{context}, step {index}");
-        assert_same_lines(&a.journal, &b.journal, &context);
-        assert_eq!(a.drafts, b.drafts, "{context}");
-        assert_eq!(a.views, b.views, "{context}");
-    }
-    let keeps = |run: &Run| -> (Vec<String>, Vec<String>) {
-        run.logs.iter().cloned().partition(|line| {
-            line.contains("prefill plan templates: kept")
-                || line.contains("prefill plan cache: kept")
-        })
-    };
-    let (keeps_off, logs_off) = keeps(off);
-    let (keeps_on, logs_on) = keeps(on);
-    assert_same_lines(&keeps_off, &keeps_on, &format!("{context}: keeps"));
-    assert_same_lines(&logs_off, &logs_on, &format!("{context}: logs"));
-    keeps_on.len()
-}
 
 /// `schedule` with `options`, the upper-skip DMA as `dma`: the run, the
 /// plans lowered while they issued and those lowered before their launch.
@@ -56,22 +24,30 @@ fn counted(
     )
 }
 
-/// `schedule` with each of `options` and the DMA on and off issues the
-/// same steps streamed as batch, and streams each plan the batch run
-/// lowered but for the verify mode's: `launches`, each one the batch run
-/// kept.
+/// `schedule` with each of `options` and the DMA on and off streams
+/// `launches` plans, each kept once its launch completed, and lowers none
+/// whole before its launch outside the verify mode.
 #[track_caller]
 fn assert_streamed(schedule: &Schedule<'_>, options: &[(String, Options)], launches: u64) {
-    let streamed = [(PREFILL_STREAMED_LOWERING, true.into())];
     for (name, options) in options {
+        let verify = options.iter().any(|(option, value)| {
+            *option == PREFILL_PLAN_CACHE_VERIFY && value.as_bool() == Some(true)
+        });
         for dma in [true, false] {
             let context = format!("{name}, DMA {dma}");
-            let (off, none, batch) = counted(schedule, options, dma);
-            let (on, launched, lowered) = counted(schedule, &with(options, &streamed), dma);
-            assert_eq!(none, 0, "{context}");
-            assert_eq!(launched + lowered, batch, "{context}");
-            let keeps = assert_same_steps(&off, &on, &context);
-            assert_eq!((launched, keeps as u64), (launches, launches), "{context}");
+            let (run, launched, lowered) = counted(schedule, options, dma);
+            let keeps = run
+                .logs
+                .iter()
+                .filter(|line| {
+                    line.contains("prefill plan templates: kept")
+                        || line.contains("prefill plan cache: kept")
+                })
+                .count() as u64;
+            assert_eq!((launched, keeps), (launches, launches), "{context}");
+            if !verify {
+                assert_eq!(lowered, 0, "{context}");
+            }
         }
     }
 }
@@ -125,13 +101,13 @@ fn assert_early_begin_schedule(verify: bool) {
 
 /// The early begin's schedule by default, and eager.
 #[test]
-fn streamed_plans_issue_the_batch_journal_beside_the_dspark_early_steps() {
+fn the_early_begin_schedule_streams_each_new_prefill_structure() {
     assert_early_begin_schedule(false);
 }
 
 /// The early begin's schedule with every reused plan lowered again.
 #[test]
-fn verified_streamed_plans_issue_the_batch_journal_beside_the_dspark_early_steps() {
+fn the_verified_early_begin_schedule_streams_each_new_prefill_structure() {
     assert_early_begin_schedule(true);
 }
 
@@ -148,7 +124,7 @@ fn verified() -> Vec<(String, Options)> {
 /// after a cancel, and a 1537-row miss, with every reused plan lowered
 /// again.
 #[test]
-fn long_context_streamed_plans_issue_the_batch_journal() {
+fn long_context_misses_are_streamed() {
     use Then::*;
     let long = [
         step(&[prefill(20, 8, 93_000, 1536)], true, Commit),
@@ -168,7 +144,7 @@ fn long_context_streamed_plans_issue_the_batch_journal() {
 /// A 66-row eager verify phase beside a 512-row template and its reuse,
 /// with every reused plan lowered again.
 #[test]
-fn eager_verify_streamed_plans_issue_the_batch_journal() {
+fn eager_verify_misses_are_streamed() {
     use Then::*;
     let wide = [
         step(&[prefill(7, 11, 0, 512)], true, Commit),
@@ -185,10 +161,9 @@ fn eager_verify_streamed_plans_issue_the_batch_journal() {
 }
 
 /// With room for two templates, prefills of 512, 600, 700 and 512 rows
-/// drop the oldest template at each of the last two, streamed as batch.
-/// A streamed miss keeps its template once its launch completed, so the
-/// template it drops is freed after the launch, as the batch lowering's is
-/// on a DSpark instance.
+/// drop the oldest template at each of the last two. A streamed miss keeps
+/// its template once its launch completed, so the template it drops is
+/// freed after the launch.
 #[test]
 fn a_streamed_miss_frees_the_template_it_drops_after_its_launch() {
     use Then::*;
@@ -204,41 +179,29 @@ fn a_streamed_miss_frees_the_template_it_drops_after_its_launch() {
         restored: &[],
         steps: &steps,
     };
-    let streamed = (PREFILL_STREAMED_LOWERING, true.into());
     plan_templates::with_limit(2, || {
         // The first prompt and the four prefills: the last 512 rows miss,
         // as the 700 rows dropped their template.
         assert_streamed(&schedule, &default(), 5);
-        for options in [vec![], vec![streamed.clone()]] {
-            let context = format!("{options:?}");
-            let (host, mut instance, _) = prompted(&options, MappedHost::with_row_ids);
-            let mut events = Vec::new();
-            for (index, rows) in [512, 600, 700].into_iter().enumerate() {
-                let request = 7 + index as u64;
-                let committed = 3 + 4 * index as u64;
-                let verifies: Vec<_> = (0..8).map(|slot| (slot, committed, 4)).collect();
-                let step = batch(&[prefill(request, 8, 0, rows)], &verifies);
-                let (_, seen) =
-                    crate::instance::execute::observe_events(|| run(&mut instance, &host, &step));
-                events = seen;
-                let kept: Vec<_> = (0..8).map(|slot| kept(verifier(slot), 4)).collect();
-                instance.commit_accepted(&kept).unwrap();
-                instance.retire_request(request).unwrap();
-            }
-            // The 700-row miss dropped the 512-row template.
-            assert_eq!(
-                plan_templates::counts(instance.handle()).evicted,
-                1,
-                "{context}"
-            );
-            assert_eq!(
-                events,
-                ["prefill launch", "prefill launched", "plan freed"],
-                "{context}"
-            );
-            assert_eq!(plan_templates::retired(instance.handle()), 0, "{context}");
-            let _ = instance.destroy();
+        let (host, mut instance, _) = prompted(&[], MappedHost::with_row_ids);
+        let mut events = Vec::new();
+        for (index, rows) in [512, 600, 700].into_iter().enumerate() {
+            let request = 7 + index as u64;
+            let committed = 3 + 4 * index as u64;
+            let verifies: Vec<_> = (0..8).map(|slot| (slot, committed, 4)).collect();
+            let step = batch(&[prefill(request, 8, 0, rows)], &verifies);
+            let (_, seen) =
+                crate::instance::execute::observe_events(|| run(&mut instance, &host, &step));
+            events = seen;
+            let kept: Vec<_> = (0..8).map(|slot| kept(verifier(slot), 4)).collect();
+            instance.commit_accepted(&kept).unwrap();
+            instance.retire_request(request).unwrap();
         }
+        // The 700-row miss dropped the 512-row template.
+        assert_eq!(plan_templates::counts(instance.handle()).evicted, 1);
+        assert_eq!(events, ["prefill launch", "prefill launched", "plan freed"]);
+        assert_eq!(plan_templates::retired(instance.handle()), 0);
+        let _ = instance.destroy();
     });
 }
 
@@ -257,10 +220,10 @@ enum Fault {
 /// collectives are poisoned, and the templates it kept.
 type Failed = (Vec<String>, String, bool, u64);
 
-/// `prompted`'s mixed step with `options`, failing at `fault`. A poisoned
-/// instance refuses its next execute.
-fn failed_mixed(options: &[(&str, serde_json::Value)], fault: &Fault) -> Failed {
-    let (host, mut instance, mixed) = prompted(options, MappedHost::with_row_ids);
+/// `prompted`'s mixed step, failing at `fault`. A poisoned instance
+/// refuses its next execute.
+fn failed_mixed(fault: &Fault) -> Failed {
+    let (host, mut instance, mixed) = prompted(&[], MappedHost::with_row_ids);
     let kept = plan_templates::counts(instance.handle()).kept;
     let begin = host.journal.borrow().len();
     let mut execute = || instance.execute_prefill(&mixed, &mut Sink::default());
@@ -304,20 +267,19 @@ fn prefill_body() -> Vec<(String, crate::program::Stage)> {
     planned.symbols.0
 }
 
-/// A mixed C8 step beside a 512-row prefill fails streamed where it fails
-/// batch, with the upper-skip DMA and without. Launch failures at the prefill's
-/// last launch before its first gather join, at its first after it and at
-/// its first after the second layer's joins, a refusal of its first Engram
-/// consumer's segment on rank 0, after that join, and a refusal of the
-/// step's first segment of the prefill's first symbol, which an earlier
-/// phase also launches, give the same journal, status and poisoning, read
-/// from the collectives; all but the last poison. The batch prefill kept
-/// its template while it planned; the failed streamed miss keeps none. Injected failures of the streamed launch keep nothing
-/// either: a lowering error at its first group refuses unpoisoned, and one
-/// at a later group, failed gathers, a launch reading pending ids, a panic
-/// and a head audit error poison.
+/// A mixed C8 step beside a 512-row prefill that fails while it streams,
+/// with the upper-skip DMA and without, keeps nothing. Launch failures at
+/// the prefill's last launch before its first gather join, at its first
+/// after it and at its first after the second layer's joins poison, read
+/// from the collectives, as does a refusal of its first Engram consumer's
+/// segment on rank 0, after that join; a refusal of the step's first
+/// segment of the prefill's first symbol, which an earlier phase also
+/// launches, refuses the step. Injected failures of the streamed launch: a
+/// lowering error at its first group refuses unpoisoned, and one at a later
+/// group, failed gathers, a launch reading pending ids, a panic and a head
+/// audit error poison.
 #[test]
-fn a_mixed_step_fails_streamed_as_batch_beside_the_dspark_early_steps() {
+fn a_mixed_step_that_fails_while_it_streams_keeps_nothing() {
     use crate::program::Stage;
     use skip::StreamedFailure::{Alias, Gathers, Group, Head, Panic};
     let body = prefill_body();
@@ -330,12 +292,10 @@ fn a_mixed_step_fails_streamed_as_batch_beside_the_dspark_early_steps() {
     let consumer = body[at].0.clone();
     // Each earlier occurrence is a segment on every rank.
     let earlier = body[..at].iter().filter(|(s, _)| *s == consumer).count() as u32;
-    let streamed = [(PREFILL_STREAMED_LOWERING, true.into())];
-    let options: Options = vec![];
     for dma in [true, false] {
         let context = format!("DMA {dma}");
         let reference = skip::with_dma(dma, || {
-            let (host, mut instance, mixed) = prompted(&options, MappedHost::with_row_ids);
+            let (host, mut instance, mixed) = prompted(&[], MappedHost::with_row_ids);
             let begin = host.journal.borrow().len();
             run(&mut instance, &host, &mixed);
             let journal = host.journal.borrow()[begin..].to_vec();
@@ -363,30 +323,22 @@ fn a_mixed_step_fails_streamed_as_batch_beside_the_dspark_early_steps() {
         ];
         for fault in &faults {
             let what = format!("{context}, {fault:?}");
-            let (batch, on) = skip::with_dma(dma, || {
-                (
-                    failed_mixed(&options, fault),
-                    failed_mixed(&with(&options, &streamed), fault),
-                )
-            });
-            assert!(batch.1.starts_with("Err"), "{what}: {}", batch.1);
-            assert_same_lines(&batch.0, &on.0, &what);
-            assert_eq!((&batch.1, batch.2), (&on.1, on.2), "{what}");
+            let (journal, status, poisoned, kept) = skip::with_dma(dma, || failed_mixed(fault));
+            assert!(status.starts_with("Err"), "{what}: {status}");
             // A failed launch poisons; the consumer's refusal follows the
             // prefill's first join.
-            let joined = batch.0.iter().any(|l| l.starts_with("async mapped wait "));
+            let joined = journal.iter().any(|l| l.starts_with("async mapped wait "));
             match fault {
-                Fault::Launch(_) => assert!(batch.2, "{what}: poisoned"),
+                Fault::Launch(_) => assert!(poisoned, "{what}: poisoned"),
                 Fault::Refused(_, 0) => {}
-                _ => assert!(joined && batch.2, "{what}: poisoned inside the prefill"),
+                _ => assert!(joined && poisoned, "{what}: poisoned inside the prefill"),
             }
-            assert_eq!((batch.3, on.3), (1, 0), "{what}: kept");
+            assert_eq!(kept, 0, "{what}: kept");
         }
         for failure in [Group(0), Group(10), Gathers(10), Alias(10), Panic(10), Head] {
             let what = format!("{context}, {failure:?}");
-            let (_, status, poisoned, kept) = skip::with_dma(dma, || {
-                failed_mixed(&with(&options, &streamed), &Fault::Streamed(failure))
-            });
+            let (_, status, poisoned, kept) =
+                skip::with_dma(dma, || failed_mixed(&Fault::Streamed(failure)));
             assert!(status.starts_with("Err"), "{what}: {status}");
             assert_eq!((poisoned, kept), (failure != Group(0), 0), "{what}");
         }
@@ -396,8 +348,8 @@ fn a_mixed_step_fails_streamed_as_batch_beside_the_dspark_early_steps() {
 /// With diagnostic step logs, each step-shape record says whether its
 /// step's prefill was lowered while it issued (`streamed_lowering`): true
 /// for a miss (the first prompt's, of the short-prompt cache, and each new
-/// prefill structure's), false for a kept plan's or template's reuse, and
-/// false for every step with the option off. The record's template counts show the reuse is a hit.
+/// prefill structure's) and false for a kept plan's or template's reuse.
+/// The record's template counts show the reuse is a hit.
 #[test]
 fn step_shape_records_say_whether_the_prefill_was_streamed() {
     use Then::*;
@@ -413,36 +365,28 @@ fn step_shape_records_say_whether_the_prefill_was_streamed() {
         restored: &[],
         steps: &steps,
     };
-    let logs = (DIAGNOSTIC_STEP_LOGS, serde_json::Value::from(true));
-    let streamed = (PREFILL_STREAMED_LOWERING, true.into());
+    let run = schedule.run(&[(DIAGNOSTIC_STEP_LOGS, true.into())]);
+    let field = |marker: &str| -> Vec<&str> {
+        run.logs
+            .iter()
+            .filter_map(|line| line.find(marker).map(|at| &line[at + marker.len()..]))
+            .collect()
+    };
+    let records: Vec<bool> = field("\"streamed_lowering\":")
+        .iter()
+        .map(|rest| rest.starts_with("true"))
+        .collect();
     // Eight prompts, the first a miss, then a 512-row miss, its template's
     // reuse by another request and a 600-row miss.
-    let on = [vec![true], vec![false; 7], vec![true, false, true]].concat();
-    for (options, expected) in [
-        (vec![logs.clone()], vec![false; 11]),
-        (vec![logs.clone(), streamed.clone()], on),
-    ] {
-        let arm = format!("{options:?}");
-        let run = schedule.run(&options);
-        let field = |marker: &str| -> Vec<&str> {
-            run.logs
-                .iter()
-                .filter_map(|line| line.find(marker).map(|at| &line[at + marker.len()..]))
-                .collect()
-        };
-        let records: Vec<bool> = field("\"streamed_lowering\":")
-            .iter()
-            .map(|rest| rest.starts_with("true"))
-            .collect();
-        assert_eq!(records, expected, "{arm}");
-        let hits: Vec<u64> = field("\"prefill_templates\":")
-            .iter()
-            .map(|rest| {
-                let templates: serde_json::Value =
-                    serde_json::from_str(&rest[..=rest.find('}').unwrap()]).unwrap();
-                templates["hits"].as_u64().unwrap()
-            })
-            .collect();
-        assert_eq!(hits[8..], [0, 1, 1], "{arm}: the reuse is a template hit");
-    }
+    let expected = [vec![true], vec![false; 7], vec![true, false, true]].concat();
+    assert_eq!(records, expected);
+    let hits: Vec<u64> = field("\"prefill_templates\":")
+        .iter()
+        .map(|rest| {
+            let templates: serde_json::Value =
+                serde_json::from_str(&rest[..=rest.find('}').unwrap()]).unwrap();
+            templates["hits"].as_u64().unwrap()
+        })
+        .collect();
+    assert_eq!(hits[8..], [0, 1, 1], "the reuse is a template hit");
 }

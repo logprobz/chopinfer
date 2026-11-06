@@ -32,7 +32,9 @@ pub(crate) struct Planned {
 }
 
 /// Plans the prefill of the original batch `request` on the instance
-/// `handle` as an upper-skip step, as `plan_run` does in execute.
+/// `handle` as an upper-skip step, as `plan_run` does in execute; a plan
+/// no kept plan or template serves is lowered whole and kept as its
+/// launch keeps it (`finish_pending`).
 pub(crate) fn plan(handle: BundleHandleV1, request: &[u8]) -> Result<Planned, String> {
     with(handle, |instance| {
         instance.skip_prefill = true;
@@ -43,17 +45,26 @@ pub(crate) fn plan(handle: BundleHandleV1, request: &[u8]) -> Result<Planned, St
         };
         let reuses = skip::engram_reuses();
         let started = Instant::now();
-        let run = instance
+        let mut run = instance
             .plan_run(step.prefill, None, hashed)
             .map_err(|e| format!("plan: {e:?}"))?;
+        // A fresh Engram plan is no kept template's.
+        let fresh = if run.execution.pending() {
+            Some(finish_pending(instance, &mut run)?)
+        } else {
+            None
+        };
         let elapsed = started.elapsed();
         let skip = run.execution.skip().ok_or("not an upper-skip plan")?;
         let launches = skip.launches();
         let symbols = skip.symbols(0);
-        let engram = run
-            .execution
-            .prefill_engram()
-            .map(|_| skip::engram_reuses() > reuses);
+        let engram = match fresh {
+            Some(made) => made.then_some(false),
+            None => run
+                .execution
+                .prefill_engram()
+                .map(|_| skip::engram_reuses() > reuses),
+        };
         Ok(Planned {
             elapsed,
             launches,
@@ -61,6 +72,37 @@ pub(crate) fn plan(handle: BundleHandleV1, request: &[u8]) -> Result<Planned, St
             symbols,
         })
     })
+}
+
+/// Lowers `run`'s pending upper-skip plan whole, with its Engram plan for a
+/// run that takes prepared gathers, and keeps it as its launch would
+/// (`Instance::launch`); whether it made an Engram plan.
+fn finish_pending(instance: &Instance, run: &mut super::Run) -> Result<bool, String> {
+    let super::Execution::Skip {
+        plan: super::SkipPlan::Pending(pending),
+        ..
+    } = std::mem::replace(&mut run.execution, super::Execution::Standard)
+    else {
+        unreachable!("a pending upper-skip plan");
+    };
+    let plan = skip::Plan::lower(instance, run, &pending.layout)?;
+    let engram = match instance
+        .prefill_engram
+        .as_ref()
+        .filter(|_| run.route.prepared_gathers)
+    {
+        Some(gathers) => Some(plan.engram(gathers, false)?),
+        None => None,
+    };
+    let made = engram.is_some();
+    let plan = instance
+        .plans
+        .keep_streamed(instance, run, plan, engram, *pending);
+    run.execution = super::Execution::Skip {
+        plan: super::SkipPlan::Ready(plan),
+        engram: None,
+    };
+    Ok(made)
 }
 
 /// A fresh upper-skip lowering of the original batch `request` on the

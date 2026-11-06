@@ -520,8 +520,8 @@ pub(crate) fn early_stagings() -> u64 {
 /// and a prefill planned while the drafter runs is `prefill_plan`, outside
 /// `target`.
 /// The record also says whether the step's prefill began its gathers or
-/// planned early, whether it was lowered while it issued
-/// (`prefill_streamed_lowering`), and holds the prefill plan templates
+/// planned early and whether it was lowered while it issued (it missed
+/// every kept plan and template), and holds the prefill plan templates
 /// after the step.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct PhaseTimes {

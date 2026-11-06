@@ -21,7 +21,6 @@ mod drafter;
 mod prefill_compact_rows;
 mod prefill_dma_intervals;
 mod prefill_norm_rows;
-mod streamed;
 mod templated;
 mod wide;
 

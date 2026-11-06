@@ -426,7 +426,6 @@ pub(crate) mod tests {
             (DSPARK_CONFIDENCE_STAGED, true.into()),
             (DSPARK_HC_FUSION, true.into()),
             (DSPARK_MARKOV_STAGED, true.into()),
-            (PREFILL_STREAMED_LOWERING, false.into()),
         ] {
             changed = with_option(changed, name, value);
         }
@@ -449,7 +448,6 @@ pub(crate) mod tests {
                 dspark_confidence_staged: true,
                 dspark_hc_fusion: true,
                 dspark_markov_staged: true,
-                prefill_streamed_lowering: false,
             }
         );
         for (name, value) in [

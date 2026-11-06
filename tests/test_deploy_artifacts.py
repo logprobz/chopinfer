@@ -236,7 +236,7 @@ assert Path(sys.argv[1]).is_file()
                       (ROOT / 'docs/developer-preview.md').read_text())
 
     def test_documented_release_gate_commands_parse(self):
-        document = (ROOT / 'tools/qual/README.md').read_text()
+        document = (ROOT / 'docs/contributing.md').read_text()
         commands = re.findall(r'^python3 tools/qual/release_gate.py ([^\n]+)$', document, re.MULTILINE)
         self.assertTrue(commands)
         sys.path.insert(0, str(ROOT / 'tools/qual'))

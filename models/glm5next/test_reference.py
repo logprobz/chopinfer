@@ -1468,7 +1468,7 @@ class ExternalVariantTests(unittest.TestCase):
         self.assertEqual(candidate["args"][-2:], ["--server-log", "{server_log}"])
         self.assertEqual(compare["args"][1:], ["--arms", "candidate", "fp8", "--receipt", "candidate={evals_candidate}",
                                                "--receipt", "fp8={fp8_gsm8k}", "--bound"])
-        self.assertIn({"path": ["bound"], "op": "eq", "value": True, "source": "tools/qual/README.md#release-gates"},
+        self.assertIn({"path": ["bound"], "op": "eq", "value": True, "source": "docs/check-kinds.md#release-gates"},
                       compare["rules"])
         pin = value["qualification"]["checkpoint"]["checkpoint_identity"]
         self.assertEqual([(rule["path"], rule["value"]) for rule in candidate["rules"]

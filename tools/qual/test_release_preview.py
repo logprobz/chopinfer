@@ -158,7 +158,7 @@ class RecordArgumentTests(unittest.TestCase):
         check = {'module': 'verify_exact', 'files': ['verify_ar', 'verify_candidate']}
         if arguments is not None:
             check['constants'] = {'release_preview': {'RECORD_ARGUMENTS': {
-                'value': arguments, 'source': 'tools/qual/README.md#correctness-runner'}}}
+                'value': arguments, 'source': 'docs/contributing.md#correctness-runner'}}}
         return check
 
     def test_absent_arguments_preserve_both_default_records(self):
@@ -583,9 +583,9 @@ class PlanTests(unittest.TestCase):
                 for key in files:
                     self.assertEqual(declared[forced]['input_rules'][key], [
                         *declared[name].get('input_rules', {}).get(key, []),
-                        {'path': ['hit_tier'], 'op': 'eq', 'value': 'ram', 'source': 'tools/qual/README.md#prefix-caching'},
+                        {'path': ['hit_tier'], 'op': 'eq', 'value': 'ram', 'source': 'docs/check-kinds.md#prefix-caching'},
                         {'path': ['checks', 'ram_hits'], 'op': 'eq', 'value': True,
-                         'source': 'tools/qual/README.md#prefix-caching'}])
+                         'source': 'docs/check-kinds.md#prefix-caching'}])
 
                 def judged(variant, tier, ram_hits=True):
                     case = root / f'{variant}-{tier}-{ram_hits}'
@@ -3017,7 +3017,7 @@ class CheckFailureTests(FakeRunTests):
         recorded arm's receipt must hold) is not run without it."""
         declared = {'module': 'evals', 'args': ['compare', '--receipt', 'fp8={fp8_gsm8k}'], 'files': ['fp8_gsm8k'],
                     'input_rules': {'fp8_gsm8k': [{'path': ['run_id'], 'op': 'eq', 'value': '{fp8_gsm8k_run}',
-                                                   'source': 'tools/qual/README.md#release-gates'}]},
+                                                   'source': 'docs/check-kinds.md#release-gates'}]},
                     'rules': [], 'timeout_seconds': 1}
         facts = {'checks': {'compare': declared}}
         self.assertIn('fp8_gsm8k_run', runner.placeholders(declared))

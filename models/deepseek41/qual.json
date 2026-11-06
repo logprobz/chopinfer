@@ -113,11 +113,11 @@
           },
           "MEAN_MARGIN": {
             "value": 0.02,
-            "source": "tools/qual/README.md#release-gates"
+            "source": "docs/check-kinds.md#release-gates"
           },
           "TOP1_SIGMAS": {
             "value": 2.0,
-            "source": "tools/qual/README.md#release-gates"
+            "source": "docs/check-kinds.md#release-gates"
           }
         }
       },
@@ -131,7 +131,7 @@
           ],
           "op": "eq",
           "value": true,
-          "source": "tools/qual/README.md#release-gates"
+          "source": "docs/check-kinds.md#release-gates"
         },
         {
           "path": [
@@ -271,11 +271,11 @@
           },
           "MEAN_MARGIN": {
             "value": 0.02,
-            "source": "tools/qual/README.md#release-gates"
+            "source": "docs/check-kinds.md#release-gates"
           },
           "TOP1_SIGMAS": {
             "value": 2.0,
-            "source": "tools/qual/README.md#release-gates"
+            "source": "docs/check-kinds.md#release-gates"
           }
         }
       },
@@ -289,7 +289,7 @@
           ],
           "op": "eq",
           "value": true,
-          "source": "tools/qual/README.md#release-gates"
+          "source": "docs/check-kinds.md#release-gates"
         },
         {
           "path": [
@@ -466,7 +466,7 @@
           ],
           "op": "eq",
           "value": true,
-          "source": "tools/qual/README.md#release-gates"
+          "source": "docs/check-kinds.md#release-gates"
         }
       ]
     },
@@ -488,7 +488,7 @@
           ],
           "op": "eq",
           "value": true,
-          "source": "tools/qual/README.md#release-gates"
+          "source": "docs/check-kinds.md#release-gates"
         },
         {
           "path": [
@@ -498,7 +498,7 @@
           ],
           "op": "ge",
           "value": 1.0,
-          "source": "tools/qual/README.md#release-gates"
+          "source": "docs/check-kinds.md#release-gates"
         },
         {
           "path": [
@@ -508,7 +508,7 @@
           ],
           "op": "eq",
           "value": 0,
-          "source": "tools/qual/README.md#release-gates"
+          "source": "docs/check-kinds.md#release-gates"
         },
         {
           "path": [
@@ -518,7 +518,7 @@
           ],
           "op": "eq",
           "value": 0,
-          "source": "tools/qual/README.md#release-gates"
+          "source": "docs/check-kinds.md#release-gates"
         }
       ]
     },
@@ -573,7 +573,7 @@
           ],
           "op": "eq",
           "value": true,
-          "source": "tools/qual/README.md#release-gates"
+          "source": "docs/check-kinds.md#release-gates"
         }
       ]
     },
@@ -599,7 +599,7 @@
           ],
           "op": "eq",
           "value": true,
-          "source": "tools/qual/README.md#capabilities-and-required-evidence"
+          "source": "docs/check-kinds.md#capabilities-and-required-evidence"
         }
       ]
     },
@@ -628,7 +628,7 @@
           ],
           "op": "eq",
           "value": true,
-          "source": "tools/qual/README.md#capabilities-and-required-evidence"
+          "source": "docs/check-kinds.md#capabilities-and-required-evidence"
         },
         {
           "path": [
@@ -636,7 +636,7 @@
           ],
           "op": "eq",
           "value": true,
-          "source": "tools/qual/README.md#capabilities-and-required-evidence"
+          "source": "docs/check-kinds.md#capabilities-and-required-evidence"
         },
         {
           "path": [
@@ -644,7 +644,7 @@
           ],
           "op": "ge",
           "value": 1,
-          "source": "tools/qual/README.md#capabilities-and-required-evidence"
+          "source": "docs/check-kinds.md#capabilities-and-required-evidence"
         },
         {
           "path": [
@@ -652,7 +652,7 @@
           ],
           "op": "ge",
           "value": 1,
-          "source": "tools/qual/README.md#capabilities-and-required-evidence"
+          "source": "docs/check-kinds.md#capabilities-and-required-evidence"
         }
       ]
     },
@@ -673,7 +673,7 @@
           ],
           "op": "eq",
           "value": true,
-          "source": "tools/qual/README.md#release-gates"
+          "source": "docs/check-kinds.md#release-gates"
         }
       ]
     },
@@ -703,7 +703,7 @@
           ],
           "op": "eq",
           "value": true,
-          "source": "tools/qual/README.md#kv-layout-equality"
+          "source": "docs/check-kinds.md#kv-layout-equality"
         },
         {
           "path": [
@@ -765,7 +765,7 @@
             ],
             "op": "eq",
             "value": "{model}",
-            "source": "tools/qual/README.md#release-gates"
+            "source": "docs/check-kinds.md#release-gates"
           },
           {
             "path": [
@@ -788,7 +788,7 @@
             ],
             "op": "eq",
             "value": "{model}",
-            "source": "tools/qual/README.md#release-gates"
+            "source": "docs/check-kinds.md#release-gates"
           },
           {
             "path": [
@@ -811,7 +811,7 @@
             ],
             "op": "eq",
             "value": "{model}",
-            "source": "tools/qual/README.md#release-gates"
+            "source": "docs/check-kinds.md#release-gates"
           },
           {
             "path": [
@@ -834,7 +834,7 @@
             ],
             "op": "eq",
             "value": "{model}",
-            "source": "tools/qual/README.md#release-gates"
+            "source": "docs/check-kinds.md#release-gates"
           },
           {
             "path": [
@@ -912,7 +912,7 @@
             ],
             "op": "eq",
             "value": "{model}",
-            "source": "tools/qual/README.md#release-gates"
+            "source": "docs/check-kinds.md#release-gates"
           },
           {
             "path": [
@@ -970,7 +970,7 @@
             ],
             "op": "eq",
             "value": "{model}",
-            "source": "tools/qual/README.md#release-gates"
+            "source": "docs/check-kinds.md#release-gates"
           },
           {
             "path": [
@@ -1115,7 +1115,7 @@
           ],
           "op": "eq",
           "value": true,
-          "source": "tools/qual/README.md#release-gates"
+          "source": "docs/check-kinds.md#release-gates"
         },
         {
           "path": [
@@ -1123,7 +1123,7 @@
           ],
           "op": "ge",
           "value": 1319,
-          "source": "tools/qual/README.md#release-gates"
+          "source": "docs/check-kinds.md#release-gates"
         },
         {
           "path": [
@@ -1133,7 +1133,7 @@
           ],
           "op": "eq",
           "value": 1319,
-          "source": "tools/qual/README.md#release-gates"
+          "source": "docs/check-kinds.md#release-gates"
         },
         {
           "path": [
@@ -1203,7 +1203,7 @@
         "evals": {
           "SIGNIFICANCE": {
             "value": 0.05,
-            "source": "tools/qual/README.md#release-gates"
+            "source": "docs/check-kinds.md#release-gates"
           }
         }
       },
@@ -1214,7 +1214,7 @@
           ],
           "op": "eq",
           "value": true,
-          "source": "tools/qual/README.md#correctness-runner"
+          "source": "docs/contributing.md#correctness-runner"
         },
         {
           "path": [
@@ -1223,7 +1223,7 @@
           ],
           "op": "eq",
           "value": 0,
-          "source": "tools/qual/README.md#correctness-runner"
+          "source": "docs/contributing.md#correctness-runner"
         },
         {
           "path": [
@@ -1232,7 +1232,7 @@
           ],
           "op": "eq",
           "value": 0,
-          "source": "tools/qual/README.md#correctness-runner"
+          "source": "docs/contributing.md#correctness-runner"
         },
         {
           "path": [
@@ -1242,7 +1242,7 @@
           ],
           "op": "eq",
           "value": 1319,
-          "source": "tools/qual/README.md#correctness-runner"
+          "source": "docs/contributing.md#correctness-runner"
         },
         {
           "path": [
@@ -1312,11 +1312,11 @@
           },
           "MEAN_MARGIN": {
             "value": 0.02,
-            "source": "tools/qual/README.md#release-gates"
+            "source": "docs/check-kinds.md#release-gates"
           },
           "TOP1_SIGMAS": {
             "value": 2.0,
-            "source": "tools/qual/README.md#release-gates"
+            "source": "docs/check-kinds.md#release-gates"
           },
           "ALLOW_FLOOR_ONLY": {
             "value": true,
@@ -1493,7 +1493,7 @@
             ],
             "op": "eq",
             "value": true,
-            "source": "tools/qual/README.md#release-gates"
+            "source": "docs/check-kinds.md#release-gates"
           },
           {
             "path": [
@@ -1544,7 +1544,7 @@
             ],
             "op": "eq",
             "value": "2273a3d95e14d4345958830db453d564ad6e54026389d7e786a872e47e03475b",
-            "source": "tools/qual/README.md#capabilities-and-required-evidence"
+            "source": "docs/check-kinds.md#capabilities-and-required-evidence"
           },
           {
             "path": [
@@ -1554,7 +1554,7 @@
             ],
             "op": "count_ge",
             "value": 64,
-            "source": "tools/qual/README.md#capabilities-and-required-evidence"
+            "source": "docs/check-kinds.md#capabilities-and-required-evidence"
           },
           {
             "path": [
@@ -1582,7 +1582,7 @@
             ],
             "op": "eq",
             "value": true,
-            "source": "tools/qual/README.md#release-gates"
+            "source": "docs/check-kinds.md#release-gates"
           },
           {
             "path": [
@@ -1633,7 +1633,7 @@
             ],
             "op": "eq",
             "value": "2273a3d95e14d4345958830db453d564ad6e54026389d7e786a872e47e03475b",
-            "source": "tools/qual/README.md#capabilities-and-required-evidence"
+            "source": "docs/check-kinds.md#capabilities-and-required-evidence"
           },
           {
             "path": [
@@ -1643,7 +1643,7 @@
             ],
             "op": "count_ge",
             "value": 64,
-            "source": "tools/qual/README.md#capabilities-and-required-evidence"
+            "source": "docs/check-kinds.md#capabilities-and-required-evidence"
           },
           {
             "path": [
@@ -1733,7 +1733,7 @@
           ],
           "op": "eq",
           "value": true,
-          "source": "tools/qual/README.md#release-gates"
+          "source": "docs/check-kinds.md#release-gates"
         },
         {
           "path": [
@@ -1743,7 +1743,7 @@
           ],
           "op": "ge",
           "value": 1,
-          "source": "tools/qual/README.md#release-gates"
+          "source": "docs/check-kinds.md#release-gates"
         },
         {
           "path": [
@@ -1827,7 +1827,7 @@
         },
         "release_preview": {
           "RECORD_ARGUMENTS": {
-            "source": "tools/qual/README.md#correctness-runner",
+            "source": "docs/contributing.md#correctness-runner",
             "value": {
               "verify_ar": [
                 "--concurrency",
@@ -1853,7 +1853,7 @@
             ],
             "op": "eq",
             "value": true,
-            "source": "tools/qual/README.md#release-gates"
+            "source": "docs/check-kinds.md#release-gates"
           },
           {
             "path": [
@@ -1869,7 +1869,7 @@
             ],
             "op": "eq",
             "value": 0,
-            "source": "tools/qual/README.md#release-gates"
+            "source": "docs/check-kinds.md#release-gates"
           },
           {
             "path": [
@@ -1879,7 +1879,7 @@
             ],
             "op": "eq",
             "value": "2273a3d95e14d4345958830db453d564ad6e54026389d7e786a872e47e03475b",
-            "source": "tools/qual/README.md#capabilities-and-required-evidence"
+            "source": "docs/check-kinds.md#capabilities-and-required-evidence"
           },
           {
             "path": [
@@ -1887,7 +1887,7 @@
             ],
             "op": "eq",
             "value": "fcbd248b4c8c5d5c74118effc3b80df586b75b89ea9f2280b4b12acd735bb7f2",
-            "source": "tools/qual/README.md#capabilities-and-required-evidence"
+            "source": "docs/check-kinds.md#capabilities-and-required-evidence"
           },
           {
             "path": [
@@ -1897,7 +1897,7 @@
             ],
             "op": "count_ge",
             "value": 64,
-            "source": "tools/qual/README.md#capabilities-and-required-evidence"
+            "source": "docs/check-kinds.md#capabilities-and-required-evidence"
           },
           {
             "path": [
@@ -1939,7 +1939,7 @@
             ],
             "op": "eq",
             "value": true,
-            "source": "tools/qual/README.md#release-gates"
+            "source": "docs/check-kinds.md#release-gates"
           },
           {
             "path": [
@@ -1955,7 +1955,7 @@
             ],
             "op": "ge",
             "value": 1,
-            "source": "tools/qual/README.md#release-gates"
+            "source": "docs/check-kinds.md#release-gates"
           },
           {
             "path": [
@@ -1964,7 +1964,7 @@
             ],
             "op": "eq",
             "value": "{model}",
-            "source": "tools/qual/README.md#release-gates"
+            "source": "docs/check-kinds.md#release-gates"
           },
           {
             "path": [
@@ -1974,7 +1974,7 @@
             ],
             "op": "eq",
             "value": "2273a3d95e14d4345958830db453d564ad6e54026389d7e786a872e47e03475b",
-            "source": "tools/qual/README.md#capabilities-and-required-evidence"
+            "source": "docs/check-kinds.md#capabilities-and-required-evidence"
           },
           {
             "path": [
@@ -1982,7 +1982,7 @@
             ],
             "op": "eq",
             "value": "fcbd248b4c8c5d5c74118effc3b80df586b75b89ea9f2280b4b12acd735bb7f2",
-            "source": "tools/qual/README.md#capabilities-and-required-evidence"
+            "source": "docs/check-kinds.md#capabilities-and-required-evidence"
           },
           {
             "path": [
@@ -1992,7 +1992,7 @@
             ],
             "op": "count_ge",
             "value": 64,
-            "source": "tools/qual/README.md#capabilities-and-required-evidence"
+            "source": "docs/check-kinds.md#capabilities-and-required-evidence"
           },
           {
             "path": [
@@ -2084,7 +2084,7 @@
           ],
           "op": "eq",
           "value": true,
-          "source": "tools/qual/README.md#release-gates"
+          "source": "docs/check-kinds.md#release-gates"
         },
         {
           "path": [
@@ -2094,7 +2094,7 @@
           ],
           "op": "ge",
           "value": 1,
-          "source": "tools/qual/README.md#release-gates"
+          "source": "docs/check-kinds.md#release-gates"
         },
         {
           "path": [
@@ -2178,7 +2178,7 @@
         },
         "release_preview": {
           "RECORD_ARGUMENTS": {
-            "source": "tools/qual/README.md#correctness-runner",
+            "source": "docs/contributing.md#correctness-runner",
             "value": {
               "verify_ar": [
                 "--concurrency",
@@ -2204,7 +2204,7 @@
             ],
             "op": "eq",
             "value": true,
-            "source": "tools/qual/README.md#release-gates"
+            "source": "docs/check-kinds.md#release-gates"
           },
           {
             "path": [
@@ -2220,7 +2220,7 @@
             ],
             "op": "eq",
             "value": 0,
-            "source": "tools/qual/README.md#release-gates"
+            "source": "docs/check-kinds.md#release-gates"
           },
           {
             "path": [
@@ -2230,7 +2230,7 @@
             ],
             "op": "eq",
             "value": "2273a3d95e14d4345958830db453d564ad6e54026389d7e786a872e47e03475b",
-            "source": "tools/qual/README.md#capabilities-and-required-evidence"
+            "source": "docs/check-kinds.md#capabilities-and-required-evidence"
           },
           {
             "path": [
@@ -2238,7 +2238,7 @@
             ],
             "op": "eq",
             "value": "fcbd248b4c8c5d5c74118effc3b80df586b75b89ea9f2280b4b12acd735bb7f2",
-            "source": "tools/qual/README.md#capabilities-and-required-evidence"
+            "source": "docs/check-kinds.md#capabilities-and-required-evidence"
           },
           {
             "path": [
@@ -2248,7 +2248,7 @@
             ],
             "op": "count_ge",
             "value": 64,
-            "source": "tools/qual/README.md#capabilities-and-required-evidence"
+            "source": "docs/check-kinds.md#capabilities-and-required-evidence"
           },
           {
             "path": [
@@ -2290,7 +2290,7 @@
             ],
             "op": "eq",
             "value": true,
-            "source": "tools/qual/README.md#release-gates"
+            "source": "docs/check-kinds.md#release-gates"
           },
           {
             "path": [
@@ -2306,7 +2306,7 @@
             ],
             "op": "ge",
             "value": 1,
-            "source": "tools/qual/README.md#release-gates"
+            "source": "docs/check-kinds.md#release-gates"
           },
           {
             "path": [
@@ -2315,7 +2315,7 @@
             ],
             "op": "eq",
             "value": "{model}",
-            "source": "tools/qual/README.md#release-gates"
+            "source": "docs/check-kinds.md#release-gates"
           },
           {
             "path": [
@@ -2325,7 +2325,7 @@
             ],
             "op": "eq",
             "value": "2273a3d95e14d4345958830db453d564ad6e54026389d7e786a872e47e03475b",
-            "source": "tools/qual/README.md#capabilities-and-required-evidence"
+            "source": "docs/check-kinds.md#capabilities-and-required-evidence"
           },
           {
             "path": [
@@ -2333,7 +2333,7 @@
             ],
             "op": "eq",
             "value": "fcbd248b4c8c5d5c74118effc3b80df586b75b89ea9f2280b4b12acd735bb7f2",
-            "source": "tools/qual/README.md#capabilities-and-required-evidence"
+            "source": "docs/check-kinds.md#capabilities-and-required-evidence"
           },
           {
             "path": [
@@ -2343,7 +2343,7 @@
             ],
             "op": "count_ge",
             "value": 64,
-            "source": "tools/qual/README.md#capabilities-and-required-evidence"
+            "source": "docs/check-kinds.md#capabilities-and-required-evidence"
           },
           {
             "path": [
@@ -2435,7 +2435,7 @@
           ],
           "op": "eq",
           "value": true,
-          "source": "tools/qual/README.md#release-gates"
+          "source": "docs/check-kinds.md#release-gates"
         },
         {
           "path": [
@@ -2445,7 +2445,7 @@
           ],
           "op": "ge",
           "value": 1,
-          "source": "tools/qual/README.md#release-gates"
+          "source": "docs/check-kinds.md#release-gates"
         },
         {
           "path": [
@@ -2529,7 +2529,7 @@
         },
         "release_preview": {
           "RECORD_ARGUMENTS": {
-            "source": "tools/qual/README.md#correctness-runner",
+            "source": "docs/contributing.md#correctness-runner",
             "value": {
               "verify_ar": [
                 "--concurrency",
@@ -2555,7 +2555,7 @@
             ],
             "op": "eq",
             "value": true,
-            "source": "tools/qual/README.md#release-gates"
+            "source": "docs/check-kinds.md#release-gates"
           },
           {
             "path": [
@@ -2571,7 +2571,7 @@
             ],
             "op": "eq",
             "value": 0,
-            "source": "tools/qual/README.md#release-gates"
+            "source": "docs/check-kinds.md#release-gates"
           },
           {
             "path": [
@@ -2581,7 +2581,7 @@
             ],
             "op": "eq",
             "value": "2273a3d95e14d4345958830db453d564ad6e54026389d7e786a872e47e03475b",
-            "source": "tools/qual/README.md#capabilities-and-required-evidence"
+            "source": "docs/check-kinds.md#capabilities-and-required-evidence"
           },
           {
             "path": [
@@ -2589,7 +2589,7 @@
             ],
             "op": "eq",
             "value": "fcbd248b4c8c5d5c74118effc3b80df586b75b89ea9f2280b4b12acd735bb7f2",
-            "source": "tools/qual/README.md#capabilities-and-required-evidence"
+            "source": "docs/check-kinds.md#capabilities-and-required-evidence"
           },
           {
             "path": [
@@ -2599,7 +2599,7 @@
             ],
             "op": "count_ge",
             "value": 64,
-            "source": "tools/qual/README.md#capabilities-and-required-evidence"
+            "source": "docs/check-kinds.md#capabilities-and-required-evidence"
           },
           {
             "path": [
@@ -2641,7 +2641,7 @@
             ],
             "op": "eq",
             "value": true,
-            "source": "tools/qual/README.md#release-gates"
+            "source": "docs/check-kinds.md#release-gates"
           },
           {
             "path": [
@@ -2657,7 +2657,7 @@
             ],
             "op": "ge",
             "value": 1,
-            "source": "tools/qual/README.md#release-gates"
+            "source": "docs/check-kinds.md#release-gates"
           },
           {
             "path": [
@@ -2666,7 +2666,7 @@
             ],
             "op": "eq",
             "value": "{model}",
-            "source": "tools/qual/README.md#release-gates"
+            "source": "docs/check-kinds.md#release-gates"
           },
           {
             "path": [
@@ -2676,7 +2676,7 @@
             ],
             "op": "eq",
             "value": "2273a3d95e14d4345958830db453d564ad6e54026389d7e786a872e47e03475b",
-            "source": "tools/qual/README.md#capabilities-and-required-evidence"
+            "source": "docs/check-kinds.md#capabilities-and-required-evidence"
           },
           {
             "path": [
@@ -2684,7 +2684,7 @@
             ],
             "op": "eq",
             "value": "fcbd248b4c8c5d5c74118effc3b80df586b75b89ea9f2280b4b12acd735bb7f2",
-            "source": "tools/qual/README.md#capabilities-and-required-evidence"
+            "source": "docs/check-kinds.md#capabilities-and-required-evidence"
           },
           {
             "path": [
@@ -2694,7 +2694,7 @@
             ],
             "op": "count_ge",
             "value": 64,
-            "source": "tools/qual/README.md#capabilities-and-required-evidence"
+            "source": "docs/check-kinds.md#capabilities-and-required-evidence"
           },
           {
             "path": [
@@ -2786,7 +2786,7 @@
           ],
           "op": "eq",
           "value": true,
-          "source": "tools/qual/README.md#release-gates"
+          "source": "docs/check-kinds.md#release-gates"
         },
         {
           "path": [
@@ -2796,7 +2796,7 @@
           ],
           "op": "ge",
           "value": 1,
-          "source": "tools/qual/README.md#release-gates"
+          "source": "docs/check-kinds.md#release-gates"
         },
         {
           "path": [
@@ -2880,7 +2880,7 @@
         },
         "release_preview": {
           "RECORD_ARGUMENTS": {
-            "source": "tools/qual/README.md#correctness-runner",
+            "source": "docs/contributing.md#correctness-runner",
             "value": {
               "verify_ar": [
                 "--concurrency",
@@ -2906,7 +2906,7 @@
             ],
             "op": "eq",
             "value": true,
-            "source": "tools/qual/README.md#release-gates"
+            "source": "docs/check-kinds.md#release-gates"
           },
           {
             "path": [
@@ -2922,7 +2922,7 @@
             ],
             "op": "eq",
             "value": 0,
-            "source": "tools/qual/README.md#release-gates"
+            "source": "docs/check-kinds.md#release-gates"
           },
           {
             "path": [
@@ -2932,7 +2932,7 @@
             ],
             "op": "eq",
             "value": "2273a3d95e14d4345958830db453d564ad6e54026389d7e786a872e47e03475b",
-            "source": "tools/qual/README.md#capabilities-and-required-evidence"
+            "source": "docs/check-kinds.md#capabilities-and-required-evidence"
           },
           {
             "path": [
@@ -2940,7 +2940,7 @@
             ],
             "op": "eq",
             "value": "fcbd248b4c8c5d5c74118effc3b80df586b75b89ea9f2280b4b12acd735bb7f2",
-            "source": "tools/qual/README.md#capabilities-and-required-evidence"
+            "source": "docs/check-kinds.md#capabilities-and-required-evidence"
           },
           {
             "path": [
@@ -2950,7 +2950,7 @@
             ],
             "op": "count_ge",
             "value": 64,
-            "source": "tools/qual/README.md#capabilities-and-required-evidence"
+            "source": "docs/check-kinds.md#capabilities-and-required-evidence"
           },
           {
             "path": [
@@ -2992,7 +2992,7 @@
             ],
             "op": "eq",
             "value": true,
-            "source": "tools/qual/README.md#release-gates"
+            "source": "docs/check-kinds.md#release-gates"
           },
           {
             "path": [
@@ -3008,7 +3008,7 @@
             ],
             "op": "ge",
             "value": 1,
-            "source": "tools/qual/README.md#release-gates"
+            "source": "docs/check-kinds.md#release-gates"
           },
           {
             "path": [
@@ -3017,7 +3017,7 @@
             ],
             "op": "eq",
             "value": "{model}",
-            "source": "tools/qual/README.md#release-gates"
+            "source": "docs/check-kinds.md#release-gates"
           },
           {
             "path": [
@@ -3027,7 +3027,7 @@
             ],
             "op": "eq",
             "value": "2273a3d95e14d4345958830db453d564ad6e54026389d7e786a872e47e03475b",
-            "source": "tools/qual/README.md#capabilities-and-required-evidence"
+            "source": "docs/check-kinds.md#capabilities-and-required-evidence"
           },
           {
             "path": [
@@ -3035,7 +3035,7 @@
             ],
             "op": "eq",
             "value": "fcbd248b4c8c5d5c74118effc3b80df586b75b89ea9f2280b4b12acd735bb7f2",
-            "source": "tools/qual/README.md#capabilities-and-required-evidence"
+            "source": "docs/check-kinds.md#capabilities-and-required-evidence"
           },
           {
             "path": [
@@ -3045,7 +3045,7 @@
             ],
             "op": "count_ge",
             "value": 64,
-            "source": "tools/qual/README.md#capabilities-and-required-evidence"
+            "source": "docs/check-kinds.md#capabilities-and-required-evidence"
           },
           {
             "path": [
@@ -3137,7 +3137,7 @@
           ],
           "op": "eq",
           "value": true,
-          "source": "tools/qual/README.md#release-gates"
+          "source": "docs/check-kinds.md#release-gates"
         },
         {
           "path": [
@@ -3147,7 +3147,7 @@
           ],
           "op": "ge",
           "value": 1,
-          "source": "tools/qual/README.md#release-gates"
+          "source": "docs/check-kinds.md#release-gates"
         },
         {
           "path": [
@@ -3231,7 +3231,7 @@
         },
         "release_preview": {
           "RECORD_ARGUMENTS": {
-            "source": "tools/qual/README.md#correctness-runner",
+            "source": "docs/contributing.md#correctness-runner",
             "value": {
               "verify_ar": [
                 "--concurrency",
@@ -3257,7 +3257,7 @@
             ],
             "op": "eq",
             "value": true,
-            "source": "tools/qual/README.md#release-gates"
+            "source": "docs/check-kinds.md#release-gates"
           },
           {
             "path": [
@@ -3273,7 +3273,7 @@
             ],
             "op": "eq",
             "value": 0,
-            "source": "tools/qual/README.md#release-gates"
+            "source": "docs/check-kinds.md#release-gates"
           },
           {
             "path": [
@@ -3283,7 +3283,7 @@
             ],
             "op": "eq",
             "value": "2273a3d95e14d4345958830db453d564ad6e54026389d7e786a872e47e03475b",
-            "source": "tools/qual/README.md#capabilities-and-required-evidence"
+            "source": "docs/check-kinds.md#capabilities-and-required-evidence"
           },
           {
             "path": [
@@ -3291,7 +3291,7 @@
             ],
             "op": "eq",
             "value": "fcbd248b4c8c5d5c74118effc3b80df586b75b89ea9f2280b4b12acd735bb7f2",
-            "source": "tools/qual/README.md#capabilities-and-required-evidence"
+            "source": "docs/check-kinds.md#capabilities-and-required-evidence"
           },
           {
             "path": [
@@ -3301,7 +3301,7 @@
             ],
             "op": "count_ge",
             "value": 64,
-            "source": "tools/qual/README.md#capabilities-and-required-evidence"
+            "source": "docs/check-kinds.md#capabilities-and-required-evidence"
           },
           {
             "path": [
@@ -3343,7 +3343,7 @@
             ],
             "op": "eq",
             "value": true,
-            "source": "tools/qual/README.md#release-gates"
+            "source": "docs/check-kinds.md#release-gates"
           },
           {
             "path": [
@@ -3359,7 +3359,7 @@
             ],
             "op": "ge",
             "value": 1,
-            "source": "tools/qual/README.md#release-gates"
+            "source": "docs/check-kinds.md#release-gates"
           },
           {
             "path": [
@@ -3368,7 +3368,7 @@
             ],
             "op": "eq",
             "value": "{model}",
-            "source": "tools/qual/README.md#release-gates"
+            "source": "docs/check-kinds.md#release-gates"
           },
           {
             "path": [
@@ -3378,7 +3378,7 @@
             ],
             "op": "eq",
             "value": "2273a3d95e14d4345958830db453d564ad6e54026389d7e786a872e47e03475b",
-            "source": "tools/qual/README.md#capabilities-and-required-evidence"
+            "source": "docs/check-kinds.md#capabilities-and-required-evidence"
           },
           {
             "path": [
@@ -3386,7 +3386,7 @@
             ],
             "op": "eq",
             "value": "fcbd248b4c8c5d5c74118effc3b80df586b75b89ea9f2280b4b12acd735bb7f2",
-            "source": "tools/qual/README.md#capabilities-and-required-evidence"
+            "source": "docs/check-kinds.md#capabilities-and-required-evidence"
           },
           {
             "path": [
@@ -3396,7 +3396,7 @@
             ],
             "op": "count_ge",
             "value": 64,
-            "source": "tools/qual/README.md#capabilities-and-required-evidence"
+            "source": "docs/check-kinds.md#capabilities-and-required-evidence"
           },
           {
             "path": [
@@ -3488,7 +3488,7 @@
           ],
           "op": "eq",
           "value": true,
-          "source": "tools/qual/README.md#release-gates"
+          "source": "docs/check-kinds.md#release-gates"
         },
         {
           "path": [
@@ -3498,7 +3498,7 @@
           ],
           "op": "ge",
           "value": 1,
-          "source": "tools/qual/README.md#release-gates"
+          "source": "docs/check-kinds.md#release-gates"
         },
         {
           "path": [
@@ -3582,7 +3582,7 @@
         },
         "release_preview": {
           "RECORD_ARGUMENTS": {
-            "source": "tools/qual/README.md#correctness-runner",
+            "source": "docs/contributing.md#correctness-runner",
             "value": {
               "verify_ar": [
                 "--concurrency",
@@ -3608,7 +3608,7 @@
             ],
             "op": "eq",
             "value": true,
-            "source": "tools/qual/README.md#release-gates"
+            "source": "docs/check-kinds.md#release-gates"
           },
           {
             "path": [
@@ -3624,7 +3624,7 @@
             ],
             "op": "eq",
             "value": 0,
-            "source": "tools/qual/README.md#release-gates"
+            "source": "docs/check-kinds.md#release-gates"
           },
           {
             "path": [
@@ -3634,7 +3634,7 @@
             ],
             "op": "eq",
             "value": "2273a3d95e14d4345958830db453d564ad6e54026389d7e786a872e47e03475b",
-            "source": "tools/qual/README.md#capabilities-and-required-evidence"
+            "source": "docs/check-kinds.md#capabilities-and-required-evidence"
           },
           {
             "path": [
@@ -3642,7 +3642,7 @@
             ],
             "op": "eq",
             "value": "fcbd248b4c8c5d5c74118effc3b80df586b75b89ea9f2280b4b12acd735bb7f2",
-            "source": "tools/qual/README.md#capabilities-and-required-evidence"
+            "source": "docs/check-kinds.md#capabilities-and-required-evidence"
           },
           {
             "path": [
@@ -3652,7 +3652,7 @@
             ],
             "op": "count_ge",
             "value": 64,
-            "source": "tools/qual/README.md#capabilities-and-required-evidence"
+            "source": "docs/check-kinds.md#capabilities-and-required-evidence"
           },
           {
             "path": [
@@ -3694,7 +3694,7 @@
             ],
             "op": "eq",
             "value": true,
-            "source": "tools/qual/README.md#release-gates"
+            "source": "docs/check-kinds.md#release-gates"
           },
           {
             "path": [
@@ -3710,7 +3710,7 @@
             ],
             "op": "ge",
             "value": 1,
-            "source": "tools/qual/README.md#release-gates"
+            "source": "docs/check-kinds.md#release-gates"
           },
           {
             "path": [
@@ -3719,7 +3719,7 @@
             ],
             "op": "eq",
             "value": "{model}",
-            "source": "tools/qual/README.md#release-gates"
+            "source": "docs/check-kinds.md#release-gates"
           },
           {
             "path": [
@@ -3729,7 +3729,7 @@
             ],
             "op": "eq",
             "value": "2273a3d95e14d4345958830db453d564ad6e54026389d7e786a872e47e03475b",
-            "source": "tools/qual/README.md#capabilities-and-required-evidence"
+            "source": "docs/check-kinds.md#capabilities-and-required-evidence"
           },
           {
             "path": [
@@ -3737,7 +3737,7 @@
             ],
             "op": "eq",
             "value": "fcbd248b4c8c5d5c74118effc3b80df586b75b89ea9f2280b4b12acd735bb7f2",
-            "source": "tools/qual/README.md#capabilities-and-required-evidence"
+            "source": "docs/check-kinds.md#capabilities-and-required-evidence"
           },
           {
             "path": [
@@ -3747,7 +3747,7 @@
             ],
             "op": "count_ge",
             "value": 64,
-            "source": "tools/qual/README.md#capabilities-and-required-evidence"
+            "source": "docs/check-kinds.md#capabilities-and-required-evidence"
           },
           {
             "path": [
@@ -3839,7 +3839,7 @@
           ],
           "op": "eq",
           "value": true,
-          "source": "tools/qual/README.md#release-gates"
+          "source": "docs/check-kinds.md#release-gates"
         },
         {
           "path": [
@@ -3849,7 +3849,7 @@
           ],
           "op": "ge",
           "value": 1,
-          "source": "tools/qual/README.md#release-gates"
+          "source": "docs/check-kinds.md#release-gates"
         },
         {
           "path": [
@@ -3933,7 +3933,7 @@
         },
         "release_preview": {
           "RECORD_ARGUMENTS": {
-            "source": "tools/qual/README.md#correctness-runner",
+            "source": "docs/contributing.md#correctness-runner",
             "value": {
               "verify_ar": [
                 "--concurrency",
@@ -3959,7 +3959,7 @@
             ],
             "op": "eq",
             "value": true,
-            "source": "tools/qual/README.md#release-gates"
+            "source": "docs/check-kinds.md#release-gates"
           },
           {
             "path": [
@@ -3975,7 +3975,7 @@
             ],
             "op": "eq",
             "value": 0,
-            "source": "tools/qual/README.md#release-gates"
+            "source": "docs/check-kinds.md#release-gates"
           },
           {
             "path": [
@@ -3985,7 +3985,7 @@
             ],
             "op": "eq",
             "value": "2273a3d95e14d4345958830db453d564ad6e54026389d7e786a872e47e03475b",
-            "source": "tools/qual/README.md#capabilities-and-required-evidence"
+            "source": "docs/check-kinds.md#capabilities-and-required-evidence"
           },
           {
             "path": [
@@ -3993,7 +3993,7 @@
             ],
             "op": "eq",
             "value": "fcbd248b4c8c5d5c74118effc3b80df586b75b89ea9f2280b4b12acd735bb7f2",
-            "source": "tools/qual/README.md#capabilities-and-required-evidence"
+            "source": "docs/check-kinds.md#capabilities-and-required-evidence"
           },
           {
             "path": [
@@ -4003,7 +4003,7 @@
             ],
             "op": "count_ge",
             "value": 64,
-            "source": "tools/qual/README.md#capabilities-and-required-evidence"
+            "source": "docs/check-kinds.md#capabilities-and-required-evidence"
           },
           {
             "path": [
@@ -4045,7 +4045,7 @@
             ],
             "op": "eq",
             "value": true,
-            "source": "tools/qual/README.md#release-gates"
+            "source": "docs/check-kinds.md#release-gates"
           },
           {
             "path": [
@@ -4061,7 +4061,7 @@
             ],
             "op": "ge",
             "value": 1,
-            "source": "tools/qual/README.md#release-gates"
+            "source": "docs/check-kinds.md#release-gates"
           },
           {
             "path": [
@@ -4070,7 +4070,7 @@
             ],
             "op": "eq",
             "value": "{model}",
-            "source": "tools/qual/README.md#release-gates"
+            "source": "docs/check-kinds.md#release-gates"
           },
           {
             "path": [
@@ -4080,7 +4080,7 @@
             ],
             "op": "eq",
             "value": "2273a3d95e14d4345958830db453d564ad6e54026389d7e786a872e47e03475b",
-            "source": "tools/qual/README.md#capabilities-and-required-evidence"
+            "source": "docs/check-kinds.md#capabilities-and-required-evidence"
           },
           {
             "path": [
@@ -4088,7 +4088,7 @@
             ],
             "op": "eq",
             "value": "fcbd248b4c8c5d5c74118effc3b80df586b75b89ea9f2280b4b12acd735bb7f2",
-            "source": "tools/qual/README.md#capabilities-and-required-evidence"
+            "source": "docs/check-kinds.md#capabilities-and-required-evidence"
           },
           {
             "path": [
@@ -4098,7 +4098,7 @@
             ],
             "op": "count_ge",
             "value": 64,
-            "source": "tools/qual/README.md#capabilities-and-required-evidence"
+            "source": "docs/check-kinds.md#capabilities-and-required-evidence"
           },
           {
             "path": [
@@ -4190,7 +4190,7 @@
           ],
           "op": "eq",
           "value": true,
-          "source": "tools/qual/README.md#release-gates"
+          "source": "docs/check-kinds.md#release-gates"
         },
         {
           "path": [
@@ -4200,7 +4200,7 @@
           ],
           "op": "ge",
           "value": 1,
-          "source": "tools/qual/README.md#release-gates"
+          "source": "docs/check-kinds.md#release-gates"
         },
         {
           "path": [
@@ -4284,7 +4284,7 @@
         },
         "release_preview": {
           "RECORD_ARGUMENTS": {
-            "source": "tools/qual/README.md#correctness-runner",
+            "source": "docs/contributing.md#correctness-runner",
             "value": {
               "verify_ar": [
                 "--concurrency",
@@ -4310,7 +4310,7 @@
             ],
             "op": "eq",
             "value": true,
-            "source": "tools/qual/README.md#release-gates"
+            "source": "docs/check-kinds.md#release-gates"
           },
           {
             "path": [
@@ -4326,7 +4326,7 @@
             ],
             "op": "eq",
             "value": 0,
-            "source": "tools/qual/README.md#release-gates"
+            "source": "docs/check-kinds.md#release-gates"
           },
           {
             "path": [
@@ -4336,7 +4336,7 @@
             ],
             "op": "eq",
             "value": "2273a3d95e14d4345958830db453d564ad6e54026389d7e786a872e47e03475b",
-            "source": "tools/qual/README.md#capabilities-and-required-evidence"
+            "source": "docs/check-kinds.md#capabilities-and-required-evidence"
           },
           {
             "path": [
@@ -4344,7 +4344,7 @@
             ],
             "op": "eq",
             "value": "fcbd248b4c8c5d5c74118effc3b80df586b75b89ea9f2280b4b12acd735bb7f2",
-            "source": "tools/qual/README.md#capabilities-and-required-evidence"
+            "source": "docs/check-kinds.md#capabilities-and-required-evidence"
           },
           {
             "path": [
@@ -4354,7 +4354,7 @@
             ],
             "op": "count_ge",
             "value": 64,
-            "source": "tools/qual/README.md#capabilities-and-required-evidence"
+            "source": "docs/check-kinds.md#capabilities-and-required-evidence"
           },
           {
             "path": [
@@ -4396,7 +4396,7 @@
             ],
             "op": "eq",
             "value": true,
-            "source": "tools/qual/README.md#release-gates"
+            "source": "docs/check-kinds.md#release-gates"
           },
           {
             "path": [
@@ -4412,7 +4412,7 @@
             ],
             "op": "ge",
             "value": 1,
-            "source": "tools/qual/README.md#release-gates"
+            "source": "docs/check-kinds.md#release-gates"
           },
           {
             "path": [
@@ -4421,7 +4421,7 @@
             ],
             "op": "eq",
             "value": "{model}",
-            "source": "tools/qual/README.md#release-gates"
+            "source": "docs/check-kinds.md#release-gates"
           },
           {
             "path": [
@@ -4431,7 +4431,7 @@
             ],
             "op": "eq",
             "value": "2273a3d95e14d4345958830db453d564ad6e54026389d7e786a872e47e03475b",
-            "source": "tools/qual/README.md#capabilities-and-required-evidence"
+            "source": "docs/check-kinds.md#capabilities-and-required-evidence"
           },
           {
             "path": [
@@ -4439,7 +4439,7 @@
             ],
             "op": "eq",
             "value": "fcbd248b4c8c5d5c74118effc3b80df586b75b89ea9f2280b4b12acd735bb7f2",
-            "source": "tools/qual/README.md#capabilities-and-required-evidence"
+            "source": "docs/check-kinds.md#capabilities-and-required-evidence"
           },
           {
             "path": [
@@ -4449,7 +4449,7 @@
             ],
             "op": "count_ge",
             "value": 64,
-            "source": "tools/qual/README.md#capabilities-and-required-evidence"
+            "source": "docs/check-kinds.md#capabilities-and-required-evidence"
           },
           {
             "path": [

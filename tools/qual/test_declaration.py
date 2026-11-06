@@ -114,7 +114,7 @@ class DeclarationTests(unittest.TestCase):
                 lambda d: d["checks"]["teacher"]["constants"]["teacher"]["MAX_MEAN"].update(value="zero")),
             "checks.teacher.constants.teacher.NO_SUCH_LIMIT": (
                 lambda d: d["checks"]["teacher"]["constants"]["teacher"].update(
-                    NO_SUCH_LIMIT={"value": 1.0, "source": "tools/qual/README.md"})),
+                    NO_SUCH_LIMIT={"value": 1.0, "source": "docs/check-kinds.md"})),
             "checks.teacher.constants.no_such_module": (
                 lambda d: d["checks"]["teacher"]["constants"].update(no_such_module={})),
             "checks.qwen38_layers.constants.qwen38_layers.FLOOR_RATIO.value": (

@@ -120,7 +120,7 @@ class TraceReviewTests(unittest.TestCase):
         self.assertIn(key, old_report['levels'][0]['replicas'][0]['figures']['baseline'])
 
     def test_readme_trace_has_feasible_pacing(self):
-        text = Path(__file__).with_name('README.md').read_text()
+        text = (Path(__file__).resolve().parents[2] / 'docs/contributing.md').read_text()
         snippet = text.split('python3 -B tools/qual/agentic_trace.py', 1)[1].split('```', 1)[0]
         commands = snippet.replace('\\' + '\n', '').strip().splitlines()
         generator, replay = shlex.split(commands[0]), shlex.split(commands[1])

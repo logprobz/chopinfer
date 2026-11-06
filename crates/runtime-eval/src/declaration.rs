@@ -2220,7 +2220,7 @@ const VARIANT_REFUSED: [&str; 7] = [
 ];
 const VARIANT_SERVING: [&str; 2] = ["checkpoint_identity", "profile_name"];
 /// The source a rule the expansion adds to an external variant cites.
-pub const VARIANT_SOURCE: &str = "tools/qual/README.md#external-variants";
+pub const VARIANT_SOURCE: &str = "docs/check-kinds.md#external-variants";
 
 /// `relative`, a path an external variant names beside its overlay, as the
 /// path under the variant root: `<model>/<relative>`. An absolute path or

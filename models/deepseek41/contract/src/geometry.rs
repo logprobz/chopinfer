@@ -376,8 +376,8 @@ mod tests {
             let values = resolve(top_k, blocks).unwrap();
             assert_eq!(values.candidate_topk_blocks, blocks);
             let options = FLASH.model_options(values);
-            assert_eq!(options[19].name, "text_config.candidate_topk_blocks");
-            assert_eq!(options[19].default_is_qualified, blocks == 2048);
+            assert_eq!(options[20].name, "text_config.candidate_topk_blocks");
+            assert_eq!(options[20].default_is_qualified, blocks == 2048);
         }
         for (top_k, blocks) in [(2, 1), (10, 2), (256, 32), (512, 64)] {
             let error = resolve(top_k, blocks).unwrap_err();
@@ -517,7 +517,7 @@ mod tests {
         let checkpoint = FLASH.check_runtime(&config).unwrap();
         assert_eq!(checkpoint.index_topk, 512);
         let options = FLASH.model_options(checkpoint);
-        assert_eq!(options.len(), 26);
+        assert_eq!(options.len(), 27);
         assert_eq!(options[0].name, "diagnostic_step_logs");
         assert_eq!(options[1].name, "dspark_confidence_staged");
         assert_eq!(options[2].name, "dspark_coupled_drafts");
@@ -530,22 +530,23 @@ mod tests {
         assert_eq!(options[10].name, "dspark_mixed_prepared_engram");
         assert_eq!(options[11].name, "dspark_moe_direct");
         assert_eq!(options[12].name, "phased_decode_reduce");
-        assert_eq!(options[16].name, "prefill_streamed_lowering");
-        assert_eq!(options[19].name, "text_config.candidate_topk_blocks");
-        assert_eq!(options[20].name, "text_config.index_topk");
-        assert_eq!(options[21].name, "text_config.indexer_mma");
-        assert_eq!(options[24].name, "wide_draft");
-        assert_eq!(options[25].name, "wide_verify");
+        assert_eq!(options[14].name, "prefill_norm_ceil_rows");
+        assert_eq!(options[17].name, "prefill_streamed_lowering");
+        assert_eq!(options[20].name, "text_config.candidate_topk_blocks");
+        assert_eq!(options[21].name, "text_config.index_topk");
+        assert_eq!(options[22].name, "text_config.indexer_mma");
+        assert_eq!(options[25].name, "wide_draft");
+        assert_eq!(options[26].name, "wide_verify");
         assert!(!options.iter().any(|o| o.name.starts_with("moe_direct_")));
         assert_eq!(
-            options[20].definition,
+            options[21].definition,
             OptionDefinitionV1::Integer {
                 default: 512,
                 minimum: 1,
                 maximum: 512
             }
         );
-        assert!(options[19].default_is_qualified);
+        assert!(options[20].default_is_qualified);
         assert_eq!(
             FLASH
                 .resolve_model_options(checkpoint, &BTreeMap::new())

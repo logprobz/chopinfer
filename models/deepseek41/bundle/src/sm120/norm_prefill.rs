@@ -2,7 +2,10 @@
 use kernel_build::CubinSpec;
 use kernels_sm120::{
     backend::Sm120,
-    row::rmsnorm_prefill::{self, Entry},
+    row::{
+        block_quantize,
+        rmsnorm_prefill::{self, Entry},
+    },
 };
 use model_deepseek41_contract::{
     geometry::{FLASH, Geometry},
@@ -41,6 +44,22 @@ pub fn cubins(geometries: &[Geometry]) -> Result<Vec<(&'static str, CubinSpec)>,
         FAMILY,
         rmsnorm_prefill::cubin_spec(CUBIN.into(), &entries()?).map_err(|e| e.to_string())?,
     )])
+}
+
+/// The chain a fused launch replaces on `g` at `ranks`, for the lab's
+/// comparison: the row RMSNorm's symbol, the widening of its rows and the
+/// serial sublayer input quantizer that the unfused prefill launches.
+pub fn chain(g: &Geometry, ranks: u32) -> Result<(String, String, block_quantize::Entry), String> {
+    let width = g.shape.hidden;
+    let quantizer = super::moe::quantizers(g, ranks)?
+        .into_iter()
+        .find(|entry| entry.query.width == width)
+        .ok_or_else(|| format!("{} has no serial input quantizer", g.kernel_tag))?;
+    Ok((
+        super::rows::norm_symbol(g, width),
+        super::reduce::rounding_symbol(g, kernels_sm120::row::rounding::Rounding::Widen),
+        quantizer,
+    ))
 }
 
 pub fn register(backend: Sm120, g: &Geometry) -> Result<Sm120, String> {

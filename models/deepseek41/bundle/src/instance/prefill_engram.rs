@@ -287,14 +287,28 @@ impl Instance {
 
     /// Whether a DSpark step's prefill hashes its rows and begins its
     /// prepared gathers before catch-up and drafting
-    /// (`dspark_early_prefill_engram`): exactly where its target takes the
-    /// prepared gathers (`prefill_gather_reason`), a prefill reading no
-    /// encoder rows on an instance with prepared gathers and no text taps.
+    /// (`dspark_early_prefill_engram`).
     pub(super) fn admits_early_prefill_engram(
         &self,
         request: &[u8],
         prefill: &PhaseInputs,
     ) -> bool {
+        self.config.execution.dspark_early_prefill_engram
+            && self.takes_prepared_prefill(request, prefill)
+    }
+
+    /// Whether a DSpark step plans its prefill while its drafter runs
+    /// (`dspark_early_prefill_plan`).
+    pub(super) fn admits_early_prefill_plan(&self, request: &[u8], prefill: &PhaseInputs) -> bool {
+        self.config.execution.dspark_early_prefill_plan
+            && self.takes_prepared_prefill(request, prefill)
+    }
+
+    /// Whether a DSpark step's prefill takes the prepared gathers with ids
+    /// staged before its target, exactly where its target would
+    /// (`prefill_gather_reason`): a prefill reading no encoder rows on an
+    /// instance with prepared gathers and no text taps.
+    fn takes_prepared_prefill(&self, request: &[u8], prefill: &PhaseInputs) -> bool {
         let reads_media = || {
             let Ok(batch) = runtime_bundle_sdk::BatchCodecV1::decode(request) else {
                 return true;
@@ -304,8 +318,7 @@ impl Instance {
                 .ok()
                 .is_none_or(|plan| plan.injects())
         };
-        self.config.execution.dspark_early_prefill_engram
-            && self.dspark.is_some()
+        self.dspark.is_some()
             && self.prefill_engram.is_some()
             && !self.taps.text()
             && !prefill.request_ids.is_empty()

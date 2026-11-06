@@ -47,6 +47,8 @@ struct Work<'a> {
     target_times: Option<crate::dspark::timing::TargetTimes>,
     /// Retained IDs or the selected legacy plan, including its synchronous cause.
     prefill_engram: Option<super::execute::StagedPrefill>,
+    /// The prefill was planned while the drafter ran (`plan_prefill`).
+    planned_early: bool,
 }
 
 impl Program for Work<'_> {
@@ -173,14 +175,35 @@ impl Program for Work<'_> {
             .map_err(|e| format!("DSpark mixed target batch: {e:?}"))?
             .media()
             .is_empty();
+        // A prefill planned while the drafter ran holds its own inputs.
+        let prefill = self
+            .prefill_engram
+            .as_ref()
+            .and_then(super::execute::StagedPrefill::inputs)
+            .unwrap_or(&step.prefill);
         self.instance
-            .defer_mixed_dspark_engram(&step.prefill, &step.decode, media, hashed)
+            .defer_mixed_dspark_engram(prefill, &step.decode, media, hashed)
     }
 
     fn stage_prefill_engram(
         &mut self,
         hashed: &crate::engram_rows::Hashed,
     ) -> Result<bool, String> {
+        if self.planned_early {
+            // Planned from these ids while the drafter ran, with prepared
+            // gathers; a refused plan refuses the target.
+            let staged = self
+                .prefill_engram
+                .as_ref()
+                .ok_or("DSpark early prefill plan is absent")?;
+            if staged
+                .inputs()
+                .is_some_and(|inputs| inputs.token_ids.len() != hashed.rows() || !staged.prepared())
+            {
+                return Err("DSpark early prefill plan differs from its staged ids".into());
+            }
+            return Ok(true);
+        }
         if self.prefill_engram.is_some() {
             return Err("DSpark prefill already staged".into());
         }
@@ -206,6 +229,33 @@ impl Program for Work<'_> {
                 self.instance
                     .admits_early_prefill_engram(self.request, &step.prefill)
             })
+    }
+
+    fn plans_prefill_early(&self) -> bool {
+        self.prefill_engram.is_none()
+            && self.step.as_ref().is_some_and(|step| {
+                self.instance
+                    .admits_early_prefill_plan(self.request, &step.prefill)
+            })
+    }
+
+    fn plan_prefill(&mut self, hashed: &crate::engram_rows::Hashed) -> Result<(), String> {
+        if !self.plans_prefill_early() {
+            return Ok(());
+        }
+        let step = self
+            .step
+            .as_mut()
+            .ok_or("DSpark prefill has no packed step")?;
+        let instance = &*self.instance;
+        // Charged to the target's lowering, which it replaces.
+        let staged = crate::dspark::timing::measure(
+            self.target_times.as_mut().map(|times| &mut times.lower_us),
+            || instance.stage_early_prefill(&mut step.prefill, hashed),
+        );
+        self.prefill_engram = Some(staged);
+        self.planned_early = true;
+        Ok(())
     }
 
     fn begin_prefill_engram(&mut self, hashed: &crate::engram_rows::Hashed) -> Result<(), String> {
@@ -399,6 +449,7 @@ impl Instance {
                 .as_ref()
                 .map(|_| crate::dspark::timing::TargetTimes::default()),
             prefill_engram: None,
+            planned_early: false,
         };
         let mut host = Adapter {
             program: &mut program,

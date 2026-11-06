@@ -197,8 +197,9 @@ impl<'a> Executor<'a> {
     }
 }
 
-/// Prefill hashes retained for execution, or a legacy phase planned before
-/// staging uploads so its reason reflects the actual selected schedule.
+/// Prefill hashes retained for execution, or a phase planned before its
+/// target: a legacy one before staging uploads so its reason reflects the
+/// actual selected schedule, or one planned while its drafter ran.
 pub(super) enum StagedPrefill {
     Hashes(Hashed),
     Planned {
@@ -213,6 +214,23 @@ impl StagedPrefill {
         match self {
             Self::Planned { run: Ok(run), .. } => Some(&mut run.inputs),
             _ => None,
+        }
+    }
+
+    pub(super) fn inputs(&self) -> Option<&PhaseInputs> {
+        match self {
+            Self::Planned { run: Ok(run), .. } => Some(&run.inputs),
+            _ => None,
+        }
+    }
+
+    /// Whether the planned prefill takes prepared gathers with its staged ids.
+    pub(super) fn prepared(&self) -> bool {
+        match self {
+            Self::Planned { run: Ok(run), .. } => {
+                run.sync_engram.is_none() && run.execution.prefill_engram().is_some()
+            }
+            _ => false,
         }
     }
 }
@@ -848,6 +866,29 @@ impl Instance {
             && verify.verify
             && verify.live_tokens() <= MIXED_VERIFY_ROWS
             && matches!(self.phase_of(verify), Ok((_, VERIFY, _, Some(_))))
+    }
+
+    /// Plans a DSpark prefill that reads no encoder rows from its staged
+    /// ids `hashed` while the drafter runs (`dspark_early_prefill_plan`),
+    /// as its target would plan it: the same inputs, plan caches and
+    /// gathers, with no encoder or gather work. The target consumes the
+    /// plan after its encode and advances the index-tag sequence where it
+    /// would have planned.
+    pub(super) fn stage_early_prefill(
+        &self,
+        inputs: &mut PhaseInputs,
+        hashed: &Hashed,
+    ) -> StagedPrefill {
+        let advance_step = std::cell::Cell::new(false);
+        let run = self
+            .prepare_run(inputs, None, Some(hashed.clone()), || {
+                advance_step.set(true)
+            })
+            .map(Box::new);
+        StagedPrefill::Planned {
+            run,
+            advance_step: advance_step.get(),
+        }
     }
 
     /// Plan a legacy DSpark prefill without issuing encoder or gather work.

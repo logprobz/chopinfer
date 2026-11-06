@@ -92,6 +92,17 @@ pub trait Program {
         Ok(())
     }
 
+    /// Whether this step plans its prefill while the drafter runs, as its
+    /// target would plan it (`dspark_early_prefill_plan`).
+    fn plans_prefill_early(&self) -> bool {
+        false
+    }
+
+    /// Plans the prefill of `hashed`, its rows' ids, for the target.
+    fn plan_prefill(&mut self, _hashed: &Hashed) -> Result<(), String> {
+        Ok(())
+    }
+
     /// Takes the decode phase's ids of a mixed target whose prefill staged
     /// its prepared gathers, to gather them once the prefill joined its
     /// last Engram layer. False keeps the synchronous gather.
@@ -675,7 +686,8 @@ impl<P: Program> Host for Adapter<'_, P> {
                 tokens: input.tokens.clone(),
             })
             .collect::<Vec<_>>();
-        if prefill.is_empty() || !self.program.begins_prefill_engram() {
+        let begins = self.program.begins_prefill_engram();
+        if prefill.is_empty() || !(begins || self.program.plans_prefill_early()) {
             return Ok(());
         }
         // The target hashes these rows alike: its prefill rows are the
@@ -693,7 +705,9 @@ impl<P: Program> Host for Adapter<'_, P> {
         if phase.hashed.rows() == 0 {
             return Ok(());
         }
-        self.program.begin_prefill_engram(&phase.hashed)?;
+        if begins {
+            self.program.begin_prefill_engram(&phase.hashed)?;
+        }
         self.staging.early = Some((prefill, phase));
         Ok(())
     }
@@ -707,6 +721,14 @@ impl<P: Program> Host for Adapter<'_, P> {
     }
     fn computed_positions(&self) -> u32 {
         self.program.computed_positions()
+    }
+    fn plan_prefill(&mut self) -> Result<(), String> {
+        match &self.staging.early {
+            Some((_, phase)) if self.program.plans_prefill_early() => {
+                self.program.plan_prefill(&phase.hashed)
+            }
+            _ => Ok(()),
+        }
     }
     fn read_draft_ids(&mut self, ids: &mut [[u32; BLOCK_ROWS as usize]]) -> Result<(), String> {
         let _range = bundle_runtime::profile_ranges::BorrowedRange::new(

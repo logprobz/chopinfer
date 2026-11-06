@@ -175,6 +175,12 @@ pub trait Host {
     fn computed_positions(&self) -> u32 {
         BLOCK_ROWS
     }
+    /// After the drafter's launch and before its ids are read: the host may
+    /// plan the step's prefill now, while the drafter runs, as its target
+    /// would plan it. It never changes results.
+    fn plan_prefill(&mut self) -> Result<(), Self::Error> {
+        Ok(())
+    }
     /// Copy exactly five int32 IDs per drafting item, after drafting finishes.
     fn read_draft_ids(&mut self, ids: &mut [[u32; WIDTH]]) -> Result<(), Self::Error>;
     fn read_confidence(&mut self, scores: &mut [[f32; WIDTH]]) -> Result<(), Self::Error>;
@@ -380,6 +386,7 @@ impl Runtime {
                     "DSpark computed head depth does not cover emitted positions",
                 ));
             }
+            self.host_result(host.plan_prefill())?;
             let ids = match self.host_result(host.device_target(inputs, &draft_inputs))? {
                 Some(ids) => {
                     device_target = true;

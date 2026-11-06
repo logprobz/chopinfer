@@ -3,10 +3,6 @@ use super::*;
 use crate::instance::execute::plan_cache::{self, MAX_ROWS, Mode};
 use crate::instance::execute::skip;
 
-fn create_cached(host: &Rc<Host>, mode: Mode, plans: usize) -> BundleInstanceV1 {
-    create_streamed(host, mode, plans, false)
-}
-
 /// A cached instance lowering each plan it does not keep while it issues
 /// when `streamed` (`prefill_streamed_lowering`).
 fn create_streamed(host: &Rc<Host>, mode: Mode, plans: usize, streamed: bool) -> BundleInstanceV1 {
@@ -357,10 +353,11 @@ fn a_dspark_target_keeps_plans_with_the_fresh_lowerings_journal() {
 type Outcome = (Vec<String>, (u64, u64), (Vec<u32>, u64));
 
 /// One prompt of each of `lengths` in turn, alone and retired after its
-/// commit, on an instance keeping at most `plans` plans.
-fn one_at_a_time(mode: Mode, plans: usize, lengths: &[u32]) -> Outcome {
+/// commit, on an instance keeping at most `plans` plans, lowering each it
+/// does not take from the cache while it issues when `streamed`.
+fn one_at_a_time(mode: Mode, plans: usize, lengths: &[u32], streamed: bool) -> Outcome {
     let host = FakeHost::new(Shape::new(&FLASH, Ranks::TP4).unwrap(), KV_LAYOUTS[0]);
-    let mut instance = create_cached(&host, mode, plans);
+    let mut instance = create_streamed(&host, mode, plans, streamed);
     for (index, &rows) in lengths.iter().enumerate() {
         let request = index as u64 + 1;
         let first = 100 + 70 * index as u32;
@@ -386,21 +383,28 @@ fn one_at_a_time(mode: Mode, plans: usize, lengths: &[u32]) -> Outcome {
 fn a_full_plan_cache_drops_its_least_recently_used_plan() {
     // With two plans kept: 3 and 5 are kept, 3 is reused, 9 drops 5 (the
     // least recently used), 5 is lowered again and drops 3, 9 is reused and
-    // 3 is lowered again and drops 5.
+    // 3 is lowered again and drops 5. Streamed, the five misses are lowered
+    // while they issue and kept once launched, in the same order.
     let lengths = [3, 5, 3, 9, 5, 9, 3];
-    let (fresh, counts, kept) = one_at_a_time(Mode::Verify, 2, &lengths);
+    let (fresh, counts, kept) = one_at_a_time(Mode::Verify, 2, &lengths, false);
     assert_eq!((counts, kept), ((2, 5), (vec![3, 9], 3)));
-    {
-        let mode = Mode::On;
-        let (journal, counts, kept) = one_at_a_time(mode, 2, &lengths);
-        assert_eq!(journal.len(), fresh.len(), "{mode:?}");
+    for (mode, streamed) in [(Mode::On, false), (Mode::On, true), (Mode::Verify, true)] {
+        let before = skip::streamed_launches();
+        let (journal, counts, kept) = one_at_a_time(mode, 2, &lengths, streamed);
+        let mode = format!("{mode:?} streamed={streamed}");
+        assert_eq!(
+            skip::streamed_launches() - before,
+            if streamed { 5 } else { 0 },
+            "{mode}"
+        );
+        assert_eq!(journal.len(), fresh.len(), "{mode}");
         if let Some(at) = (0..fresh.len()).find(|&at| journal[at] != fresh[at]) {
             panic!(
-                "{mode:?} journal line {at}: {} against {}",
+                "{mode} journal line {at}: {} against {}",
                 journal[at], fresh[at]
             );
         }
-        assert_eq!(counts, (2, 5), "{mode:?}");
-        assert_eq!(kept, (vec![3, 9], 3), "{mode:?}");
+        assert_eq!(counts, (2, 5), "{mode}");
+        assert_eq!(kept, (vec![3, 9], 3), "{mode}");
     }
 }

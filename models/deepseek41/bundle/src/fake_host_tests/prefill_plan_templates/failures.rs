@@ -3,17 +3,58 @@
 //! instance, and a refusal before the first submission refuses the step,
 //! settling the gathers it began. A plan lowered while it issues
 //! (`prefill_streamed_lowering`) keeps the same contract, fails with the
-//! batch lowering's journal and keeps nothing when it fails.
+//! batch lowering's journal and keeps nothing when it fails. Each test runs
+//! AR, and DSpark with neither, each and both of the early Engram begin and
+//! the early plan.
 use super::*;
 use crate::instance::execute::skip;
 use crate::program::Stage;
 use model_deepseek41_contract::execution_options::{
-    PREFILL_PLAN_CACHE_VERIFY, PREFILL_STREAMED_LOWERING,
+    DSPARK_EARLY_PREFILL_ENGRAM, DSPARK_EARLY_PREFILL_PLAN, PREFILL_PLAN_CACHE_VERIFY,
+    PREFILL_STREAMED_LOWERING,
 };
+use std::cell::Cell;
 
-/// An instance like the tests', lowering each plan no template serves
-/// while it issues when `streamed`.
+/// The early DSpark candidates of the instances `create` makes: the early
+/// Engram begin (`dspark_early_prefill_engram`) and the early plan
+/// (`dspark_early_prefill_plan`).
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct Early {
+    begin: bool,
+    plan: bool,
+}
+
+thread_local! {
+    static EARLY: Cell<Early> = const { Cell::new(Early { begin: false, plan: false }) };
+}
+
+/// Makes `create` turn on the early candidates it holds until it drops.
+struct Using(Early);
+
+impl Drop for Using {
+    fn drop(&mut self) {
+        EARLY.set(self.0);
+    }
+}
+
+fn using(early: Early) -> Using {
+    Using(EARLY.replace(early))
+}
+
+/// Each configuration a failure test runs, DSpark or not with its early
+/// candidates: AR, and DSpark with neither, each and both.
+fn configs() -> Vec<(bool, Early)> {
+    let mut configs = vec![(false, Early::default())];
+    for (begin, plan) in [(false, false), (true, false), (false, true), (true, true)] {
+        configs.push((true, Early { begin, plan }));
+    }
+    configs
+}
+
+/// An instance like the tests', with the early candidates `using` set,
+/// lowering each plan no template serves while it issues when `streamed`.
 fn create(host: &Rc<Host>, streamed: bool) -> BundleInstanceV1 {
+    let early = EARLY.get();
     super::super::prefill_skip::create_profile_with_options(
         host,
         8192,
@@ -21,6 +62,8 @@ fn create(host: &Rc<Host>, streamed: bool) -> BundleInstanceV1 {
         &[
             (PREFILL_PLAN_CACHE_VERIFY, false.into()),
             (PREFILL_STREAMED_LOWERING, streamed.into()),
+            (DSPARK_EARLY_PREFILL_ENGRAM, early.begin.into()),
+            (DSPARK_EARLY_PREFILL_PLAN, early.plan.into()),
         ],
     )
 }
@@ -74,8 +117,14 @@ fn reference_journal(dspark: bool) -> Vec<String> {
     journal
 }
 
-/// Whether `instance` refuses every later call as a poisoned one does.
+/// Whether `instance`'s collectives are poisoned, and it refuses every
+/// later call as a poisoned one does. A failed execute leaves the host's
+/// view of the instance (`BundleInstanceV1::is_poisoned`) as it was.
 fn assert_poisoned(instance: &mut BundleInstanceV1, what: &str) {
+    assert!(
+        plan_timing::poisoned(instance.handle()),
+        "{what}: the collectives are poisoned"
+    );
     assert_eq!(
         instance.execute_prefill(
             &envelope(&[chunk(3, 2, 0, 512)], &[], false),
@@ -106,7 +155,8 @@ enum After {
 /// it issues.
 #[test]
 fn failures_after_the_body_poison_the_instance() {
-    for dspark in [false, true] {
+    for (dspark, early) in configs() {
+        let _early = using(early);
         let (body, head) = symbols(dspark);
         let first = head.first().expect("a head launch").clone();
         assert!(
@@ -130,7 +180,8 @@ fn failures_after_the_body_poison_the_instance() {
                 (After::Head, true),
                 (After::Copy, true),
             ] {
-                let what = format!("dspark={dspark} dma={dma} {after:?} streamed={streamed}");
+                let what =
+                    format!("dspark={dspark} {early:?} dma={dma} {after:?} streamed={streamed}");
                 skip::with_dma(dma, || {
                     let host = host(dspark);
                     let mut instance = create(&host, streamed);
@@ -173,7 +224,8 @@ fn failures_after_the_body_poison_the_instance() {
 /// while it issues.
 #[test]
 fn a_refusal_at_a_later_engram_piece_poisons_the_instance() {
-    for dspark in [false, true] {
+    for (dspark, early) in configs() {
+        let _early = using(early);
         let (body, _) = symbols(dspark);
         let layers = model_deepseek41_contract::geometry::FLASH
             .shape
@@ -188,7 +240,7 @@ fn a_refusal_at_a_later_engram_piece_poisons_the_instance() {
         // Each earlier occurrence is a segment on every rank.
         let earlier = body[..at].iter().filter(|(s, _)| *s == consumer).count() as u32;
         for streamed in [false, true] {
-            let what = format!("dspark={dspark} streamed={streamed}");
+            let what = format!("dspark={dspark} {early:?} streamed={streamed}");
             skip::with_dma(false, || {
                 let host = host(dspark);
                 let mut instance = create(&host, streamed);
@@ -223,11 +275,12 @@ fn a_refusal_at_a_later_engram_piece_poisons_the_instance() {
 /// whole and while it issues.
 #[test]
 fn a_refusal_before_the_first_submission_settles_and_refuses() {
-    for dspark in [false, true] {
+    for (dspark, early) in configs() {
+        let _early = using(early);
         let (body, _) = symbols(dspark);
         let first = body.first().expect("a body launch").0.clone();
         for (dma, streamed) in [(true, false), (false, false), (true, true), (false, true)] {
-            let what = format!("dspark={dspark} dma={dma} streamed={streamed}");
+            let what = format!("dspark={dspark} {early:?} dma={dma} streamed={streamed}");
             skip::with_dma(dma, || {
                 let host = host(dspark);
                 let mut instance = create(&host, streamed);
@@ -253,7 +306,7 @@ fn a_refusal_before_the_first_submission_settles_and_refuses() {
                 let begun = count("async mapped ids ");
                 assert!(begun > 0, "{what}: the step began its gathers");
                 assert_eq!(count("async mapped complete"), begun, "{what}");
-                assert!(!instance.is_poisoned(), "{what}");
+                assert!(!plan_timing::poisoned(instance.handle()), "{what}");
                 if dspark {
                     let begin = host.device.journal.borrow().len();
                     assert!(
@@ -317,7 +370,7 @@ fn a_miss_that_fails_after_planning_has_kept_its_template() {
                 .is_err()
         );
         host.fail_upload.set(None);
-        assert!(!instance.is_poisoned());
+        assert!(!plan_timing::poisoned(instance.handle()));
         let failed = counts(&instance);
         assert_eq!(
             (failed.misses, failed.kept, failed.evicted),
@@ -367,13 +420,18 @@ fn failed(dspark: bool, streamed: bool, fault: &Fault) -> Failed {
         Fault::Refused(symbol, nth) => crate::instance::with_refused(symbol, *nth, execute),
     };
     let journal = host.device.journal.borrow()[begin..].to_vec();
+    let poisoned = plan_timing::poisoned(instance.handle());
     let failed = (
         journal,
         format!("{status:?}"),
-        instance.is_poisoned(),
+        poisoned,
         counts(&instance).kept,
     );
-    let _ = instance.destroy();
+    if poisoned {
+        assert_poisoned(&mut instance, &format!("{fault:?} streamed={streamed}"));
+    } else {
+        let _ = instance.destroy();
+    }
     failed
 }
 
@@ -382,11 +440,14 @@ fn failed(dspark: bool, streamed: bool, fault: &Fault) -> Failed {
 /// next rank's, later units', the first two after the first DMA call's
 /// first event, the head's and the last) and at a refused segment (the
 /// first, before any submission, and the first Engram consumer's on rank
-/// 0, within a later issue). The batch lowering kept
-/// its template while it planned; the failed streamed miss keeps none.
+/// 0, within a later issue). Poisoning is read from the collectives, and
+/// a poisoned instance refuses its next calls. Every fault but the first
+/// refusal without DMA poisons. The batch lowering kept its template while
+/// it planned; the failed streamed miss keeps none.
 #[test]
 fn streamed_failures_issue_the_batch_failures_journal() {
-    for dspark in [false, true] {
+    for (dspark, early) in configs() {
+        let _early = using(early);
         let (body, head) = symbols(dspark);
         let first = body[0].0.clone();
         let layer = model_deepseek41_contract::geometry::FLASH
@@ -440,7 +501,7 @@ fn streamed_failures_issue_the_batch_failures_journal() {
             }
             assert_eq!(faults.len(), if dma { 10 } else { 8 }, "dma={dma}");
             for fault in &faults {
-                let what = format!("dspark={dspark} dma={dma} {fault:?}");
+                let what = format!("dspark={dspark} {early:?} dma={dma} {fault:?}");
                 let (batch, streamed) = skip::with_dma(dma, || {
                     (failed(dspark, false, fault), failed(dspark, true, fault))
                 });
@@ -460,6 +521,10 @@ fn streamed_failures_issue_the_batch_failures_journal() {
                     "{what}: batch"
                 );
                 assert_eq!(streamed.3, 0, "{what}: streamed");
+                // Only a refusal before the first submission leaves a body
+                // without DMA unpoisoned.
+                let refused_first = matches!(fault, Fault::Refused(symbol, 0) if *symbol == first);
+                assert_eq!(batch.2, dma || !refused_first, "{what}: poisoned");
             }
         }
     }
@@ -473,12 +538,13 @@ fn streamed_failures_issue_the_batch_failures_journal() {
 #[test]
 fn a_streamed_lowering_failure_refuses_before_the_first_submission_and_poisons_after() {
     use skip::StreamedFailure::{Group, Head};
-    for dspark in [false, true] {
+    for (dspark, early) in configs() {
+        let _early = using(early);
         let (body, _) = symbols(dspark);
         let first = body[0].0.clone();
         for dma in [true, false] {
             for failure in [Group(0), Group(10), Head] {
-                let what = format!("dspark={dspark} dma={dma} {failure:?}");
+                let what = format!("dspark={dspark} {early:?} dma={dma} {failure:?}");
                 skip::with_dma(dma, || {
                     let host = host(dspark);
                     let mut instance = create(&host, true);
@@ -504,7 +570,7 @@ fn a_streamed_lowering_failure_refuses_before_the_first_submission_and_poisons_a
                     let begun = count("async mapped ids ");
                     assert!(begun > 0, "{what}: the step began its gathers");
                     assert_eq!(count("async mapped complete"), begun, "{what}");
-                    assert!(!instance.is_poisoned(), "{what}");
+                    assert!(!plan_timing::poisoned(instance.handle()), "{what}");
                     if dspark {
                         // A failed step is terminal for the drafter's runtime.
                         match instance.destroy() {
@@ -555,7 +621,7 @@ fn a_streamed_miss_that_fails_keeps_nothing() {
                 .is_err()
         );
         host.fail_upload.set(None);
-        assert!(!instance.is_poisoned());
+        assert!(!plan_timing::poisoned(instance.handle()));
         let failed = counts(&instance);
         assert_eq!(
             (failed.misses, failed.kept, failed.evicted),
@@ -582,4 +648,133 @@ fn a_streamed_miss_that_fails_keeps_nothing() {
         assert_eq!(counts(&instance).hits, again.hits + 1);
         instance.destroy().unwrap();
     });
+}
+
+/// `step` lowered while it issues on a fresh instance, failing at
+/// `failure`: its journal, whether its collectives are poisoned, and its
+/// log lines.
+fn streamed_failure(
+    dspark: bool,
+    dma: bool,
+    failure: skip::StreamedFailure,
+) -> (Vec<String>, bool, Vec<String>) {
+    skip::with_dma(dma, || {
+        let host = host(dspark);
+        let mut instance = create(&host, true);
+        restore(&instance, 1, 0, 200_000);
+        let begin = host.device.journal.borrow().len();
+        let logs = host.logs.borrow().len();
+        let failed = skip::with_streamed_failure(failure, || {
+            instance.execute_prefill(&step(), &mut Sink::default())
+        });
+        assert!(failed.is_err(), "{failure:?}");
+        let journal = host.device.journal.borrow()[begin..].to_vec();
+        let logs = host.logs.borrow()[logs..].to_vec();
+        let poisoned = plan_timing::poisoned(instance.handle());
+        assert_eq!(counts(&instance).kept, 0, "{failure:?}");
+        let _ = instance.destroy();
+        (journal, poisoned, logs)
+    })
+}
+
+/// A streamed launch failing at `fail(group)` with an error that logs
+/// `logged` stops where a lowering failure at that group does: the same
+/// launches and poisoning, before the first submission (group 0) and
+/// after the body's first join (group 10), with and without DMA.
+#[track_caller]
+fn assert_stops_at_its_group(fail: fn(usize) -> skip::StreamedFailure, logged: &str) {
+    for (dspark, early) in configs() {
+        let _early = using(early);
+        let (body, _) = symbols(dspark);
+        let first = body[0].0.clone();
+        for dma in [true, false] {
+            for group in [0, 10] {
+                let what = format!("dspark={dspark} {early:?} dma={dma} {:?}", fail(group));
+                let (lowering, poisoned, _) =
+                    streamed_failure(dspark, dma, skip::StreamedFailure::Group(group));
+                let (failed, failed_poisoned, logs) = streamed_failure(dspark, dma, fail(group));
+                assert!(
+                    logs.iter().any(|line| line.contains(logged)),
+                    "{what}: {logs:#?}"
+                );
+                let launches = |journal: &[String]| -> Vec<String> {
+                    journal
+                        .iter()
+                        .filter(|line| line.starts_with("launch "))
+                        .cloned()
+                        .collect()
+                };
+                // A DSpark step launches its drafter's work first. A refused
+                // step settles its gathers, joining them after the failure;
+                // group 10 fails after the body's first join.
+                let body_launched = lowering
+                    .iter()
+                    .any(|line| line.starts_with("launch ") && line.contains(&first));
+                let joined = lowering
+                    .iter()
+                    .any(|line| line.starts_with("async mapped wait "));
+                assert_eq!(body_launched, group != 0, "{what}");
+                assert!(joined, "{what}");
+                assert_eq!(launches(&failed), launches(&lowering), "{what}");
+                assert_eq!(
+                    (failed_poisoned, poisoned),
+                    (group != 0, group != 0),
+                    "{what}"
+                );
+            }
+        }
+    }
+}
+
+/// A streamed launch checks before each group's Engram plan that its
+/// prepared gathers are still the ones it began and has joined. Gathers
+/// that fail before a group, as a failed host callback leaves them, stop
+/// the launch there (`assert_stops_at_its_group`).
+#[test]
+fn failed_gathers_stop_a_streamed_launch_where_a_lowering_failure_does() {
+    assert_stops_at_its_group(
+        skip::StreamedFailure::Gathers,
+        "prefill Engram gathers changed while their plan was made",
+    );
+}
+
+/// A launch that reads ids the prepared gathers still hold fails the
+/// pending-span audit the Engram plan makes of each launch as it is
+/// lowered, which stops the launch at that launch's group
+/// (`assert_stops_at_its_group`).
+#[test]
+fn a_launch_reading_pending_gathers_stops_a_streamed_launch_at_its_group() {
+    assert_stops_at_its_group(skip::StreamedFailure::Alias, "alias");
+}
+
+/// A panic while a streamed launch lowers poisons the instance, before its
+/// first submission and after it: the host may have queued work on some
+/// ranks that waits at a collective its peers never reach, and a panic is
+/// a defect, not a refusal. The host sees the panic's status.
+#[test]
+fn a_panic_in_a_streamed_lowering_poisons_the_instance() {
+    use skip::StreamedFailure::Panic;
+    for (dspark, early) in configs() {
+        let _early = using(early);
+        for dma in [true, false] {
+            for group in [0, 10] {
+                let what = format!("dspark={dspark} {early:?} dma={dma} group={group}");
+                skip::with_dma(dma, || {
+                    let host = host(dspark);
+                    let mut instance = create(&host, true);
+                    restore(&instance, 1, 0, 200_000);
+                    let failed = skip::with_streamed_failure(Panic(group), || {
+                        instance.execute_prefill(&step(), &mut Sink::default())
+                    });
+                    assert_eq!(
+                        failed,
+                        Err(BundleAbiError::Status(BundleStatusV1::Panic)),
+                        "{what}"
+                    );
+                    assert!(plan_timing::poisoned(instance.handle()), "{what}");
+                    assert_poisoned(&mut instance, &what);
+                });
+            }
+        }
+    }
 }

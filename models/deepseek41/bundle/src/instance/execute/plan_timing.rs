@@ -298,6 +298,19 @@ pub(crate) fn time(handle: BundleHandleV1, request: &[u8], repeats: usize) -> (D
     (median(planned), median(lowered))
 }
 
+/// Whether the instance `handle` is poisoned, read from its collectives,
+/// which a panic poisons where the host's view of the instance does not.
+pub(crate) fn poisoned(handle: BundleHandleV1) -> bool {
+    Instance::instances().with(|table| {
+        table
+            .borrow_mut()
+            .get_mut(handle)
+            .expect("a live instance")
+            .collectives
+            .is_poisoned()
+    })
+}
+
 /// A prefix restore's bookkeeping without its snapshot copy: `request`
 /// holds `slot` as if it had committed `tokens`, so a fake-host step may
 /// continue it at a long context. No check reads the fake device's state

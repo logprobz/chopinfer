@@ -64,6 +64,12 @@ impl Gathers {
             && self.joined.get() == joined
     }
 
+    /// Fails the gathers as a failed host callback does, for a test.
+    #[cfg(test)]
+    pub(in crate::instance) fn fail(&self) {
+        self.failed.set(true);
+    }
+
     /// Whether the pending gathers began early.
     pub(super) fn begun_early(&self) -> bool {
         self.early.get()

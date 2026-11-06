@@ -120,6 +120,12 @@ impl Lowerer {
         &self.body
     }
 
+    /// Rank `rank`'s last launch lowered so far, for a test to corrupt.
+    #[cfg(test)]
+    pub(super) fn last_mut(&mut self, rank: usize) -> Option<&mut PreparedLaunch> {
+        self.body.0[rank].last_mut()
+    }
+
     /// Each rank's body launches lowered so far, and the layer of the group
     /// lowered last: none for the embedding and the feature packs.
     #[cfg(test)]

@@ -70,6 +70,15 @@ pub(crate) enum Failure {
     Group(usize),
     /// The head's audit, once the body issued.
     Head,
+    /// The prepared gathers failing before group `n` is lowered, as a failed
+    /// host callback leaves them.
+    Gathers(usize),
+    /// A panic in the lowering of group `n`.
+    Panic(usize),
+    /// Group `n`'s last launch on rank 0 also reading the last Engram
+    /// layer's ids, which its gather still holds, for the pending-span audit
+    /// to refuse.
+    Alias(usize),
 }
 
 #[cfg(test)]
@@ -255,10 +264,34 @@ impl Stream<'_> {
     fn lower(&mut self) -> Result<bool, BundleAbiError> {
         let lowered = (|| {
             #[cfg(test)]
-            injected(Failure::Group(self.groups))?;
+            {
+                injected(Failure::Group(self.groups))?;
+                if FAILURE.get() == Some(Failure::Gathers(self.groups))
+                    && let Some((gathers, _)) = self.gathers
+                {
+                    gathers.fail();
+                }
+                assert_ne!(
+                    FAILURE.get(),
+                    Some(Failure::Panic(self.groups)),
+                    "an injected streamed panic"
+                );
+            }
             let more = self
                 .lowerer
                 .lower_next(self.instance, self.run, self.layout)?;
+            #[cfg(test)]
+            if FAILURE.get() == Some(Failure::Alias(self.groups))
+                && let (Some((gathers, _)), Some(engram)) = (self.gathers, &self.engram)
+                && let Some(launch) = self.lowerer.last_mut(0)
+            {
+                let ids = gathers.pending_spans(engram.layers() - 1)[0];
+                let id = launch.bindings.bind(ids);
+                launch
+                    .arguments
+                    .0
+                    .push(kernel_core::contract::Argument::DeviceBuffer(id));
+            }
             let body = self.lowerer.body();
             if let (Some((gathers, sequence)), Some(engram)) = (self.gathers, &mut self.engram) {
                 if !gathers.owned_by(sequence, self.joins) {

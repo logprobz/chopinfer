@@ -425,6 +425,7 @@ pub(crate) mod tests {
             (DSPARK_MARKOV_STAGED, true.into()),
             (DSPARK_MIXED_PREPARED_ENGRAM, true.into()),
             (DSPARK_EARLY_PREFILL_ENGRAM, true.into()),
+            (DSPARK_EARLY_PREFILL_PLAN, true.into()),
         ] {
             changed = with_option(changed, name, value);
         }
@@ -446,6 +447,7 @@ pub(crate) mod tests {
                 dspark_markov_staged: true,
                 dspark_mixed_prepared_engram: true,
                 dspark_early_prefill_engram: true,
+                dspark_early_prefill_plan: true,
             }
         );
         for (name, value) in [

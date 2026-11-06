@@ -54,6 +54,10 @@ pub const DSPARK_MIXED_PREPARED_ENGRAM: &str = "dspark_mixed_prepared_engram";
 /// begins its prepared gathers before catch-up and drafting, instead of
 /// after the draft readback and the prefill's lowering.
 pub const DSPARK_EARLY_PREFILL_ENGRAM: &str = "dspark_early_prefill_engram";
+/// Candidate: a DSpark step plans its prefill while its drafter runs,
+/// before the draft readback, and frees the plan templates that planning
+/// drops once the prefill launched.
+pub const DSPARK_EARLY_PREFILL_PLAN: &str = "dspark_early_prefill_plan";
 /// Maximum prompt-ending items whose interior grid anchor one step retains.
 pub const MAX_ANCHOR_ITEMS: u32 = 8;
 pub const DEFAULT_PLANS: usize = 16;
@@ -78,9 +82,10 @@ pub struct Options {
     pub dspark_hc_draft_rows: bool,
     pub dspark_mixed_prepared_engram: bool,
     pub dspark_early_prefill_engram: bool,
+    pub dspark_early_prefill_plan: bool,
 }
 
-pub fn declarations() -> [ModelOptionV1; 15] {
+pub fn declarations() -> [ModelOptionV1; 16] {
     [
         (
             DIAGNOSTIC_STEP_LOGS,
@@ -92,6 +97,10 @@ pub fn declarations() -> [ModelOptionV1; 15] {
         ),
         (
             DSPARK_EARLY_PREFILL_ENGRAM,
+            OptionDefinitionV1::Boolean { default: false },
+        ),
+        (
+            DSPARK_EARLY_PREFILL_PLAN,
             OptionDefinitionV1::Boolean { default: false },
         ),
         (
@@ -206,6 +215,7 @@ impl Options {
             dspark_markov_staged: flag(DSPARK_MARKOV_STAGED),
             dspark_mixed_prepared_engram: flag(DSPARK_MIXED_PREPARED_ENGRAM),
             dspark_early_prefill_engram: flag(DSPARK_EARLY_PREFILL_ENGRAM),
+            dspark_early_prefill_plan: flag(DSPARK_EARLY_PREFILL_PLAN),
         })
     }
 }
@@ -327,6 +337,7 @@ mod tests {
             dspark_markov_staged: false,
             dspark_mixed_prepared_engram: false,
             dspark_early_prefill_engram: false,
+            dspark_early_prefill_plan: false,
         };
         assert_eq!(Options::read(&defaults).unwrap(), expected);
         assert_eq!(Options::read(&BTreeMap::new()).unwrap(), expected);
@@ -352,6 +363,7 @@ mod tests {
             (DSPARK_MARKOV_STAGED.into(), "true".into()),
             (DSPARK_MIXED_PREPARED_ENGRAM.into(), "true".into()),
             (DSPARK_EARLY_PREFILL_ENGRAM.into(), "true".into()),
+            (DSPARK_EARLY_PREFILL_PLAN.into(), "true".into()),
         ]);
         let resolved = declaration.resolve(&overrides).unwrap();
         assert_eq!(
@@ -372,6 +384,7 @@ mod tests {
                 dspark_markov_staged: true,
                 dspark_mixed_prepared_engram: true,
                 dspark_early_prefill_engram: true,
+                dspark_early_prefill_plan: true,
             }
         );
         assert!(!declaration.is_qualified(&resolved));
@@ -398,6 +411,7 @@ mod tests {
             (DSPARK_MARKOV_STAGED, "1"),
             (DSPARK_MIXED_PREPARED_ENGRAM, "1"),
             (DSPARK_EARLY_PREFILL_ENGRAM, "1"),
+            (DSPARK_EARLY_PREFILL_PLAN, "1"),
             (DSPARK_GRAPH_HANDLES_PER_RANK, "-1"),
             (DSPARK_GRAPH_HANDLES_PER_RANK, "9223372036854775808"),
         ] {

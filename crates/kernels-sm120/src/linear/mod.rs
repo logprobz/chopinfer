@@ -2,7 +2,6 @@
 //! slot state, the gated delta rule for prefill, decode and verify, and the
 //! per-head gated RMSNorm. Recurrent states live in pools addressed by slot
 //! id, never in batch order; live row and sequence counts stay on the device.
-//! See `cuda/linear/README.md` for the ABI and the numerics.
 
 pub mod channel_decay;
 
@@ -20,10 +19,10 @@ use kernel_core::contract::{
 /// Rows per prefill chunk of the delta rule and per convolution prefill CTA.
 pub const CHUNK: u32 = 64;
 /// Sequences one prefill launch may carry: every item a step of an instance
-/// serving the package maximum may hold (docs/serving-profiles.md,
-/// CONC-QWEN). A launch's grid and workspace hold one partial chunk per
-/// sequence of its bucket on top of the row chunks, so a planner sizes its
-/// workspace for the sequences it runs, not for this bound.
+/// serving the package maximum may hold. A launch's grid and workspace hold
+/// one partial chunk per sequence of its bucket on top of the row chunks, so
+/// a planner sizes its workspace for the sequences it runs, not for this
+/// bound.
 pub const PREFILL_SEQUENCES: u32 = 256;
 /// Value rows of one head per delta-rule scan CTA.
 pub const SCAN_ROWS: u32 = 16;

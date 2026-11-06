@@ -3,7 +3,7 @@
 //! with, as served (scored against the contract bound of its output dtype)
 //! and with F32 output (scored against 2^-22 K S alone), next to the probe's
 //! per-128-K scheme on the same weights, activations and outputs. Receipts go
-//! to kind `gemm_accumulation`; the gemm README records the results.
+//! to kind `gemm_accumulation`.
 //!
 //! `gemm_accumulation_matches_probe` ties the probe to the fragment prefill:
 //! whole tiles equal the probe scheme the kernels implement, bit for bit.

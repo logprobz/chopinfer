@@ -1179,7 +1179,7 @@ fn own_run(
 
 /// The Qwen-owned GEMM entries on real weights and dumped activations, as
 /// served and with F32 output, next to the probe's per-128-K scheme on the
-/// same outputs (the gemm README's BF16 accumulation study). The fused
+/// same outputs. The fused
 /// hc_up_mix and the HC precompute entries are left out: their outputs are
 /// not plain GEMMs, and their parity tests tie them bitwise to hc_up_decode,
 /// hc_in and hc_down.

@@ -3,7 +3,7 @@
 //! tiles), runs of 16 to 1024 K summed in F32 (128 is the FP8 block
 //! promotion; 1024 is b12x's long-K flush), Kahan-compensated runs (16 is
 //! b12x's prefill) and sequential F32 FMA. Receipts go to kind
-//! `mma_accumulation`; the gemm README records the results.
+//! `mma_accumulation`.
 
 #[path = "common/accumulation.rs"]
 mod accumulation;

@@ -4,8 +4,7 @@
 //! decode and verify of the recurrence, and the per-head gated RMSNorm of its
 //! output (an instance of the gated delta rule's norm template). States live
 //! in pools addressed by slot id; live row and sequence counts stay on the
-//! device. See `cuda/linear/CHANNEL_DECAY.md` for the ABI and the
-//! numerics.
+//! device.
 //!
 //! Declared exactness ([`Entry::invariance`], the same under every prefill
 //! schedule, which store the same values in the same order):

@@ -1699,7 +1699,7 @@ pub fn run_command_line_v1(
         && command == "eval"
     {
         // Qualification against a running server: its own exit codes
-        // (tools/qual/README.md#release-gates), so it bypasses the receipt-or-refusal path.
+        // (docs/check-kinds.md#exit-statuses), so it bypasses the receipt-or-refusal path.
         let revision = env!("CHOPINFER_BUILD_REVISION");
         let tool = runtime_eval::Tool {
             name: format!("{program} eval"),

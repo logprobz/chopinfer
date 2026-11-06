@@ -5,7 +5,7 @@
 //! components, the output layout into the language model, the weight
 //! mapping, the precision policy and the admissible parallel policies.
 //! Model-specific variants come from the caller's
-//! `Environment`. See README.md.
+//! `Environment`.
 
 pub mod blocks;
 pub mod buffers;

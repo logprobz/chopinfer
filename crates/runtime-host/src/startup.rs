@@ -3,7 +3,7 @@
 //! Warmup runs waves of 1, 2, 4, ... concurrent requests up to the served
 //! sequence count, so a bundle captures each of its decode graph buckets at
 //! startup rather than stalling every live sequence the first time a batch
-//! reaches a new bucket (docs/serving-profiles.md). The shared
+//! reaches a new bucket (docs/developer-preview.md#gpu-memory). The shared
 //! bundle runtime logs each graph it captures ("graph capture rank R bucket B
 //! items I"), so the capture lines between a wave's start and end lines are
 //! the buckets that wave reached. A wave whose requests do not all decode in

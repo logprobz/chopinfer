@@ -48,7 +48,7 @@ const PARTIALS: u32 = 8;
 const TOKENS: u32 = 64;
 /// Live rows every entry is selected for. The 64-token kernel was faster
 /// than the prefill entry for every shape at these rows (kernel-lab
-/// 48-layer graph bench, `cuda/gemm/README.md`).
+/// 48-layer graph bench).
 const ROWS: RangeInclusive<u32> = 33..=64;
 
 /// One compiled kernel: weight format and SwiGLU epilogue. N, K, live M and

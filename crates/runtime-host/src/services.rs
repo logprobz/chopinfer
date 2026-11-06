@@ -5188,8 +5188,8 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
         };
         state.end_capture_bookkeeping(context);
         // Graphs hold no memory nodes, so what a capture costs is the
-        // driver's executable graph: free memory before and after it (M1 in
-        // docs/serving-profiles.md).
+        // driver's executable graph: free memory before and after it
+        // (docs/developer-preview.md#gpu-memory).
         if let (Some(before), Some(after)) = (
             state.capture_free_bytes.remove(&context),
             state.free_context_bytes(context),

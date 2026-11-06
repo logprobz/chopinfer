@@ -1922,8 +1922,8 @@ fn sampling_filtered_tiny_temperature() {
     .expect("filtered sampling at tiny temperatures");
 }
 
-/// Four BF16 rows of MiMo V2.6 logits at width 152,576 from the numerics
-/// audit (fixtures/mimo26/sampling/README.md).
+/// Four little-endian BF16 rows of MiMo V2.6 logits at width 152,576 from the
+/// numerics audit's full-model prompt positions.
 fn fixture_logits() -> LabResult<Vec<Vec<f32>>> {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../../fixtures/mimo26/sampling/real-logits-4x152576.bf16");

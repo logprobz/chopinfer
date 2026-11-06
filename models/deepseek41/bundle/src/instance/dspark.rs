@@ -200,6 +200,24 @@ impl Program for Work<'_> {
         Ok(true)
     }
 
+    fn begins_prefill_engram(&self) -> bool {
+        self.prefill_engram.is_none()
+            && self.step.as_ref().is_some_and(|step| {
+                self.instance
+                    .admits_early_prefill_engram(self.request, &step.prefill)
+            })
+    }
+
+    fn begin_prefill_engram(&mut self, hashed: &crate::engram_rows::Hashed) -> Result<(), String> {
+        let step = self
+            .step
+            .as_ref()
+            .ok_or("DSpark prefill has no packed step")?;
+        self.instance
+            .begin_early_prefill_engram(&step.prefill, hashed)
+            .map_err(|error| format!("DSpark early prefill Engram: {error}"))
+    }
+
     fn sync_engram_reason(
         &self,
         hashed: &crate::engram_rows::Hashed,

@@ -73,9 +73,23 @@ pub trait Program {
     }
 
     /// Retain prefill IDs for target planning. This must not enqueue IO:
-    /// the target first validates its consumer boundaries and fallback.
+    /// the target first validates its consumer boundaries and fallback,
+    /// unless the gathers already began (`begin_prefill_engram`).
     fn stage_prefill_engram(&mut self, _hashed: &Hashed) -> Result<bool, String> {
         Ok(false)
+    }
+
+    /// Whether this step's prefill begins its prepared gathers before
+    /// catch-up and drafting, where its target takes them
+    /// (`dspark_early_prefill_engram`).
+    fn begins_prefill_engram(&self) -> bool {
+        false
+    }
+
+    /// Begins the prefill's prepared gathers of `hashed`, its rows' ids,
+    /// for the target to join.
+    fn begin_prefill_engram(&mut self, _hashed: &Hashed) -> Result<(), String> {
+        Ok(())
     }
 
     /// Takes the decode phase's ids of a mixed target whose prefill staged
@@ -141,6 +155,9 @@ pub struct Staging {
     head_dim: u64,
     pending: Vec<Pending>,
     confidence: Option<Vec<[u32; BLOCK_ROWS as usize]>>,
+    /// The prefill rows this execute hashed before drafting, and their
+    /// phase, which its target hash takes instead of hashing them again.
+    early: Option<(Vec<TargetRows>, GatheredPhase)>,
 }
 
 pub struct Gathered {
@@ -201,6 +218,7 @@ impl Staging {
             rows: EngramRows::new(hash),
             pending: Vec::new(),
             confidence: None,
+            early: None,
         })
     }
 
@@ -224,6 +242,7 @@ impl Staging {
     pub fn cancel(&mut self) {
         self.pending.clear();
         self.confidence = None;
+        self.early = None;
     }
 
     fn pending_rows(
@@ -267,14 +286,23 @@ impl Staging {
             return Err("DSpark Engram staging needs every rank".into());
         }
         let pending = Self::pending_rows(rows, text)?;
+        let mut early = self.early.take();
         let phases = [true, false]
             .into_iter()
             .map(|prefill| {
-                let steps = pending
+                let phase = pending
                     .iter()
-                    .filter(|row| matches!(row.rows.rows.kind, Kind::Prefill { .. }) == prefill)
-                    .map(Pending::step)
-                    .collect::<Vec<_>>();
+                    .filter(|row| matches!(row.rows.rows.kind, Kind::Prefill { .. }) == prefill);
+                // The prefill rows hashed before drafting, unchanged since.
+                if prefill && let Some((hashed, gathered)) = early.take() {
+                    if !phase.map(|row| &row.rows).eq(&hashed) {
+                        return Err(
+                            "DSpark early prefill Engram rows differ from the target".into()
+                        );
+                    }
+                    return Ok(gathered);
+                }
+                let steps = phase.map(Pending::step).collect::<Vec<_>>();
                 self.hash_phase(&steps, prefill, ranks)
             })
             .collect::<Result<Vec<_>, _>>()?;
@@ -636,6 +664,38 @@ impl<P: Program> Host for Adapter<'_, P> {
             .hash(&steps)
             .map_err(|e| format!("Engram hash: {e:?}"))?;
         self.program.prefetch_engram(&hashed)
+    }
+    fn begin_prefill_engram(&mut self, inputs: &[Input]) -> Result<(), String> {
+        self.staging.early = None;
+        let prefill = inputs
+            .iter()
+            .filter(|input| matches!(input.rows.kind, Kind::Prefill { .. }))
+            .map(|input| TargetRows {
+                rows: input.rows,
+                tokens: input.tokens.clone(),
+            })
+            .collect::<Vec<_>>();
+        if prefill.is_empty() || !self.program.begins_prefill_engram() {
+            return Ok(());
+        }
+        // The target hashes these rows alike: its prefill rows are the
+        // inputs' own, and nothing commits history in between.
+        let (staging, text, ranks) = (&mut *self.staging, self.text, self.ranks);
+        let phase = timed(
+            &mut self.times,
+            |t| &mut t.gather_us,
+            || -> Result<_, String> {
+                let pending = Staging::pending_rows(&prefill, text)?;
+                let steps = pending.iter().map(Pending::step).collect::<Vec<_>>();
+                staging.hash_phase(&steps, true, ranks)
+            },
+        )?;
+        if phase.hashed.rows() == 0 {
+            return Ok(());
+        }
+        self.program.begin_prefill_engram(&phase.hashed)?;
+        self.staging.early = Some((prefill, phase));
+        Ok(())
     }
     fn draft(&mut self, inputs: &[DraftInput]) -> Result<(), String> {
         let program = &mut *self.program;

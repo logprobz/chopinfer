@@ -1641,6 +1641,19 @@ impl Instance {
                 Err(error) => return error,
             }
         }
+        // Gathers begun before drafting serve only the prefill's prepared
+        // gathers (`admits_early_prefill_engram`).
+        if self
+            .prefill_engram
+            .as_ref()
+            .is_some_and(|gathers| gathers.begun_early())
+            && !runs
+                .first()
+                .is_some_and(|run| run.phase.prefill() && run.execution.prefill_engram().is_some())
+        {
+            self.log("DSpark prefill Engram began early for a step without prepared gathers");
+            return BundleStatusV1::InternalError;
+        }
         // A mixed step's verify rows wait for its prefill's prepared gathers
         // (`admits_mixed_engram`).
         if self.mixed_engram_deferred()
@@ -1738,15 +1751,16 @@ impl Instance {
                         )?;
                     }
                     if run.execution.prefill_engram().is_some() {
-                        self.prefill_engram
+                        let gathers = self
+                            .prefill_engram
                             .as_ref()
-                            .expect("prepared prefill gather")
-                            .begin(
-                                &self.services,
-                                self.ranks[0].2,
-                                run.engram.as_ref().expect("prefill hashes"),
-                                run.inputs.positions.first().copied().unwrap_or(0),
-                            )?;
+                            .expect("prepared prefill gather");
+                        let hashed = run.engram.as_ref().expect("prefill hashes");
+                        let start = run.inputs.positions.first().copied().unwrap_or(0);
+                        // Gathers begun before drafting already copy these rows.
+                        if !gathers.take_early(hashed.rows(), start)? {
+                            gathers.begin(&self.services, self.ranks[0].2, hashed, start)?;
+                        }
                     }
                     self.upload_dspark_cycle(run.arena, run.layout, &run.inputs)
                         .map_err(|error| {

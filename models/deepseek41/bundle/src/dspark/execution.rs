@@ -152,6 +152,13 @@ pub trait Host {
     fn prefetch_engram(&mut self, _inputs: &[Input]) -> Result<(), Self::Error> {
         Ok(())
     }
+    /// Before catch-up and drafting, with every input of the step: the host
+    /// may hash its prefill rows, whose Engram ids read only their own
+    /// tokens and committed history, and begin gathering their table rows
+    /// for the target. It never changes results.
+    fn begin_prefill_engram(&mut self, _inputs: &[Input]) -> Result<(), Self::Error> {
+        Ok(())
+    }
     /// Observe completed catch-up before a draft can change provisional rings.
     /// This diagnostic must not advance state or request another catch-up.
     #[cfg(feature = "state-capture")]
@@ -311,6 +318,7 @@ impl Runtime {
             .prepare(inputs.iter().map(|input| input.rows).collect())
             .map_err(Error::State)?;
         self.diagnostics.clear();
+        self.host_result(host.begin_prefill_engram(inputs))?;
         // The device target's steps: each item's first row is known now.
         if inputs.iter().any(|input| input.rows.kind.drafts() > 0)
             && inputs

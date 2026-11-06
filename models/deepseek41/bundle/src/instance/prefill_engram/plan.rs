@@ -28,7 +28,7 @@ impl Plan {
         flags: &[Vec<bool>],
         stages: &[Vec<Stage>],
     ) -> Result<Self, String> {
-        if !gathers.idle()
+        if !gathers.plannable()
             || programs.is_empty()
             || programs.len() != flags.len()
             || programs.len() != stages.len()
@@ -117,7 +117,7 @@ impl Plan {
                             && sections.last().map(|last| last.end) == Some(program.len())
                     },
                 );
-        if !gathers.idle() || !extent {
+        if !gathers.plannable() || !extent {
             return Err("prefill Engram program extent or lifecycle".into());
         }
         for (rank, range) in changed {
@@ -316,6 +316,7 @@ mod tests {
             verify: Vec::new(),
             columns: 24,
             pending: Cell::new(false),
+            early: Cell::new(false),
             failed: Cell::new(false),
             joined: Cell::new(0),
             sequence: Cell::new(0),

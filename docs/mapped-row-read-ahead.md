@@ -151,10 +151,12 @@ launch. The step then reuses those ids for its target. Only where the target
 takes the prepared gathers (no encoder rows, no text taps) does it begin
 early; the previous step's gathers settled at execute entry, and no work the
 step issues before the prefill's joins touches the gathers' ids or rows. A
-step refused after the early begin leaves its healthy gathers to the next
-execute's entry, which joins, fences and completes them before any upload can
-reuse their rows. The ids, the gathered rows, every launch and every result
-are unchanged; CPU evidence only, as for the candidates above.
+step refused after the early begin settles its healthy gathers before it
+returns, as a refused issue does: it joins them on every target stream,
+synchronizes those streams and completes them, so the refusal that poisons
+the runtime leaves no callback pending. The ids, the gathered rows, every
+launch and every result are unchanged; CPU evidence only, as for the
+candidates above.
 
 Cold-row experiments must keep async read-ahead enabled. The shared defaults
 already enable it; `CHOPINFER_MAPPED_ASYNC_READ_AHEAD=1` makes the setting

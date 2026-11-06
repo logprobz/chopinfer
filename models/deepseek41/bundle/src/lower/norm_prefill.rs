@@ -12,7 +12,7 @@ impl Lowering<'_> {
         phase: Phase,
         stage: Stage,
     ) -> Result<Option<Vec<Lowered>>, String> {
-        if !qualified(self.shape.geometry, phase) {
+        if !qualified(self.shape, phase) {
             return Ok(None);
         }
         let Some(ops) = &self.ops.norm_prefill else {
@@ -59,7 +59,7 @@ impl Lowering<'_> {
     /// router are both lowered at its row count.
     pub(super) fn router_in_norm(&self, phase: Phase) -> bool {
         phase.prefill()
-            && qualified(self.shape.geometry, phase)
+            && qualified(self.shape, phase)
             && self.ops.norm_prefill.is_some()
             && self
                 .ops

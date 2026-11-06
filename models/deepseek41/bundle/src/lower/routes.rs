@@ -51,7 +51,7 @@ impl Lowering<'_> {
         if self.ops.norm_prefill.is_some()
             && matches!(stage, Stage::InputNorm(..) | Stage::QuantizeInput(..))
         {
-            let selected = crate::ops::norm_prefill::qualified(self.shape.geometry, phase);
+            let selected = crate::ops::norm_prefill::qualified(self.shape, phase);
             let admitted = crate::Kernels::prefill_norm_route_rows(self.shape);
             for item in launches.iter_mut() {
                 // Widening is retained by both paths and is not a displaced norm.

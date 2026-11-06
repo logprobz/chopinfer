@@ -595,6 +595,12 @@ row and readable receipt. Baselines advance only after a full passing run of
 all required configurations; reseeding requires a recorded reason. External
 variants never advance in-tree baselines. Missing captures are not passes.
 No rule or baseline may be changed to hide a mismatch.
+
+`release_preview.sh rescore RUN` replays a run with the current code and
+declarations. It only reads the run, and writes what it judges anew under
+`RUN/rescore/<UTC>/`, or with `--out DIR` under a new directory DIR. A
+record, server or check whose recorded child failed stays failed.
+
 ## Declarative agentic traces
 
 `agentic_mixed.py --workload trace --trace FILE` reuses the streaming client,

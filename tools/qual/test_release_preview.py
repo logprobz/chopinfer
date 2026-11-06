@@ -3267,6 +3267,38 @@ class RescoreTests(FakeRunTests):
             code, rows = self.replay(fake)
             self.assertIn('exited None', next(row for row in rows if row['id'] == 'default/spec/gsm8k')['error'])
 
+    @staticmethod
+    def snapshot(root):
+        return {str(path.relative_to(root)): path.read_bytes() if path.is_file() else None
+                for path in sorted(root.rglob('*'))}
+
+    def test_a_rescore_reads_the_run_and_writes_only_its_out_directory(self):
+        with tempfile.TemporaryDirectory() as temporary, \
+                patch.object(runner, 'VALIDATION', Path(temporary) / 'validation'):
+            fake, code, _ = self.recorded(Path(temporary), model(lambda facts: 'teacher' in facts['quick']))
+            self.assertEqual(code, 0)
+            run = fake.base / 'run'
+            # A check whose directory the run lost fails without being made again.
+            shutil.rmtree(run / 'default/spec/checks/teacher')
+            before = self.snapshot(run)
+            out = Path(temporary) / 'rescored'
+
+            def rescore():
+                with patch.object(runner, 'call', fake.call), \
+                        patch.object(runner, 'rescore_check', lambda *a: {'status': 'pass'}), \
+                        patch.dict(os.environ, {fake.facts['checkpoint']: str(fake.checkpoint)}), \
+                        contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                    return runner.main(['rescore', str(run), '--out', str(out)])
+
+            self.assertEqual(rescore(), 1)
+            self.assertEqual(self.snapshot(run), before)
+            rows = {row['id']: row for row in runner.read(out / 'results.json')['rows']}
+            self.assertEqual((rows['default/spec/teacher']['status'], rows['default/spec/teacher']['recorded']),
+                             ('fail', 'pass'))
+            self.assertTrue((out / 'report.md').is_file())
+            # An existing directory is refused.
+            self.assertEqual(rescore(), 2)
+
     def test_a_replay_keeps_a_server_that_failed_after_its_checks(self):
         class CleanupFailed(FakeRun):
             @contextlib.contextmanager

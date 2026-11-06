@@ -8,7 +8,7 @@ baselines. See tools/qual/README.md#correctness-runner.
                            [--input KEY=PATH ...] [--input-value KEY=VALUE ...] [--out DIR]
                            [--no-baseline-update]
     release_preview.sh plan --model M [--config C ...] [--suite quick|full]
-    release_preview.sh rescore RUN [--legacy-preview MODEL] [--json FILE]
+    release_preview.sh rescore RUN [--legacy-preview MODEL] [--json FILE] [--out DIR]
     release_preview.sh baseline show --model M [--config C]
     release_preview.sh baseline reseed --model M --from RUN --reason TEXT
 
@@ -25,7 +25,8 @@ failed or did not run. Records are information: run.json says what was
 tested, and nothing is refused for missing provenance; only last good's
 promotion needs the checkout and every used install source clean and on
 main. `rescore`
-replays a run with the current code.
+replays a run with the current code, reading the run and writing what it
+judges anew under RUN/rescore/<UTC>/ or `--out`.
 """
 import argparse
 from concurrent.futures import ThreadPoolExecutor
@@ -1653,7 +1654,8 @@ def fill_arguments(arguments, fill):
 def run_child(run, context, directory, script, arguments, seconds, config_path):
     """One tools/qual child against the live server: its receipts in
     `directory`, scored by the install's chopinfer eval."""
-    directory.mkdir(parents=True, exist_ok=True)
+    if not run.replay:
+        directory.mkdir(parents=True, exist_ok=True)
     run.used_features.add(())
     env = dict(context['env'], CHOPINFER_EVAL=str(run.install / 'bin/chopinfer'),
                CHOPINFER_QUAL_CONFIG=str(config_path), CHOPINFER_QUAL_RECEIPTS=str(directory))
@@ -1667,7 +1669,8 @@ def eval_capture(run, context, directory, kind, arguments, seconds):
     the install's `chopinfer eval capture` under the configuration's
     declaration, bound to the arm's startup log: its receipt in
     `directory`."""
-    directory.mkdir(parents=True, exist_ok=True)
+    if not run.replay:
+        directory.mkdir(parents=True, exist_ok=True)
     run.used_features.add(())
     fill, config = context['fill'], context['config_name']
     command = [run.install / 'bin/chopinfer', 'eval', 'capture', '--kind', kind, '--model',
@@ -1767,7 +1770,6 @@ def run_stage(run, context, step, arm_dir, arm):
             path = one_receipt(directory)
             values, extra = judge_needle(read(path), facts)
         elif stage == 'queue':
-            directory.mkdir(parents=True, exist_ok=True)
             path = directory / 'queue.json'
             if not run.replay:
                 write(path, queue(fill['url'], facts))
@@ -1924,7 +1926,6 @@ def judged_check(run, context, check, declared, arm_dir, arm, label, inputs):
     if label == check:
         withdraw(context, check)
     directory = arm_dir / 'checks' / label.replace('/', '-')
-    directory.mkdir(parents=True, exist_ok=True)
     if not run.replay:
         write(directory / 'inputs.json', inputs)
     where = ['--offline'] if arm == OFFLINE else ['--url', context['fill']['url']]
@@ -2136,7 +2137,8 @@ def run_configuration(run, name, config, devices=None):
         context['install'] = run.installs[features]
         run.used_features.add(features)
         arm_dir = directory / arm['arm']
-        arm_dir.mkdir(parents=True, exist_ok=True)
+        if not run.replay:
+            arm_dir.mkdir(parents=True, exist_ok=True)
         try:
             require(run.replay or verify_marker(facts['model'], checkpoint, config['manifest']) == marker,
                     'checkpoint files or verification manifest changed since their verify')
@@ -2493,12 +2495,13 @@ def rescore_command(args):
     --legacy-preview MODEL a previous preview run (preview_legacy.py layout).
     Prints and writes rows; exit 1 when any fails."""
     root = Path(args.run).resolve()
+    require(not (args.legacy_preview and args.out), '--out holds a runner run\'s rescore, not a previous preview\'s')
     if args.legacy_preview:
         rows = rescore_legacy(root, args.legacy_preview)
         for row in rows:
             print(line(row))
     else:
-        rows = rescore_run(root)
+        rows = rescore_run(root, args.out)
     if args.json:
         write(args.json, {'run': str(root), 'rows': rows})
     return 0 if rows and all(row['status'] in PASSING for row in rows) else 1
@@ -2524,12 +2527,15 @@ def judge_receipt(stage, value, facts, arm, run_id, image, exact_sha256, soak_se
     raise ValueError(f'unknown stage {stage}')
 
 
-def rescore_run(root):
+def rescore_run(root, out=None):
     """A runner run replayed with this code: the same plan, each recorded
     child's exit and receipt judged again by the stage rules and checks.py
     rescore, and the comparisons between arms recomputed from the recorded
     arms. A row the plan expects and the run lacks fails. Output goes to
-    RUN/rescore/<UTC>/; the stored baselines never move."""
+    `out`, a new directory, or RUN/rescore/<UTC>/; the run itself is only
+    read, and the stored baselines never move."""
+    require(out is None or not Path(out).exists(), f'{out} exists')
+    out = Path(out).resolve() if out else root / 'rescore' / utc()
     state = read(root / 'run.json')
     recorded = read(root / 'results.json')
     lacking = [key for key in ('model', 'suite', 'configurations', 'source', 'install', 'packages', 'inputs')
@@ -2546,7 +2552,7 @@ def rescore_run(root):
                               no_baseline_update=True, check=state.get('selected_checks', []))
     facts, configs = select_checks(facts, configs, args.suite, args.check)
     run = Run(args, facts, configs, state['source'], Path(state['install']), root)
-    run.replay, run.out = True, root / 'rescore' / utc()
+    run.replay, run.out = True, out
     run.packages, run.install_source = state['packages'], state.get('install_source')
     run.installs.update({tuple(key.split('+')): Path(path) for key, path in state.get('installs', {}).items()})
     run.install_metadata = {tuple(key.split('+')) if key else (): value
@@ -2745,6 +2751,8 @@ def main(argv=None):
     rescore.add_argument('run')
     rescore.add_argument('--legacy-preview', metavar='MODEL', help='a previous preview run (preview_legacy.py)')
     rescore.add_argument('--json', type=Path)
+    rescore.add_argument('--out', type=Path, help='a new directory for what the rescore judges anew '
+                         '(default RUN/rescore/<UTC>)')
     rescore.add_argument('--variant-dir', type=Path,
                          help=f'root of the run\'s external variants (default ${declaration.VARIANTS_ENV})')
     baseline = commands.add_parser('baseline')

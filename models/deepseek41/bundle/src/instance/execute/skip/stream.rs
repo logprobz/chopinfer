@@ -61,6 +61,42 @@ pub(crate) fn launches() -> u64 {
     LAUNCHES.get()
 }
 
+/// Where a test fails a streamed launch as an error of its lowering or
+/// audits would (`with_failure`).
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum Failure {
+    /// The lowering of group `n`, counting from zero.
+    Group(usize),
+    /// The head's audit, once the body issued.
+    Head,
+}
+
+#[cfg(test)]
+thread_local! { static FAILURE: std::cell::Cell<Option<Failure>> = const { std::cell::Cell::new(None) }; }
+
+/// Runs `run` with each streamed launch failing at `failure`.
+#[cfg(test)]
+pub(crate) fn with_failure<T>(failure: Failure, run: impl FnOnce() -> T) -> T {
+    struct Reset(Option<Failure>);
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            FAILURE.set(self.0);
+        }
+    }
+    let _reset = Reset(FAILURE.replace(Some(failure)));
+    run()
+}
+
+/// The failure `with_failure` injects at `at`.
+#[cfg(test)]
+fn injected(at: Failure) -> Result<(), String> {
+    if FAILURE.get() == Some(at) {
+        return Err(format!("an injected streamed failure at {at:?}"));
+    }
+    Ok(())
+}
+
 fn lead() -> usize {
     #[cfg(test)]
     return TEST_LEAD.get();
@@ -218,6 +254,8 @@ impl Stream<'_> {
     /// blocks; false once every group is lowered.
     fn lower(&mut self) -> Result<bool, BundleAbiError> {
         let lowered = (|| {
+            #[cfg(test)]
+            injected(Failure::Group(self.groups))?;
             let more = self
                 .lowerer
                 .lower_next(self.instance, self.run, self.layout)?;
@@ -451,6 +489,8 @@ impl Stream<'_> {
         let plan = lowerer
             .assemble(instance, run, layout, dma_plan)
             .map_err(|error| fail(instance, &mut unit, error))?;
+        #[cfg(test)]
+        injected(Failure::Head).map_err(|error| fail(instance, &mut unit, error))?;
         let engram = match (engram, gathers) {
             (Some(engram), Some((gathers, _))) => {
                 let made = (|| {

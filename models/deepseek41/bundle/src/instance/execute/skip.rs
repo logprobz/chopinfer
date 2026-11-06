@@ -29,7 +29,10 @@ use lower::Lowerer;
 pub(super) use lower::sweep;
 pub(super) use stream::launch as launch_streamed;
 #[cfg(test)]
-pub(crate) use stream::{launches as streamed_launches, with_lead};
+pub(crate) use stream::{
+    Failure as StreamedFailure, launches as streamed_launches,
+    with_failure as with_streamed_failure, with_lead,
+};
 
 #[cfg(test)]
 thread_local! { static PATCHES: std::cell::Cell<bool> = const { std::cell::Cell::new(true) }; }

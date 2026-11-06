@@ -8,6 +8,13 @@ use std::collections::BTreeMap;
 pub const SHARED_OVERLAP_MAX_ROWS: &str = "shared_overlap_max_rows";
 pub const PREFILL_PLAN_CACHE_PLANS: &str = "prefill_plan_cache_plans";
 pub const PREFILL_PLAN_CACHE_VERIFY: &str = "prefill_plan_cache_verify";
+/// Candidate: Flash prefill steps whose rows the candidate table admits
+/// (`norm.input_range.prefill`) run each sublayer input norm and its
+/// quantizer as the fused prefill norm-ceil, as the measured rows of
+/// `norm.input_admit.prefill` do, instead of the row norm, widen and
+/// serial quantizer. Normed, widened, codes, scales and row status are
+/// unchanged.
+pub const PREFILL_NORM_CEIL_ROWS: &str = "prefill_norm_ceil_rows";
 pub const DSPARK_GRAPH_HANDLES_PER_RANK: &str = "dspark_graph_handles_per_rank";
 pub const DIAGNOSTIC_STEP_LOGS: &str = "diagnostic_step_logs";
 /// Candidate: Flash TP4 verify steps above the 64-row decode route run the
@@ -62,6 +69,7 @@ pub struct Options {
     pub shared_overlap_max_rows: u32,
     pub prefill_plan_cache_plans: usize,
     pub prefill_plan_cache_verify: bool,
+    pub prefill_norm_ceil_rows: bool,
     pub dspark_graph_handles_per_rank: usize,
     pub diagnostic_step_logs: bool,
     pub wide_verify: bool,
@@ -75,7 +83,7 @@ pub struct Options {
     pub dspark_mixed_prepared_engram: bool,
 }
 
-pub fn declarations() -> [ModelOptionV1; 14] {
+pub fn declarations() -> [ModelOptionV1; 15] {
     [
         (
             DIAGNOSTIC_STEP_LOGS,
@@ -115,6 +123,10 @@ pub fn declarations() -> [ModelOptionV1; 14] {
         ),
         (
             PHASED_DECODE_REDUCE,
+            OptionDefinitionV1::Boolean { default: false },
+        ),
+        (
+            PREFILL_NORM_CEIL_ROWS,
             OptionDefinitionV1::Boolean { default: false },
         ),
         (
@@ -183,6 +195,7 @@ impl Options {
             prefill_plan_cache_verify: values[PREFILL_PLAN_CACHE_VERIFY]
                 .as_bool()
                 .expect("checked boolean"),
+            prefill_norm_ceil_rows: flag(PREFILL_NORM_CEIL_ROWS),
             dspark_graph_handles_per_rank: count(DSPARK_GRAPH_HANDLES_PER_RANK)?,
             diagnostic_step_logs: values[DIAGNOSTIC_STEP_LOGS]
                 .as_bool()
@@ -305,6 +318,7 @@ mod tests {
             shared_overlap_max_rows: u32::MAX,
             prefill_plan_cache_plans: 16,
             prefill_plan_cache_verify: false,
+            prefill_norm_ceil_rows: false,
             dspark_graph_handles_per_rank: 512,
             diagnostic_step_logs: false,
             wide_verify: false,
@@ -329,6 +343,7 @@ mod tests {
             (SHARED_OVERLAP_MAX_ROWS.into(), "8".into()),
             (PREFILL_PLAN_CACHE_PLANS.into(), "2".into()),
             (PREFILL_PLAN_CACHE_VERIFY.into(), "true".into()),
+            (PREFILL_NORM_CEIL_ROWS.into(), "true".into()),
             (DSPARK_GRAPH_HANDLES_PER_RANK.into(), "0".into()),
             (DIAGNOSTIC_STEP_LOGS.into(), "true".into()),
             (WIDE_VERIFY.into(), "true".into()),
@@ -348,6 +363,7 @@ mod tests {
                 shared_overlap_max_rows: 8,
                 prefill_plan_cache_plans: 2,
                 prefill_plan_cache_verify: true,
+                prefill_norm_ceil_rows: true,
                 dspark_graph_handles_per_rank: 0,
                 diagnostic_step_logs: true,
                 wide_verify: true,
@@ -374,6 +390,7 @@ mod tests {
             (PREFILL_PLAN_CACHE_PLANS, "65"),
             (PREFILL_PLAN_CACHE_PLANS, "1.5"),
             (PREFILL_PLAN_CACHE_VERIFY, "1"),
+            (PREFILL_NORM_CEIL_ROWS, "1"),
             (DIAGNOSTIC_STEP_LOGS, "\"true\""),
             (WIDE_VERIFY, "1"),
             (WIDE_DRAFT, "1"),

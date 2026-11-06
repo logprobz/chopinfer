@@ -213,7 +213,10 @@ fn same_launches(what: &str, candidate: &[String], default: &[String]) {
 #[test]
 fn compact_range_replaces_only_the_admitted_projection_calls() {
     let mut ranged = 0;
-    for rows in [1152, 1153, 1280, 1500, 2048, 2369, 2944, 3072, 3200, 3201] {
+    for rows in [
+        1152, 1153, 1279, 1280, 1281, 1500, 2048, 2368, 2369, 2400, 2401, 2943, 2944, 2945, 3071,
+        3072, 3073, 3199, 3200, 3201,
+    ] {
         let [base_prefill, base_decode] = compact_range_launches(rows, false);
         let [prefill, decode] = compact_range_launches(rows, true);
         same_launches(
@@ -268,5 +271,5 @@ fn compact_range_replaces_only_the_admitted_projection_calls() {
         }
         ranged += 1;
     }
-    assert_eq!(ranged, 7);
+    assert_eq!(ranged, 17);
 }

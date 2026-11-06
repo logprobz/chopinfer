@@ -127,7 +127,7 @@ pub fn declarations() -> [ModelOptionV1; 20] {
         ),
         (
             DSPARK_EARLY_PREFILL_PLAN,
-            OptionDefinitionV1::Boolean { default: false },
+            OptionDefinitionV1::Boolean { default: true },
         ),
         (
             DSPARK_GRAPH_HANDLES_PER_RANK,
@@ -386,7 +386,7 @@ mod tests {
             dspark_markov_staged: false,
             dspark_mixed_prepared_engram: true,
             dspark_early_prefill_engram: true,
-            dspark_early_prefill_plan: false,
+            dspark_early_prefill_plan: true,
             prefill_streamed_lowering: false,
         };
         assert_eq!(Options::read(&defaults).unwrap(), expected);
@@ -416,7 +416,7 @@ mod tests {
             (DSPARK_MARKOV_STAGED.into(), "true".into()),
             (DSPARK_MIXED_PREPARED_ENGRAM.into(), "false".into()),
             (DSPARK_EARLY_PREFILL_ENGRAM.into(), "false".into()),
-            (DSPARK_EARLY_PREFILL_PLAN.into(), "true".into()),
+            (DSPARK_EARLY_PREFILL_PLAN.into(), "false".into()),
             (PREFILL_STREAMED_LOWERING.into(), "true".into()),
         ]);
         let resolved = declaration.resolve(&overrides).unwrap();
@@ -441,7 +441,7 @@ mod tests {
                 dspark_markov_staged: true,
                 dspark_mixed_prepared_engram: false,
                 dspark_early_prefill_engram: false,
-                dspark_early_prefill_plan: true,
+                dspark_early_prefill_plan: false,
                 prefill_streamed_lowering: true,
             }
         );

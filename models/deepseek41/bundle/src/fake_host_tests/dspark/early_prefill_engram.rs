@@ -437,6 +437,7 @@ fn opted_out<'a>(options: &[(&'a str, serde_json::Value)]) -> Vec<(&'a str, serd
     [
         (DSPARK_MIXED_PREPARED_ENGRAM, false.into()),
         (DSPARK_EARLY_PREFILL_ENGRAM, false.into()),
+        (DSPARK_EARLY_PREFILL_PLAN, false.into()),
     ]
     .into_iter()
     .chain(options.iter().cloned())

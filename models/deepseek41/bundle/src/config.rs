@@ -428,7 +428,7 @@ pub(crate) mod tests {
             (DSPARK_MARKOV_STAGED, true.into()),
             (DSPARK_MIXED_PREPARED_ENGRAM, false.into()),
             (DSPARK_EARLY_PREFILL_ENGRAM, false.into()),
-            (DSPARK_EARLY_PREFILL_PLAN, true.into()),
+            (DSPARK_EARLY_PREFILL_PLAN, false.into()),
             (PREFILL_STREAMED_LOWERING, true.into()),
         ] {
             changed = with_option(changed, name, value);
@@ -454,7 +454,7 @@ pub(crate) mod tests {
                 dspark_markov_staged: true,
                 dspark_mixed_prepared_engram: false,
                 dspark_early_prefill_engram: false,
-                dspark_early_prefill_plan: true,
+                dspark_early_prefill_plan: false,
                 prefill_streamed_lowering: true,
             }
         );

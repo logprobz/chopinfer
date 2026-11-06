@@ -17,6 +17,8 @@ use model_deepseek41_contract::execution_options::{
 };
 use runtime_bundle_sdk::prefill::{Boundary, encode};
 
+mod plan;
+
 /// KV pages of a slot: slot `s` takes pages from `s * SLOT_PAGES`, room
 /// for a prompt of about 100K tokens.
 const SLOT_PAGES: u64 = 1600;
@@ -86,6 +88,12 @@ fn step(prefills: &[Prefill], verify: bool, then: Then) -> Step {
 /// The negotiated prefill envelope of `prefills` beside verify items of
 /// `(slot, committed tokens, rows)`.
 fn batch(prefills: &[Prefill], verifies: &[(u64, u64, u32)]) -> Vec<u8> {
+    let (original, boundaries) = original(prefills, verifies);
+    encode(&original, &boundaries).unwrap()
+}
+
+/// The original batch of `batch`, and its prefills' boundaries.
+fn original(prefills: &[Prefill], verifies: &[(u64, u64, u32)]) -> (Vec<u8>, Vec<Boundary>) {
     let mut items = Vec::new();
     let mut appends = Vec::new();
     let mut slots = Vec::new();
@@ -130,7 +138,7 @@ fn batch(prefills: &[Prefill], verifies: &[(u64, u64, u32)]) -> Vec<u8> {
         .with_state_slots(slots)
         .encode()
         .unwrap();
-    encode(&original, &boundaries).unwrap()
+    (original, boundaries)
 }
 
 /// What a recorded step runs.

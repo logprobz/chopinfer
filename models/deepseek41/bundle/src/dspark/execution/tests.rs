@@ -26,6 +26,8 @@ struct FakeHost {
     prefetch: bool,
     /// Journal `begin_prefill_engram` calls of steps with prefill rows.
     early: bool,
+    /// Journal `plan_prefill` calls.
+    plan: bool,
 }
 
 impl FakeHost {
@@ -173,6 +175,13 @@ impl Host for FakeHost {
             ids[0][WIDTH - 1] = u32::MAX;
         }
         Ok(Some(ids))
+    }
+
+    fn plan_prefill(&mut self) -> Result<(), Self::Error> {
+        if !self.plan {
+            return Ok(());
+        }
+        self.event("plan_prefill", String::new())
     }
 
     fn read_draft_ids(&mut self, ids: &mut [[u32; WIDTH]]) -> Result<(), Self::Error> {
@@ -987,6 +996,51 @@ fn prefill_rows_reach_the_host_before_catch_up_and_drafting() {
     host.fail = Some("early");
     assert!(runtime.execute(&mut host, &rows).is_err());
     assert_eq!(host.journal, ["early 43:[8, 9]"]);
+    assert!(runtime.state().is_poisoned());
+}
+
+/// A drafting step offers its prefill's planning once the drafter's
+/// launch returned and before its ids are read; a step without drafts
+/// makes no offer. A failed offer poisons before the readback.
+#[test]
+fn drafting_steps_offer_prefill_planning_between_the_draft_and_its_readback() {
+    let (mut runtime, mut host) = setup();
+    host.plan = true;
+    let (mut plain_runtime, mut plain) = setup();
+    let drafts = runtime.execute(&mut host, &[input(5)]).unwrap();
+    assert_eq!(
+        drafts,
+        plain_runtime.execute(&mut plain, &[input(5)]).unwrap()
+    );
+    let at = |entry: &str| {
+        host.journal
+            .iter()
+            .position(|line| line.starts_with(entry))
+            .unwrap()
+    };
+    assert_eq!(at("plan_prefill"), at("draft ") + 1);
+    assert_eq!(at("read_ids "), at("plan_prefill") + 1);
+    let mut journal = host.journal.clone();
+    journal.retain(|line| !line.starts_with("plan_prefill"));
+    assert_eq!(journal, plain.journal);
+    runtime.commit(&mut host, &[(41, 6)]).unwrap();
+    let mut item = input(0);
+    item.rows.start = 9;
+    let before = host.journal.len();
+    runtime.execute(&mut host, &[item]).unwrap();
+    assert!(
+        !host.journal[before..]
+            .iter()
+            .any(|entry| entry.starts_with("plan_prefill"))
+    );
+    let (mut runtime, mut host) = setup();
+    host.plan = true;
+    host.fail = Some("plan_prefill");
+    assert!(runtime.execute(&mut host, &[input(5)]).is_err());
+    assert_eq!(
+        host.journal.last().map(String::as_str),
+        Some("plan_prefill ")
+    );
     assert!(runtime.state().is_poisoned());
 }
 

@@ -49,6 +49,16 @@ pub(crate) mod plan_templates;
 pub(crate) mod plan_timing;
 pub(crate) mod skip;
 
+#[cfg(test)]
+thread_local! { static EARLY_PLANS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) }; }
+
+/// The prefills planned while their drafter ran on this thread
+/// (`Instance::stage_early_prefill`).
+#[cfg(test)]
+pub(crate) fn early_prefill_plans() -> u64 {
+    EARLY_PLANS.get()
+}
+
 /// Phase-arena indexes (`Instance::arenas`).
 const PREFILL: usize = 0;
 const DECODE: usize = 1;
@@ -879,6 +889,8 @@ impl Instance {
         inputs: &mut PhaseInputs,
         hashed: &Hashed,
     ) -> StagedPrefill {
+        #[cfg(test)]
+        EARLY_PLANS.set(EARLY_PLANS.get() + 1);
         let advance_step = std::cell::Cell::new(false);
         let run = self
             .prepare_run(inputs, None, Some(hashed.clone()), || {

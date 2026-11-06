@@ -174,7 +174,6 @@ them. A non-default value is unqualified.
 | `phased_decode_reduce` | `false` | Candidate: Flash TP4 decode and verify all-reduces whose round no HC boundary takes launch the phased F32 rounding entries, over comm state of their own, instead of the F32 reduce-scatter, all-gather and round row. They give the same bits; the deferred pairs and prefill are unchanged. Not adopted. |
 | `prefill_chunk_tokens` | `8192` | Guaranteed chunk ends: 0, 2048 or 8192 tokens. |
 | `prefill_compact_dense_rows` | `false` | Candidate: Flash TP4 prefill steps whose row counts the candidate table admits (`dense_prefill.compact_range.prefill`) run those projections on the compact prefill entry at the step's exact rows instead of the 128-row tiles and their exact-row tail folds. The table admits `wkv` at 1153 to 3071 and 3073 to 3199 rows, the shared gate/up at 1153 to 2943 and 2945 to 3200, `wq_a` at 1153 to 1279, 1281 to 2368 and 2401 to 3200, and `wo_a` at 1153 to 3200. On 2026-11-06 the lab matched every output and status byte at every count from 1153 to 3200 rows for all four projections. A timing grid over that span (every 32 rows, each multiple of 128 and the count after it, with an A/A control) set the ranges: each grid count where the compact entry was slower at every visit is left out, with the counts before the next grid count. Not adopted. |
-| `prefill_dma_producer_intervals` | `false` | Candidate: Flash TP4 DMA prefill reductions of any row count split their MoE producer (the routed sum with its shared expert addend) over the transport's owner intervals, `ceil(rows / 4)` rows clipped at the end, at every layer, instead of only at multiples of 32 rows where the sum writes the call's rows; every row's bytes and the owner sums are unchanged. In the 2026-11-06 live-shape mixed-step profile at 1500, 2300 and 3000 rows no reduction split, and the sum took 106 to 197 us per call, which bounds the overlap at about 3 to 5 ms per pass. Not yet measured on a GPU. |
 | `prefill_plan_cache_plans` | `16` | Kept short-prompt plans, from 1 to 64; evict the least recently used plan when full. |
 | `prefill_plan_cache_verify` | `false` | Lower each cache hit and each reused plan template again and refuse a differing plan. |
 | `prefill_upper_skip` | `true` | Use upper-skip prefill; requires nonzero guaranteed chunk ends. |
@@ -203,6 +202,22 @@ count from 33 to 8192, and in the pair lab with an A/A control it took 51,
 2300 and 3000 rows; in the live-shape mixed-step profile of that day the
 unfused chain spanned 148 to 179 us per site, about 100 sites per rank. It
 was timed with the other prefill kernel routes ([served
+timing](#served-timing)).
+
+TP4 DMA prefill reductions split their MoE producer (the routed sum with
+its shared expert addend) over the transport's owner intervals,
+`ceil(rows / 4)` rows clipped at the end, at any row count and at every
+layer: every prefill's routed sum writes exactly its rows of the partial,
+so each destination can pull an interval as soon as its source has
+produced and rounded it. Every row's bytes and the owner sums are
+unchanged. The split was adopted on 2026-11-06 from the
+`prefill_dma_producer_intervals` candidate option, which ran it at the
+same rows, and which was then removed; before, the producer split only at
+multiples of 32 rows and only in the upper layers, whose routed sum
+already wrote exactly its rows. In the live-shape mixed-step profile of
+2026-11-06 at 1500, 2300 and 3000 rows no reduction split, and the sum
+took 106 to 197 us per call, which bounds the overlap at about 3 to 5 ms
+per pass. It was timed with the other prefill kernel routes ([served
 timing](#served-timing)).
 
 The bundle no longer reads execution settings from

@@ -1,21 +1,5 @@
 use super::*;
-use model_deepseek41_contract::execution_options::PREFILL_DMA_PRODUCER_INTERVALS;
 use runtime_bundle_sdk::prefill::{Boundary, encode};
-
-thread_local! {
-    /// Model options `create_with_services` adds to its record, for the
-    /// captures inside `with_options`.
-    static OPTIONS: std::cell::RefCell<Vec<(&'static str, serde_json::Value)>> =
-        const { std::cell::RefCell::new(Vec::new()) };
-}
-
-/// `run` with `options` added to every instance it creates.
-fn with_options<T>(options: &[(&'static str, serde_json::Value)], run: impl FnOnce() -> T) -> T {
-    OPTIONS.with(|o| *o.borrow_mut() = options.to_vec());
-    let out = run();
-    OPTIONS.with(|o| o.borrow_mut().clear());
-    out
-}
 
 fn create_sparse(host: &Rc<Host>) -> BundleInstanceV1 {
     create_with_services(host, HostServicesTableV1::new(Rc::clone(host)))
@@ -34,11 +18,6 @@ pub(super) fn create_with_services(
         serde_json::from_slice(&record[at + MODEL_OPTIONS_TAG_V1.len() + 4..]).unwrap();
     options["prefill_chunk_tokens"] = 8192.into();
     options["prefill_upper_skip"] = true.into();
-    OPTIONS.with(|extra| {
-        for (name, value) in extra.borrow().iter() {
-            options[*name] = value.clone();
-        }
-    });
     let options = serde_json::to_vec(&options).unwrap();
     record.truncate(at + MODEL_OPTIONS_TAG_V1.len());
     record.extend_from_slice(&(options.len() as u32).to_le_bytes());
@@ -862,14 +841,12 @@ fn grid_rows(line: &str) -> u64 {
 /// The MoE producer before every DMA call (512 rows or more) splits over
 /// the transport's owner intervals at any row count and at every layer,
 /// each part an exact slice of the unsplit launch, which writes exactly its
-/// rows of the partial; every other launch is the unsplit journal's. The
-/// `prefill_dma_producer_intervals` option, adopted, changes nothing.
+/// rows of the partial; every other launch is the unsplit journal's.
 #[test]
 fn producer_intervals_split_every_moe_call_at_any_row_count() {
     use super::super::query_window::arguments;
     let spans = super::super::shared_overlap::journal_spans;
     let hidden = u64::from(FLASH.shape.hidden);
-    let on = [(PREFILL_DMA_PRODUCER_INTERVALS, true.into())];
     let without = |journal: &[String]| {
         compute(journal)
             .into_iter()
@@ -904,15 +881,5 @@ fn producer_intervals_split_every_moe_call_at_any_row_count() {
             "rows={rows}"
         );
         assert_eq!(without(&unsplit), without(&split), "rows={rows}");
-        let (option_unsplit, option_split) =
-            with_options(&on, || (capture(rows, Some(false)), capture(rows, None)));
-        assert!(
-            option_unsplit == unsplit,
-            "rows={rows}: the option changed the unsplit journal"
-        );
-        assert!(
-            option_split == split,
-            "rows={rows}: the option changed the split journal"
-        );
     }
 }

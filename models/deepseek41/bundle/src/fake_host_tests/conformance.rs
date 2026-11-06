@@ -19,7 +19,6 @@ mod allocated;
 mod anchored;
 mod drafter;
 mod prefill_compact_rows;
-mod prefill_dma_intervals;
 mod templated;
 mod wide;
 

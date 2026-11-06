@@ -3,39 +3,27 @@ use super::{Asks, Bind, Lowered, exact};
 use crate::program::Phase;
 use kernel_core::backend::{Backend, Counts, Prepared, Refused, View};
 use kernel_core::{contract::Refusal, rmsnorm_quantize::RmsNormQuantizeBuffers};
-use model_deepseek41_contract::{geometry::FLASH, rows, serving::PREFILL_TOKENS};
+use model_deepseek41_contract::{
+    geometry::{FLASH, Geometry},
+    rows,
+    serving::PREFILL_TOKENS,
+};
 use runtime_bundle_abi::DeviceBufferSpanV1;
 
-/// Whether `shape`'s prefill of `phase`'s rows runs the fused norm-ceil:
-/// at the rows of any of its [`sites`].
-pub(crate) fn qualified(shape: &crate::shape::Shape, phase: Phase) -> bool {
+pub(crate) fn qualified(g: &Geometry, phase: Phase) -> bool {
     use model_deepseek41_contract::tuning::{self, Family};
-    let g = shape.geometry;
     g == &FLASH
         && phase.prefill()
-        && sites(shape).any(|op| {
-            tuning::select(
-                g,
-                Family::Norm,
-                op,
-                "bf16",
-                &[("width", g.shape.hidden)],
-                PREFILL_TOKENS,
-                phase.rows(),
-            )
-            .is_some()
-        })
-}
-
-/// The table sites whose rows admit `shape`'s fused prefill norm-ceil: the
-/// measured rows, and with the `prefill_norm_ceil_rows` candidate also its
-/// range (`norm.input_range.prefill`).
-pub(crate) fn sites(shape: &crate::shape::Shape) -> impl Iterator<Item = &'static str> {
-    std::iter::once("norm.input_admit.prefill").chain(
-        shape
-            .prefill_norm_ceil_rows
-            .then_some("norm.input_range.prefill"),
-    )
+        && tuning::select(
+            g,
+            Family::Norm,
+            "norm.input_admit.prefill",
+            "bf16",
+            &[("width", g.shape.hidden)],
+            PREFILL_TOKENS,
+            phase.rows(),
+        )
+        .is_some()
 }
 
 pub(crate) struct NormPrefillOps {
@@ -104,14 +92,9 @@ mod tests {
     use super::*;
     #[test]
     fn admit_prefill_rows_from_33() {
-        use bundle_runtime::geometry::Ranks;
-        let shape = crate::shape::Shape::new(&FLASH, Ranks::TP4).unwrap();
-        let candidate = shape.with_prefill_norm_ceil_rows(true);
         for rows in 1..=8192 {
-            assert_eq!(qualified(&shape, Phase::Prefill { rows }), rows > 32);
-            assert_eq!(qualified(&candidate, Phase::Prefill { rows }), rows > 32);
-            assert!(!qualified(&shape, Phase::Decode(rows)));
-            assert!(!qualified(&candidate, Phase::Decode(rows)));
+            assert_eq!(qualified(&FLASH, Phase::Prefill { rows }), rows > 32);
+            assert!(!qualified(&FLASH, Phase::Decode(rows)));
         }
     }
 }

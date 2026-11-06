@@ -1,11 +1,11 @@
-//! GPU lab exactness and pair timing of the `prefill_norm_ceil_rows`
-//! candidate: the fused prefill norm-ceil (`sm120::norm_prefill`, the served
-//! cached entry) against the unfused chain it replaces at the new rows: the
-//! row RMSNorm, the rounding widen of its rows and the serial sublayer input
+//! GPU lab exactness and pair timing of the fused prefill norm-ceil
+//! (`sm120::norm_prefill`, the served cached entry) against the unfused
+//! chain it replaces at the rows `norm.input_admit.prefill` admits: the row
+//! RMSNorm, the rounding widen of its rows and the serial sublayer input
 //! quantizer (`sm120::norm_prefill::chain`).
 //!
 //! The ignored `norm_prefill_rows_bitwise_every_row` test, on one GPU,
-//! compares the two at every row count the candidate admits, 33 to 8192, or
+//! compares the two at every row count the table admits, 33 to 8192, or
 //! `CHOPINFER_NORM_ROWS_SWEEP=FIRST..=LAST`: the normed BF16 rows, widened
 //! F32 rows, codes, scales and row status must be equal bit for bit, a guard
 //! row and the guard status words must keep each arm's poison, and every row
@@ -36,7 +36,7 @@ use std::{
 
 /// Status words before the first row, so a stray write is visible.
 const OFFSET: usize = 3;
-/// The first row count the candidate admits: fewer rows take the
+/// The first row count the table admits: fewer rows take the
 /// small-bucket quantizer in the chain.
 const FIRST: u32 = 33;
 /// Rows `r` with `r % REFUSED == 1` carry one nonfinite input value.
@@ -288,7 +288,7 @@ fn launches(
 }
 
 #[test]
-fn the_sweep_covers_every_candidate_row_with_the_served_entries() {
+fn the_sweep_covers_every_admitted_row_with_the_served_entries() {
     assert_eq!(sweep_rows().unwrap(), 33..=8192);
     let (fused, chain) = (fused(), chain());
     assert_eq!(

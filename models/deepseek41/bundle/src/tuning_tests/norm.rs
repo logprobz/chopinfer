@@ -64,16 +64,6 @@ fn domains() -> std::collections::BTreeSet<Key> {
                 PREFILL_TOKENS,
             );
         }
-        // The `prefill_norm_ceil_rows` candidate's range of the input norm.
-        if site == "input" {
-            add(
-                &mut out,
-                "norm.input_range.prefill",
-                weights,
-                &shape,
-                PREFILL_TOKENS,
-            );
-        }
     }
     add(
         &mut out,
@@ -145,7 +135,6 @@ const UNTUNED: &[&str] = &[
     "norm.ceil_cached_f32.decode none ranks=4,width=2048 t64: 1..=64",
     "norm.input_admit.prefill bf16 width=5120 t8192: 1..=32",
     "norm.input_cached.decode bf16 width=5120 t64: 2..=7,9..=64",
-    "norm.input_range.prefill bf16 width=5120 t8192: 1..=32",
     "norm.input_small.decode bf16 ranks=1,width=5120 t4: 1..=4",
     "norm.input_small.decode bf16 ranks=2,width=5120 t4: 1..=4",
     "norm.input_small.decode bf16 ranks=4,width=5120 t4: 1,3",

@@ -79,7 +79,6 @@
     {"op": "norm.input_admit.prefill", "weights": "bf16", "shape": {"width": 5120}, "bucket": 8192, "rows": [33, 8192], "schedule": "admit", "knobs": {}},
     {"op": "norm.input_cached.decode", "weights": "bf16", "shape": {"width": 5120}, "bucket": 64, "rows": [1, 1], "schedule": "cached", "knobs": {"warps": 32}},
     {"op": "norm.input_cached.decode", "weights": "bf16", "shape": {"width": 5120}, "bucket": 64, "rows": [8, 8], "schedule": "cached", "knobs": {"warps": 32}},
-    {"op": "norm.input_range.prefill", "weights": "bf16", "shape": {"width": 5120}, "bucket": 8192, "rows": [33, 8192], "schedule": "admit", "knobs": {}},
     {"op": "norm.input_small.decode", "weights": "bf16", "shape": {"ranks": 4, "width": 5120}, "bucket": 4, "rows": [2, 2], "schedule": "cached", "knobs": {"warps": 32}},
     {"op": "norm.input_small.decode", "weights": "bf16", "shape": {"ranks": 4, "width": 5120}, "bucket": 4, "rows": [4, 4], "schedule": "cached", "knobs": {"warps": 32}},
     {"op": "norm.input_strategy.prefill", "weights": "bf16", "shape": {"width": 5120}, "bucket": 8192, "schedule": "cached", "knobs": {}},

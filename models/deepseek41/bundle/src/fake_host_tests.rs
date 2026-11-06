@@ -51,7 +51,6 @@ mod prefill_dma;
 mod prefill_gate_journal;
 mod prefill_long;
 mod prefill_matrix;
-mod prefill_norm_ceil_rows;
 mod prefill_plan_cache;
 mod prefill_plan_templates;
 mod prefill_reduce;

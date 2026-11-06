@@ -444,18 +444,14 @@ impl crate::Kernels {
     pub(crate) fn prefill_norm_route_rows(
         shape: &crate::shape::Shape,
     ) -> Vec<std::ops::RangeInclusive<u32>> {
-        crate::ops::norm_prefill::sites(shape)
-            .flat_map(|op| {
-                Self::table_route_rows(
-                    shape.geometry,
-                    model_deepseek41_contract::tuning::Family::Norm,
-                    op,
-                    "bf16",
-                    &[("width", shape.geometry.shape.hidden)],
-                    model_deepseek41_contract::serving::PREFILL_TOKENS,
-                )
-            })
-            .collect()
+        Self::table_route_rows(
+            shape.geometry,
+            model_deepseek41_contract::tuning::Family::Norm,
+            "norm.input_admit.prefill",
+            "bf16",
+            &[("width", shape.geometry.shape.hidden)],
+            model_deepseek41_contract::serving::PREFILL_TOKENS,
+        )
     }
 
     pub(crate) fn norm_route_symbol(shape: &crate::shape::Shape) -> String {

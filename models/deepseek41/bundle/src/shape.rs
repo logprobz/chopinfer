@@ -35,10 +35,6 @@ pub struct Shape {
     /// Whether decode and verify steps' complete all-reduces take the phased
     /// F32 rounding entries (the `phased_decode_reduce` candidate option).
     pub phased_decode_reduce: bool,
-    /// Whether prefill steps whose rows the candidate table admits run the
-    /// fused prefill norm-ceil (the `prefill_norm_ceil_rows` candidate
-    /// option).
-    pub prefill_norm_ceil_rows: bool,
     /// Whether drafter Markov steps of two or more items run the staged
     /// step over each position's base logits in place (the
     /// `dspark_markov_staged` candidate option).
@@ -79,7 +75,6 @@ impl Shape {
             prefill_compact_dense_rows: false,
             wide_draft: false,
             phased_decode_reduce: false,
-            prefill_norm_ceil_rows: false,
             dspark_hc_draft_rows: false,
             dspark_moe_direct: false,
             dspark_confidence_staged: false,
@@ -133,13 +128,6 @@ impl Shape {
     /// (`model_deepseek41_contract::execution_options::PHASED_DECODE_REDUCE`).
     pub fn with_phased_decode_reduce(mut self, enabled: bool) -> Shape {
         self.phased_decode_reduce = enabled;
-        self
-    }
-
-    /// This shape with the fused prefill norm-ceil's candidate rows on or
-    /// off (`model_deepseek41_contract::execution_options::PREFILL_NORM_CEIL_ROWS`).
-    pub fn with_prefill_norm_ceil_rows(mut self, enabled: bool) -> Shape {
-        self.prefill_norm_ceil_rows = enabled;
         self
     }
 

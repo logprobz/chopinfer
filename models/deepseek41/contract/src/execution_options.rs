@@ -8,13 +8,6 @@ use std::collections::BTreeMap;
 pub const SHARED_OVERLAP_MAX_ROWS: &str = "shared_overlap_max_rows";
 pub const PREFILL_PLAN_CACHE_PLANS: &str = "prefill_plan_cache_plans";
 pub const PREFILL_PLAN_CACHE_VERIFY: &str = "prefill_plan_cache_verify";
-/// Candidate: Flash prefill steps whose rows the candidate table admits
-/// (`norm.input_range.prefill`) run each sublayer input norm and its
-/// quantizer as the fused prefill norm-ceil, as the measured rows of
-/// `norm.input_admit.prefill` do, instead of the row norm, widen and
-/// serial quantizer. Normed, widened, codes, scales and row status are
-/// unchanged.
-pub const PREFILL_NORM_CEIL_ROWS: &str = "prefill_norm_ceil_rows";
 pub const DSPARK_GRAPH_HANDLES_PER_RANK: &str = "dspark_graph_handles_per_rank";
 pub const DIAGNOSTIC_STEP_LOGS: &str = "diagnostic_step_logs";
 /// Candidate: Flash TP4 prefill projections whose row counts the candidate
@@ -75,7 +68,6 @@ pub struct Options {
     pub shared_overlap_max_rows: u32,
     pub prefill_plan_cache_plans: usize,
     pub prefill_plan_cache_verify: bool,
-    pub prefill_norm_ceil_rows: bool,
     pub dspark_graph_handles_per_rank: usize,
     pub diagnostic_step_logs: bool,
     pub prefill_compact_dense_rows: bool,
@@ -90,7 +82,7 @@ pub struct Options {
     pub dspark_hc_draft_rows: bool,
 }
 
-pub fn declarations() -> [ModelOptionV1; 16] {
+pub fn declarations() -> [ModelOptionV1; 15] {
     [
         (
             DIAGNOSTIC_STEP_LOGS,
@@ -134,10 +126,6 @@ pub fn declarations() -> [ModelOptionV1; 16] {
         ),
         (
             PREFILL_DMA_PRODUCER_INTERVALS,
-            OptionDefinitionV1::Boolean { default: false },
-        ),
-        (
-            PREFILL_NORM_CEIL_ROWS,
             OptionDefinitionV1::Boolean { default: false },
         ),
         (
@@ -206,7 +194,6 @@ impl Options {
             prefill_plan_cache_verify: values[PREFILL_PLAN_CACHE_VERIFY]
                 .as_bool()
                 .expect("checked boolean"),
-            prefill_norm_ceil_rows: flag(PREFILL_NORM_CEIL_ROWS),
             dspark_graph_handles_per_rank: count(DSPARK_GRAPH_HANDLES_PER_RANK)?,
             diagnostic_step_logs: values[DIAGNOSTIC_STEP_LOGS]
                 .as_bool()
@@ -314,6 +301,16 @@ mod tests {
         }
     }
 
+    /// The fused prefill norm-ceil is admitted from 33 rows by the tuning
+    /// table; its candidate option is gone.
+    #[test]
+    fn removed_norm_ceil_rows_option_is_rejected() {
+        for value in ["false", "true"] {
+            let options = BTreeMap::from([("prefill_norm_ceil_rows".into(), value.into())]);
+            assert!(declaration().resolve(&options).is_err());
+        }
+    }
+
     #[test]
     fn removed_plan_template_option_is_rejected() {
         for value in ["0", "64"] {
@@ -362,7 +359,6 @@ mod tests {
             shared_overlap_max_rows: u32::MAX,
             prefill_plan_cache_plans: 16,
             prefill_plan_cache_verify: false,
-            prefill_norm_ceil_rows: false,
             dspark_graph_handles_per_rank: 512,
             diagnostic_step_logs: false,
             prefill_compact_dense_rows: false,
@@ -388,7 +384,6 @@ mod tests {
             (SHARED_OVERLAP_MAX_ROWS.into(), "8".into()),
             (PREFILL_PLAN_CACHE_PLANS.into(), "2".into()),
             (PREFILL_PLAN_CACHE_VERIFY.into(), "true".into()),
-            (PREFILL_NORM_CEIL_ROWS.into(), "true".into()),
             (DSPARK_GRAPH_HANDLES_PER_RANK.into(), "0".into()),
             (DIAGNOSTIC_STEP_LOGS.into(), "true".into()),
             (PREFILL_COMPACT_DENSE_ROWS.into(), "true".into()),
@@ -409,7 +404,6 @@ mod tests {
                 shared_overlap_max_rows: 8,
                 prefill_plan_cache_plans: 2,
                 prefill_plan_cache_verify: true,
-                prefill_norm_ceil_rows: true,
                 dspark_graph_handles_per_rank: 0,
                 diagnostic_step_logs: true,
                 prefill_compact_dense_rows: true,
@@ -437,7 +431,6 @@ mod tests {
             (PREFILL_PLAN_CACHE_PLANS, "65"),
             (PREFILL_PLAN_CACHE_PLANS, "1.5"),
             (PREFILL_PLAN_CACHE_VERIFY, "1"),
-            (PREFILL_NORM_CEIL_ROWS, "1"),
             (DIAGNOSTIC_STEP_LOGS, "\"true\""),
             (PREFILL_COMPACT_DENSE_ROWS, "1"),
             (WIDE_VERIFY, "1"),

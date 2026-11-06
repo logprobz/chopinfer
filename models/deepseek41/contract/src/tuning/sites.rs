@@ -83,7 +83,6 @@ pub(super) fn validate(row: &Row) -> Result<(), TuningError> {
         | "hc.draft_admit.verify"
         | "hc.wide_mix.verify"
         | "norm.input_admit.prefill"
-        | "norm.input_range.prefill"
         | "norm.query_admit.prefill"
         | "norm.small_admit.decode" => (&["admit"], &[], &[]),
         "hc.expand_mix.prefill" | "hc.lagged_mix.prefill" => {

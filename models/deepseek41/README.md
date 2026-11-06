@@ -175,7 +175,6 @@ them. A non-default value is unqualified.
 | `prefill_chunk_tokens` | `8192` | Guaranteed chunk ends: 0, 2048 or 8192 tokens. |
 | `prefill_compact_dense_rows` | `false` | Candidate: Flash TP4 prefill steps whose row counts the candidate table admits (`dense_prefill.compact_range.prefill`) run those projections on the compact prefill entry at the step's exact rows instead of the 128-row tiles and their exact-row tail folds. The table admits `wkv` at 1153 to 3071 and 3073 to 3199 rows, the shared gate/up at 1153 to 2943 and 2945 to 3200, `wq_a` at 1153 to 1279, 1281 to 2368 and 2401 to 3200, and `wo_a` at 1153 to 3200. On 2026-11-06 the lab matched every output and status byte at every count from 1153 to 3200 rows for all four projections. A timing grid over that span (every 32 rows, each multiple of 128 and the count after it, with an A/A control) set the ranges: each grid count where the compact entry was slower at every visit is left out, with the counts before the next grid count. Not adopted. |
 | `prefill_dma_producer_intervals` | `false` | Candidate: Flash TP4 DMA prefill reductions of any row count split their MoE producer (the routed sum with its shared expert addend) over the transport's owner intervals, `ceil(rows / 4)` rows clipped at the end, at every layer, instead of only at multiples of 32 rows where the sum writes the call's rows; every row's bytes and the owner sums are unchanged. In the 2026-11-06 live-shape mixed-step profile at 1500, 2300 and 3000 rows no reduction split, and the sum took 106 to 197 us per call, which bounds the overlap at about 3 to 5 ms per pass. Not yet measured on a GPU. |
-| `prefill_norm_ceil_rows` | `false` | Candidate: Flash prefill steps of 33 to 8192 rows (`norm.input_range.prefill`) run each sublayer input norm as the fused prefill norm-ceil, as the 22 measured rows of `norm.input_admit.prefill` do, instead of the row norm, the widening of its rows and the serial input quantizer; normed, widened, codes, scales and row status are unchanged. On two GPUs on 2026-11-06 (300 W limit), the fused launch matched the chain bit for bit at every row count from 33 to 8192, and in the pair lab with an A/A control it took 51, 69 and 85 us per launch against 180, 186 and 201 us for the chain at 1500, 2300 and 3000 rows. In the 2026-11-06 live-shape mixed-step profile every serial input quantizer at those rows follows its row norm, and the unfused chain spans 148 to 179 us per site, about 100 sites per rank. Not adopted: no served A/B yet. |
 | `prefill_plan_cache_plans` | `16` | Kept short-prompt plans, from 1 to 64; evict the least recently used plan when full. |
 | `prefill_plan_cache_verify` | `false` | Lower each cache hit and each reused plan template again and refuse a differing plan. |
 | `prefill_upper_skip` | `true` | Use upper-skip prefill; requires nonzero guaranteed chunk ends. |
@@ -187,6 +186,24 @@ them. A non-default value is unqualified.
 | `verify_graph_rows` | `64` | Widest graphed verify step; wider admitted steps run eagerly. |
 | `wide_draft` | `false` | Candidate, requires `wide_verify`: a Flash TP4 drafter step of more than twelve drafting items runs them in the fewest forwards the widest wide verify bucket holds (25 items at 128 verify rows, 32 at 192), on the wide dense folds and the head's exact F32 row tiles, instead of chunks of at most twelve. Bitwise equal to the default; kept off with `wide_verify`. |
 | `wide_verify` | `false` | Candidate: Flash TP4 eager verify steps of 65 to 192 rows prepare their row-local stages and HC boundaries at the wide verify buckets (128 rows and the verify rows) and launch the decode entries a 64-row step uses, fold their dense projections through wide folds at those buckets, run their routed experts through the wide direct MoE queues, and run the vocabulary head, router and compressor in their exact F32 row tiles. Bitwise equal to the default; kept off because served depth sweeps chose no step above 64 rows. |
+
+Flash prefill parts of 33 to 8192 rows run each sublayer input norm as
+the fused prefill norm-ceil: one launch of one CTA per row writes the
+normed, widened, codes, scales and row status that the row norm, the
+widening of its rows and the serial input quantizer write, bit for bit.
+The norm tuning row `norm.input_admit.prefill` admits rows 33 to 8192;
+smaller parts, including a larger step's short upper-layer intervals,
+keep the chain. The route was adopted on 2026-11-06 from the
+`prefill_norm_ceil_rows` candidate option, which ran it at the same rows
+where before only 22 measured rows fused (64 plus multiples of 128 through
+2624, and 8192), and which was then removed. On two GPUs on 2026-11-06
+(300 W limit) the fused launch matched the chain bit for bit at every row
+count from 33 to 8192, and in the pair lab with an A/A control it took 51,
+69 and 85 us per launch against 180, 186 and 201 us for the chain at 1500,
+2300 and 3000 rows; in the live-shape mixed-step profile of that day the
+unfused chain spanned 148 to 179 us per site, about 100 sites per rank. It
+was timed with the other prefill kernel routes ([served
+timing](#served-timing)).
 
 The bundle no longer reads execution settings from
 `CHOPINFER_DEEPSEEK41_SHARED_OVERLAP`,

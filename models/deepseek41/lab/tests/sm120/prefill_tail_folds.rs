@@ -3,6 +3,17 @@
 //! uses the generic fold at 85 and 127 rows, then a split tail or padded TMA
 //! above 128 rows.
 //! Run the ignored test on two idle GPUs, with a 295-second process timeout.
+//!
+//! `compact_live_rows_pair` compares that served partition with the compact
+//! prefill entries (stages 2 and 3, the bundle's packed cubins) at the live
+//! prefill rows, which the compact route does not serve today: a bitwise
+//! pre-check of every output and status byte, clean and with a poisoned
+//! final row, then three visits of an A/A control and both A/B pairs in
+//! rotating order, on two idle GPUs within the same timeout.
+//! `compact_rows_pair_grid` runs the same pairs for one projection over a
+//! dense grid of row counts (`CHOPINFER_COMPACT_GRID`), and
+//! `compact_rows_bitwise_every_row` checks one compact stage bitwise at
+//! every count of a band (`CHOPINFER_COMPACT_SWEEP`) on one GPU.
 use bundle_deepseek41::sm120::{self, mxfp8_fold as registration};
 use kernel_core::{
     backend::{Backend, Counts, Launch, Need, View},
@@ -12,7 +23,7 @@ use kernel_core::{
 use kernel_harness::{Cubins, LabResult, Session, eviction::EvictionMode};
 use kernels_sm120::{
     backend::Sm120,
-    gemm::{mxfp8_fold::Entry, mxfp8_prefill as tiled},
+    gemm::{mxfp8_fold::Entry, mxfp8_prefill as tiled, mxfp8_prefill_compact::Entry as Compact},
 };
 use model_deepseek41_contract::geometry::FLASH;
 use runtime_cuda::{DeviceBuffer, Function, KernelArgument, Stream, TensorMap};
@@ -460,4 +471,617 @@ fn prefill_tail_folds_pair() {
         Ok(())
     }).unwrap().expect("the two-GPU probe must execute");
     assert!(start.elapsed() < Duration::from_secs(295));
+}
+
+/// The live prefill rows the compact pair covers: the profiled unaligned
+/// counts and their 64- or 128-row neighbors.
+const LIVE_ROWS: [u32; 7] = [1500, 1536, 2300, 2304, 2880, 3000, 3072];
+
+/// The bundle's two compact entries (stages 2 and 3) over `e`.
+fn compact_entries(e: &Entry) -> LabResult<[Compact; 2]> {
+    let mut found: Vec<Compact> = registration::compact::catalog()?
+        .into_iter()
+        .filter(|c| c.base.symbol == e.symbol)
+        .collect();
+    found.sort_by_key(|c| c.stages);
+    found
+        .try_into()
+        .map_err(|_| format!("{}: expected compact stages 2 and 3", e.symbol))
+}
+
+/// The compact candidate's launches at `rows`, prepared at the query's
+/// capacity over packed weights as the served route is.
+fn compact_calls(c: &Compact, rows: u32, b: Buffers<View>) -> LabResult<Vec<Launch>> {
+    Sm120::new()
+        .with_mxfp8_prefill(c.base.clone())
+        .with_mxfp8_prefill_compact(c.clone(), rows)
+        .with_packed_fold_weights()
+        .mxfp8_prefill_gemm(&c.base.query, Need::rows(c.base.query.m_capacity))
+        .map_err(|e| e.to_string())?
+        .launches(&b, View::EMPTY, Counts::rows(rows))
+        .map_err(|e| e.to_string())
+}
+
+#[test]
+fn compact_candidates_cover_every_tp4_prefill_projection_at_the_live_rows() {
+    let view = |handle| View {
+        handle,
+        bytes: 1 << 40,
+    };
+    let b = Buffers {
+        activations: view(1),
+        activation_scales: view(2),
+        weights: view(3),
+        weight_scales: view(4),
+        output: view(5),
+        live_rows: view(6),
+        status: view(7),
+        status_row_offset: 3,
+    };
+    let entries = registration::prefill_entries(&FLASH, 4).unwrap();
+    assert!(entries.len() >= 8);
+    for e in &entries {
+        for c in compact_entries(e).unwrap() {
+            for rows in LIVE_ROWS {
+                let calls = compact_calls(&c, rows, b).unwrap();
+                assert!(
+                    calls
+                        .iter()
+                        .any(|call| call.symbol.contains("_compact_m64_")
+                            && call.symbol.ends_with("_packed_v1")),
+                    "{} rows={rows}: {:?}",
+                    e.symbol,
+                    calls.iter().map(|call| &call.symbol).collect::<Vec<_>>()
+                );
+                for call in &calls {
+                    call.plan.validate_geometry().unwrap();
+                    assert_eq!(call.plan.workspace_bytes, 0);
+                    assert!(
+                        sm120::fold_cubin_for_symbol(&call.symbol).is_some(),
+                        "{}",
+                        call.symbol
+                    );
+                }
+            }
+        }
+    }
+}
+
+/// The served partition (arm 0) and `compacts` at `rows`, each writing its
+/// own output and status over the same operands, after checking that every
+/// arm writes the same bytes, clean and with a nonfinite scale in the final
+/// row. The operands are left clean.
+fn compact_arms(
+    arena: &mut Arena<'_>,
+    backend: &Sm120,
+    e: &Entry,
+    compacts: &[&Compact],
+    rows: u32,
+    [weights, weight_scales]: [View; 2],
+) -> LabResult<Vec<Calls>> {
+    let q = e.query;
+    let session = arena.session;
+    let size = e.bytes(rows);
+    let mut status = vec![0; size.status as usize + 24];
+    status[..12].fill(0xa5);
+    status[size.status as usize + 12..].fill(0xa5);
+    let mut scales = pattern(size.activation_scales, 33, true);
+    let input = Buffers {
+        activations: arena.bytes(&pattern(size.activations, 173, false))?,
+        activation_scales: arena.bytes(&scales)?,
+        weights,
+        weight_scales,
+        output: View::EMPTY,
+        live_rows: arena.bytes(&rows.to_le_bytes())?,
+        status: View::EMPTY,
+        status_row_offset: 3,
+    };
+    let mut arms = Vec::new();
+    for arm in 0..=compacts.len() {
+        let b = Buffers {
+            output: arena.filled(size.output, 0xff)?,
+            status: arena.bytes(&status)?,
+            ..input
+        };
+        let launches = if arm == 0 {
+            calls(arena, backend, e, rows, b, true)?
+        } else {
+            compact_calls(compacts[arm - 1], rows, b)?
+        };
+        arms.push((b, Calls::new(arena, launches)?));
+    }
+    let run = |arena: &Arena<'_>| -> LabResult<Vec<(Vec<u8>, Vec<u8>)>> {
+        for (_, plan) in &arms {
+            plan.issue(arena, &session.stream)?;
+        }
+        session.stream.synchronize().map_err(|e| e.to_string())?;
+        arms.iter()
+            .map(|(b, _)| Ok((arena.read(b.output)?, arena.read(b.status)?)))
+            .collect()
+    };
+    let label = format!("compact-n{}-k{}-g{}-r{rows}", q.n, q.k, q.groups);
+    let clean = run(&*arena)?;
+    let (expected, expected_status) = &clean[0];
+    if expected
+        .chunks_exact(4)
+        .any(|word| !f32::from_le_bytes(word.try_into().unwrap()).is_finite())
+        || expected.iter().all(|byte| *byte == 0)
+        || *expected_status != status
+    {
+        return Err(format!(
+            "{label}: the served partition's clean output is invalid"
+        ));
+    }
+    if let Some(arm) = clean.iter().position(|outputs| outputs != &clean[0]) {
+        return Err(format!(
+            "{label}: compact stages {} differ from the served partition",
+            compacts[arm - 1].stages
+        ));
+    }
+    // A nonfinite scale in the final row must set its status and zero its
+    // output in every arm alike.
+    let poison_row = rows - 1;
+    let scale_at = poison_row as usize * q.activation_row_stride as usize / 32;
+    let clean_scale = scales[scale_at];
+    scales[scale_at] = 255;
+    arena.write(input.activation_scales, &scales)?;
+    for (b, _) in &arms {
+        arena.write(b.output, &vec![0xff; size.output as usize])?;
+    }
+    let poisoned = run(&*arena)?;
+    let mut poisoned_status = status.clone();
+    let status_at = (input.status_row_offset as usize + poison_row as usize) * 4;
+    poisoned_status[status_at..status_at + 4]
+        .copy_from_slice(&kernel_core::mxfp8_gemm::NON_FINITE_INPUT.to_le_bytes());
+    let mut poisoned_output = expected.clone();
+    let output_stride = size.output as usize / rows as usize;
+    poisoned_output[poison_row as usize * output_stride..].fill(0);
+    if poisoned
+        .iter()
+        .any(|(output, flags)| *output != poisoned_output || *flags != poisoned_status)
+    {
+        return Err(format!("{label}: poisoned final row differs"));
+    }
+    scales[scale_at] = clean_scale;
+    arena.write(input.activation_scales, &scales)?;
+    for (b, _) in &arms {
+        arena.write(b.status, &status)?;
+    }
+    Ok(arms.into_iter().map(|(_, plan)| plan).collect())
+}
+
+/// Packed weights and scales of `e`, uploaded once per projection.
+fn compact_weights(arena: &mut Arena<'_>, e: &Entry) -> LabResult<[View; 2]> {
+    let q = e.query;
+    let size = e.bytes(1);
+    let weights = kernel_core::weight_transform::mxfp8_fold::Mxfp8FoldLayout {
+        groups: q.groups as usize,
+        n: q.n as usize,
+        k: q.k as usize,
+    }
+    .pack(&pattern(size.weights, 731, false))
+    .map_err(|e| e.to_string())?;
+    Ok([
+        arena.bytes(&weights)?,
+        arena.bytes(&pattern(size.weight_scales, 381, true))?,
+    ])
+}
+
+/// One projection, one compact stage and a band of rows for the every-row
+/// sweep: `CHOPINFER_COMPACT_SWEEP={"n":..,"k":..,"groups":..,"stages":..,
+/// "first":..,"last":..}`, rows within 129..=8191.
+fn sweep_case() -> LabResult<(Entry, Compact, std::ops::RangeInclusive<u32>)> {
+    sweep_case_from(&std::env::var("CHOPINFER_COMPACT_SWEEP").map_err(|e| e.to_string())?)
+}
+
+fn sweep_case_from(text: &str) -> LabResult<(Entry, Compact, std::ops::RangeInclusive<u32>)> {
+    let value: serde_json::Value = serde_json::from_str(text).map_err(|e| e.to_string())?;
+    let keys = ["n", "k", "groups", "stages", "first", "last"];
+    let object = value
+        .as_object()
+        .ok_or("the sweep case must be an object")?;
+    if object.len() != keys.len() || keys.iter().any(|key| !object.contains_key(*key)) {
+        return Err("the sweep case has missing or unknown fields".into());
+    }
+    let [n, k, groups, stages, first, last] = keys.map(|key| {
+        value[key]
+            .as_u64()
+            .and_then(|v| u32::try_from(v).ok())
+            .unwrap_or(0)
+    });
+    if first < 129 || first > last || last > 8191 {
+        return Err("sweep rows must lie within 129..=8191".into());
+    }
+    let e = registration::prefill_entries(&FLASH, 4)?
+        .into_iter()
+        .find(|e| (e.query.n, e.query.k, e.query.groups) == (n, k, groups))
+        .ok_or("the sweep case names no TP4 prefill projection")?;
+    let compact = compact_entries(&e)?
+        .into_iter()
+        .find(|c| c.stages == stages)
+        .ok_or("the sweep case's stages must be 2 or 3")?;
+    Ok((e, compact, first..=last))
+}
+
+#[test]
+fn the_sweep_case_names_one_tp4_projection_band() {
+    let case = sweep_case_from;
+    let (e, c, rows) =
+        case(r#"{"n":512,"k":5120,"groups":1,"stages":2,"first":513,"last":2047}"#).unwrap();
+    assert_eq!((e.query.n, c.stages, rows), (512, 2, 513..=2047));
+    for bad in [
+        r#"{"n":512,"k":5120,"groups":1,"stages":2,"first":128,"last":2047}"#,
+        r#"{"n":512,"k":5120,"groups":1,"stages":2,"first":513,"last":8192}"#,
+        r#"{"n":512,"k":5120,"groups":1,"stages":4,"first":513,"last":2047}"#,
+        r#"{"n":513,"k":5120,"groups":1,"stages":2,"first":513,"last":2047}"#,
+        r#"{"n":512,"k":5120,"groups":1,"stages":2,"first":513}"#,
+    ] {
+        assert!(case(bad).is_err(), "{bad}");
+    }
+}
+
+/// Every row count of one projection's band, the served partition against
+/// one compact stage, bitwise as the pair's pre-check, on one idle GPU.
+#[test]
+#[ignore = "GPU lab: one idle GPU, bitwise only, at most five minutes per case"]
+fn compact_rows_bitwise_every_row() {
+    let (e, compact, rows) = sweep_case().unwrap();
+    let start = Instant::now();
+    let backend = backend().unwrap();
+    let ran = kernel_harness::gpu_test_with(Cubins::NONE, 4 << 30, |s| {
+        let initial = gpu_snapshot(s)?;
+        let mut arena = Arena {
+            session: s,
+            views: Vec::new(),
+        };
+        let weights = compact_weights(&mut arena, &e)?;
+        let keep = arena.views.len();
+        let mut cases = 0;
+        for count in rows.clone() {
+            if start.elapsed() >= Duration::from_secs(280) {
+                return Err(format!(
+                    "time budget exhausted at rows={count}; no complete result"
+                ));
+            }
+            compact_arms(&mut arena, &backend, &e, &[&compact], count, weights)?;
+            arena.views.truncate(keep);
+            cases += 1;
+            if count % 256 == 0 || count == *rows.end() {
+                println!(
+                    "compact sweep: rows {}..={count} bitwise, {:.0} s",
+                    rows.start(),
+                    start.elapsed().as_secs_f64()
+                );
+            }
+        }
+        let q = e.query;
+        s.receipt(
+            "deepseek41-compact-rows-sweep",
+            BTreeMap::from([
+                ("n".into(), json!(q.n)),
+                ("k".into(), json!(q.k)),
+                ("groups".into(), json!(q.groups)),
+                ("stages".into(), json!(compact.stages)),
+                ("rows".into(), json!([rows.start(), rows.end()])),
+                ("cases".into(), json!(cases)),
+                ("seconds".into(), json!(start.elapsed().as_secs_f64())),
+                ("gpu_start".into(), initial),
+                ("gpu_end".into(), gpu_snapshot(s)?),
+            ]),
+        )?;
+        println!(
+            "COMPACT_SWEEP_COMPLETE n={} k={} groups={} stages={} rows={}..={} cases={cases}",
+            q.n,
+            q.k,
+            q.groups,
+            compact.stages,
+            rows.start(),
+            rows.end()
+        );
+        Ok(())
+    })
+    .unwrap();
+    assert!(ran.is_some(), "the bitwise sweep must run");
+}
+
+/// The served partition (arm 0) against each of `compacts` at every count
+/// of `rows` on one device: the bitwise pre-check of `compact_arms`, then
+/// three visits of an A/A control and one A/B pair per compact entry, in
+/// rotating order. The A/A arms issue the very same served plan over the
+/// same operands. One result per count.
+fn compact_pairs(
+    session: &Session,
+    backend: &Sm120,
+    e: &Entry,
+    compacts: &[&Compact],
+    rows: &[u32],
+    deadline: Instant,
+    snapshot: &dyn Fn() -> LabResult<serde_json::Value>,
+) -> LabResult<Vec<serde_json::Value>> {
+    let mut arena = Arena {
+        session,
+        views: Vec::new(),
+    };
+    let q = e.query;
+    let weights = compact_weights(&mut arena, e)?;
+    let names: Vec<String> = std::iter::once("aa".to_string())
+        .chain(compacts.iter().map(|c| format!("ab-s{}", c.stages)))
+        .collect();
+    let mut results = Vec::new();
+    for &count in rows {
+        let keep = arena.views.len();
+        let arms = compact_arms(&mut arena, backend, e, compacts, count, weights)?;
+        let label = format!("compact-n{}-k{}-g{}-r{count}", q.n, q.k, q.groups);
+        let mut visits = Vec::new();
+        for visit in 0..3 {
+            if Instant::now() >= deadline {
+                return Err("pair-lab time budget exhausted; no complete result".into());
+            }
+            // Rotate the control and the comparisons each visit.
+            let visit_start = snapshot()?;
+            let mut timings = BTreeMap::new();
+            for step in 0..names.len() {
+                let which = (visit + step) % names.len();
+                let name = &names[which];
+                let timing = kernel_harness::with_timing_label(&format!("{label}-{name}"), || {
+                    kernel_harness::time_ab(
+                        session,
+                        1,
+                        3,
+                        [EvictionMode::Read; 2],
+                        |arm, stream| {
+                            let plan = if which == 0 || arm == 0 { 0 } else { which };
+                            arms[plan].issue(&arena, stream)
+                        },
+                    )
+                })?;
+                timings.insert(name.clone(), timing);
+            }
+            let spread = (1.0 - timings["aa"].paired_ratio).abs() * 100.0;
+            let mut record = json!({"gpu_start": visit_start, "aa_spread_pct": spread,
+                "served_ms": timings[&names[1]].arms[0].median_ms});
+            for c in compacts {
+                let ab = &timings[&format!("ab-s{}", c.stages)];
+                let gain = (1.0 - ab.paired_ratio) * 100.0;
+                println!(
+                    "device={} {label} visit={visit} stages={} served_ms={} compact_ms={} gain_pct={gain} aa_spread_pct={spread}",
+                    session.ordinal, c.stages, ab.arms[0].median_ms, ab.arms[1].median_ms
+                );
+                record[format!("s{}", c.stages)] = json!({"compact_ms": ab.arms[1].median_ms,
+                    "served_ms": ab.arms[0].median_ms, "gain_pct": gain, "gain_exceeds_control": gain > spread});
+            }
+            if spread > 3.0 {
+                println!("{label}: wide A/A spread ({spread}%); rerun on an idle host");
+            }
+            record["gpu_end"] = snapshot()?;
+            visits.push(record);
+        }
+        results.push(
+            json!({"n": q.n, "k": q.k, "groups": q.groups, "rows": count, "bitwise": true,
+            "served_symbols": arms[0].launches.iter().map(|c| &c.symbol).collect::<Vec<_>>(),
+            "compact_symbols": arms[1..].iter()
+                .map(|arm| arm.launches.iter().map(|c| &c.symbol).collect::<Vec<_>>())
+                .collect::<Vec<_>>(),
+            "visits": visits}),
+        );
+        drop(arms);
+        arena.views.truncate(keep);
+    }
+    Ok(results)
+}
+
+/// Runs `pairs` on each of two idle GPUs in turn under one power limit per
+/// device, writing `receipt` per device and a job receipt. Pairs stop at
+/// 280 seconds, within the 295-second process timeout.
+fn on_two_gpus(
+    receipt: &str,
+    case: serde_json::Value,
+    pairs: impl Fn(
+        &Session,
+        &Sm120,
+        Instant,
+        &dyn Fn() -> LabResult<serde_json::Value>,
+    ) -> LabResult<Vec<serde_json::Value>>,
+) {
+    assert_eq!(
+        kernel_harness::selected_ordinals()
+            .unwrap()
+            .expect("select two idle GPUs")
+            .len(),
+        2
+    );
+    let start = Instant::now();
+    let deadline = start + Duration::from_secs(280);
+    let backend = backend().unwrap();
+    kernel_harness::gpu_test_multi_with(probe().unwrap(), 4 << 30, |sessions| {
+        let job_start = sessions
+            .iter()
+            .map(gpu_snapshot)
+            .collect::<LabResult<Vec<_>>>()?;
+        for (session, initial) in sessions.iter().zip(&job_start) {
+            let limit = initial["enforced_power_w"]
+                .as_f64()
+                .ok_or("missing enforced power limit")?;
+            let snapshot = || -> LabResult<serde_json::Value> {
+                let state = gpu_snapshot(session)?;
+                if state["enforced_power_w"].as_f64() != Some(limit) {
+                    return Err("power limit changed; pair-lab job is void".into());
+                }
+                Ok(state)
+            };
+            let results = pairs(session, &backend, deadline, &snapshot)?;
+            session.receipt(
+                receipt,
+                BTreeMap::from([
+                    ("case".into(), case.clone()),
+                    ("results".into(), json!(results)),
+                    ("gpu_start".into(), initial.clone()),
+                    ("gpu_end".into(), snapshot()?),
+                ]),
+            )?;
+        }
+        let job_end = sessions
+            .iter()
+            .map(gpu_snapshot)
+            .collect::<LabResult<Vec<_>>>()?;
+        for (before, after) in job_start.iter().zip(&job_end) {
+            if before["enforced_power_w"] != after["enforced_power_w"] {
+                return Err("power limit changed across the two-device job; result is void".into());
+            }
+        }
+        sessions[0].receipt(
+            &format!("{receipt}-job"),
+            BTreeMap::from([
+                ("case".into(), case.clone()),
+                ("gpu_start".into(), json!(job_start)),
+                ("gpu_end".into(), json!(job_end)),
+            ]),
+        )?;
+        Ok(())
+    })
+    .unwrap()
+    .expect("the two-GPU probe must execute");
+    assert!(start.elapsed() < Duration::from_secs(295));
+}
+
+#[test]
+#[ignore = "pair-lab: two idle GPUs, CUDA events, A/A control, at most five minutes"]
+fn compact_live_rows_pair() {
+    on_two_gpus(
+        "deepseek41-compact-live-rows",
+        json!({"rows": LIVE_ROWS}),
+        |session, backend, deadline, snapshot| {
+            let mut results = Vec::new();
+            for e in registration::prefill_entries(&FLASH, 4)? {
+                let compacts = compact_entries(&e)?;
+                results.extend(compact_pairs(
+                    session,
+                    backend,
+                    &e,
+                    &[&compacts[0], &compacts[1]],
+                    &LIVE_ROWS,
+                    deadline,
+                    snapshot,
+                )?);
+            }
+            Ok(results)
+        },
+    );
+}
+
+/// One projection, its compact stages and the row counts of a dense timing
+/// grid: `CHOPINFER_COMPACT_GRID={"n":..,"k":..,"groups":..,"stages":[..],
+/// "rows":[..]}`, at most 128 ascending counts within 129..=8191.
+fn grid_case() -> LabResult<(Entry, Vec<Compact>, Vec<u32>)> {
+    grid_case_from(&std::env::var("CHOPINFER_COMPACT_GRID").map_err(|e| e.to_string())?)
+}
+
+fn grid_case_from(text: &str) -> LabResult<(Entry, Vec<Compact>, Vec<u32>)> {
+    let value: serde_json::Value = serde_json::from_str(text).map_err(|e| e.to_string())?;
+    let keys = ["n", "k", "groups", "stages", "rows"];
+    let object = value.as_object().ok_or("the grid case must be an object")?;
+    if object.len() != keys.len() || keys.iter().any(|key| !object.contains_key(*key)) {
+        return Err("the grid case has missing or unknown fields".into());
+    }
+    let [n, k, groups] = ["n", "k", "groups"].map(|key| {
+        value[key]
+            .as_u64()
+            .and_then(|v| u32::try_from(v).ok())
+            .unwrap_or(0)
+    });
+    let counts = |key: &str| -> LabResult<Vec<u32>> {
+        value[key]
+            .as_array()
+            .ok_or(format!("the grid case's {key} must be a list"))?
+            .iter()
+            .map(|v| {
+                v.as_u64()
+                    .and_then(|v| u32::try_from(v).ok())
+                    .ok_or(format!("the grid case's {key} must hold counts"))
+            })
+            .collect()
+    };
+    let (stages, rows) = (counts("stages")?, counts("rows")?);
+    if rows.is_empty()
+        || rows.len() > 128
+        || rows[0] < 129
+        || rows[rows.len() - 1] > 8191
+        || rows.windows(2).any(|w| w[0] >= w[1])
+    {
+        return Err("grid rows must be 1 to 128 ascending counts within 129..=8191".into());
+    }
+    if stages.is_empty() || stages.windows(2).any(|w| w[0] >= w[1]) {
+        return Err("grid stages must be ascending and not empty".into());
+    }
+    let e = registration::prefill_entries(&FLASH, 4)?
+        .into_iter()
+        .find(|e| (e.query.n, e.query.k, e.query.groups) == (n, k, groups))
+        .ok_or("the grid case names no TP4 prefill projection")?;
+    let compacts = compact_entries(&e)?;
+    let selected = stages
+        .iter()
+        .map(|&s| {
+            compacts
+                .iter()
+                .find(|c| c.stages == s)
+                .cloned()
+                .ok_or("the grid case's stages must be 2 or 3".to_string())
+        })
+        .collect::<LabResult<Vec<_>>>()?;
+    Ok((e, selected, rows))
+}
+
+#[test]
+fn the_grid_case_names_one_tp4_projection_and_its_rows() {
+    let case = grid_case_from;
+    let (e, compacts, rows) =
+        case(r#"{"n":512,"k":5120,"groups":1,"stages":[2],"rows":[1153,1185,1408]}"#).unwrap();
+    assert_eq!(e.query.n, 512);
+    assert_eq!(compacts.iter().map(|c| c.stages).collect::<Vec<_>>(), [2]);
+    assert_eq!(rows, [1153, 1185, 1408]);
+    let all = (129..=257)
+        .map(|r| r.to_string())
+        .collect::<Vec<_>>()
+        .join(",");
+    for bad in [
+        r#"{"n":512,"k":5120,"groups":1,"stages":[2],"rows":[]}"#,
+        r#"{"n":512,"k":5120,"groups":1,"stages":[2],"rows":[128]}"#,
+        r#"{"n":512,"k":5120,"groups":1,"stages":[2],"rows":[8192]}"#,
+        r#"{"n":512,"k":5120,"groups":1,"stages":[2],"rows":[1200,1200]}"#,
+        r#"{"n":512,"k":5120,"groups":1,"stages":[2],"rows":[1300,1200]}"#,
+        r#"{"n":512,"k":5120,"groups":1,"stages":[4],"rows":[1200]}"#,
+        r#"{"n":512,"k":5120,"groups":1,"stages":[],"rows":[1200]}"#,
+        r#"{"n":513,"k":5120,"groups":1,"stages":[2],"rows":[1200]}"#,
+        r#"{"n":512,"k":5120,"groups":1,"rows":[1200]}"#,
+        &format!(r#"{{"n":512,"k":5120,"groups":1,"stages":[2],"rows":[{all}]}}"#),
+    ] {
+        assert!(case(bad).is_err(), "{bad}");
+    }
+}
+
+/// The dense timing grid of one projection: the served partition against
+/// the named compact stages at every count of the case, bitwise first, then
+/// the A/A-controlled pairs, on two idle GPUs in turn.
+#[test]
+#[ignore = "pair-lab: two idle GPUs, CUDA events, A/A control, at most five minutes"]
+fn compact_rows_pair_grid() {
+    let (e, compacts, rows) = grid_case().unwrap();
+    let q = e.query;
+    let case = json!({"n": q.n, "k": q.k, "groups": q.groups,
+        "stages": compacts.iter().map(|c| c.stages).collect::<Vec<_>>(), "rows": rows});
+    on_two_gpus(
+        "deepseek41-compact-rows-grid",
+        case,
+        |session, backend, deadline, snapshot| {
+            let refs = compacts.iter().collect::<Vec<_>>();
+            compact_pairs(session, backend, &e, &refs, &rows, deadline, snapshot)
+        },
+    );
+    println!(
+        "COMPACT_GRID_COMPLETE n={} k={} groups={} rows={}",
+        q.n,
+        q.k,
+        q.groups,
+        rows.len()
+    );
 }

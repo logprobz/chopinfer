@@ -24,6 +24,10 @@ pub struct Shape {
     /// Whether verify steps above the 64-row decode route run the wide
     /// verify buckets (the `wide_verify` candidate option).
     pub wide_verify: bool,
+    /// Whether Flash TP4 prefill projections run the compact prefill entry
+    /// at the row counts the candidate table admits (the
+    /// `prefill_compact_dense_rows` candidate option).
+    pub prefill_compact_dense_rows: bool,
     /// Whether drafter steps of more than twelve drafting items run them in
     /// the fewest forwards the widest wide verify bucket holds, on the wide
     /// verify buckets (the `wide_draft` candidate option).
@@ -72,6 +76,7 @@ impl Shape {
             runtime: geometry.runtime_defaults(),
             verify_rows: DECODE_BATCH,
             wide_verify: false,
+            prefill_compact_dense_rows: false,
             wide_draft: false,
             phased_decode_reduce: false,
             prefill_norm_ceil_rows: false,
@@ -95,6 +100,14 @@ impl Shape {
     /// (`model_deepseek41_contract::execution_options::WIDE_VERIFY`).
     pub fn with_wide_verify(mut self, enabled: bool) -> Shape {
         self.wide_verify = enabled;
+        self
+    }
+
+    /// This shape with the compact prefill entry's candidate row ranges on
+    /// or off
+    /// (`model_deepseek41_contract::execution_options::PREFILL_COMPACT_DENSE_ROWS`).
+    pub fn with_prefill_compact_dense_rows(mut self, enabled: bool) -> Shape {
+        self.prefill_compact_dense_rows = enabled;
         self
     }
 

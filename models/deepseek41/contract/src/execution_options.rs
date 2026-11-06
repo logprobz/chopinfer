@@ -17,6 +17,11 @@ pub const PREFILL_PLAN_CACHE_VERIFY: &str = "prefill_plan_cache_verify";
 pub const PREFILL_NORM_CEIL_ROWS: &str = "prefill_norm_ceil_rows";
 pub const DSPARK_GRAPH_HANDLES_PER_RANK: &str = "dspark_graph_handles_per_rank";
 pub const DIAGNOSTIC_STEP_LOGS: &str = "diagnostic_step_logs";
+/// Candidate: Flash TP4 prefill projections whose row counts the candidate
+/// table admits (`dense_prefill.compact_range.prefill`) run the compact
+/// prefill entry at the step's exact rows instead of the full 128-row tiles
+/// with their exact-row tail folds. Every row's bytes are unchanged.
+pub const PREFILL_COMPACT_DENSE_ROWS: &str = "prefill_compact_dense_rows";
 /// Candidate: Flash TP4 verify steps above the 64-row decode route run the
 /// wide verify buckets (`crate::verify_bounds::WIDE`).
 pub const WIDE_VERIFY: &str = "wide_verify";
@@ -90,6 +95,7 @@ pub struct Options {
     pub prefill_norm_ceil_rows: bool,
     pub dspark_graph_handles_per_rank: usize,
     pub diagnostic_step_logs: bool,
+    pub prefill_compact_dense_rows: bool,
     pub wide_verify: bool,
     pub wide_draft: bool,
     pub phased_decode_reduce: bool,
@@ -105,7 +111,7 @@ pub struct Options {
     pub prefill_streamed_lowering: bool,
 }
 
-pub fn declarations() -> [ModelOptionV1; 19] {
+pub fn declarations() -> [ModelOptionV1; 20] {
     [
         (
             DIAGNOSTIC_STEP_LOGS,
@@ -153,6 +159,10 @@ pub fn declarations() -> [ModelOptionV1; 19] {
         ),
         (
             PHASED_DECODE_REDUCE,
+            OptionDefinitionV1::Boolean { default: false },
+        ),
+        (
+            PREFILL_COMPACT_DENSE_ROWS,
             OptionDefinitionV1::Boolean { default: false },
         ),
         (
@@ -239,6 +249,7 @@ impl Options {
                 .as_bool()
                 .expect("checked boolean"),
             wide_verify,
+            prefill_compact_dense_rows: flag(PREFILL_COMPACT_DENSE_ROWS),
             wide_draft,
             phased_decode_reduce: flag(PHASED_DECODE_REDUCE),
             prefill_dma_producer_intervals: flag(PREFILL_DMA_PRODUCER_INTERVALS),
@@ -363,6 +374,7 @@ mod tests {
             prefill_norm_ceil_rows: false,
             dspark_graph_handles_per_rank: 512,
             diagnostic_step_logs: false,
+            prefill_compact_dense_rows: false,
             wide_verify: false,
             wide_draft: false,
             phased_decode_reduce: false,
@@ -392,6 +404,7 @@ mod tests {
             (PREFILL_NORM_CEIL_ROWS.into(), "true".into()),
             (DSPARK_GRAPH_HANDLES_PER_RANK.into(), "0".into()),
             (DIAGNOSTIC_STEP_LOGS.into(), "true".into()),
+            (PREFILL_COMPACT_DENSE_ROWS.into(), "true".into()),
             (WIDE_VERIFY.into(), "true".into()),
             (WIDE_DRAFT.into(), "true".into()),
             (PHASED_DECODE_REDUCE.into(), "true".into()),
@@ -416,6 +429,7 @@ mod tests {
                 prefill_norm_ceil_rows: true,
                 dspark_graph_handles_per_rank: 0,
                 diagnostic_step_logs: true,
+                prefill_compact_dense_rows: true,
                 wide_verify: true,
                 wide_draft: true,
                 phased_decode_reduce: true,
@@ -446,6 +460,7 @@ mod tests {
             (PREFILL_PLAN_CACHE_VERIFY, "1"),
             (PREFILL_NORM_CEIL_ROWS, "1"),
             (DIAGNOSTIC_STEP_LOGS, "\"true\""),
+            (PREFILL_COMPACT_DENSE_ROWS, "1"),
             (WIDE_VERIFY, "1"),
             (WIDE_DRAFT, "1"),
             (PHASED_DECODE_REDUCE, "1"),

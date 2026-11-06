@@ -65,7 +65,12 @@ impl Conversions {
                 symbol,
             );
         }
-        for (e, _) in &b.mxfp8_prefill_compacts {
+        for e in b
+            .mxfp8_prefill_compacts
+            .iter()
+            .map(|(e, _)| e)
+            .chain(b.mxfp8_prefill_compact_ranges.iter().map(|(e, _)| e))
+        {
             for tile in [16, 32, 64] {
                 twin(&|| e.packed_spec(tile), e.symbol(tile));
             }

@@ -402,6 +402,12 @@ with an in-job A/A help locate work to improve.
   are not counted.
 - Report each cell and weight cells by served shapes: decode C1, C2, C4,
   C8, C16 and C32, and DSpark verify widths 6, 8, 16, 32 and 64.
+- A step cell decides only with full concurrency and at least
+  `min_cell_steps` steps (default 20) in every visit. A model that sets
+  `min_cell_time_share` also admits a cell that occupies at least that
+  fraction of measured time in every visit. Any other shape is
+  informational with zero decision weight, except that the report refuses
+  a job whose declared target or required shape misses the rule.
 - A comparison may declare before the job that
   [Engram-adjusted step time](operations-observability.md#trace-scheduler-steps)
   decides its step cells. A change to an Engram path is judged on raw
@@ -413,8 +419,8 @@ model, for example `{"1": [192, 256]}`, and name the affected target as
 times, with exactly the declared prefill item and token counts and no
 decode or verify work in the step. Every declared width, including a
 control, must have sufficient samples in all four visits. They use the
-same minimum sample/time-share policy, paired spread, regression veto and
-1.5% table-row threshold as other cells. Synthetic dry runs never qualify
+same `min_cell_steps` and `min_cell_time_share` rule, paired spread,
+regression veto and 1.5% table-row threshold as other cells. Synthetic dry runs never qualify
 prefill timing. Mixed steps need a separate declared measurement protocol.
 
 Report full-graph step times and paired served rates. In the formulas below,

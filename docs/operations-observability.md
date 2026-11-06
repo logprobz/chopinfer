@@ -753,11 +753,14 @@ Step and request logs are not replay inputs; they omit token contents.
   fall on different ranks can, so the field bounds the critical-path wait
   from above. It is 0 when no prepared gather completes. Recording reads
   the stats completion already returns and adds no synchronization.
-- The Engram-adjusted step time is
-  `execution_us - mapped_gather_us - mapped_gather_exposed_us`. It removes
-  only the Engram wait on the step's critical path, not the CPU or I/O
-  contention that page faults cause, and it is invalid for a change that
-  alters Engram timing itself; judge those on raw time.
+- The Engram-adjusted step time subtracts each step's Engram wait,
+  `host.mapped_gather_us` plus `host.mapped_gather_exposed_us`, from the
+  step's completion-to-completion cycle time (from the previous step's
+  completion to its own) for decode and verify cells, and from its
+  `execution_us` for prefill cells. It removes only the Engram wait on the
+  step's critical path, not the CPU or I/O contention that page faults
+  cause, and it is invalid for a change that alters Engram timing itself;
+  judge those on raw time.
 
 The served A/B tuner (`tools/tune`) records per-window clocks, per-visit
 major faults and job and visit enforced power limits; a changing limit voids

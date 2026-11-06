@@ -1057,7 +1057,12 @@ templates at its entry, outside every field. The phase fields stay
 disjoint, and the target's four fields stay within `target`. The record's
 `early_prefill_begin` and `early_prefill_plan` say whether the step's
 prefill began its gathers before catch-up and whether it planned while the
-drafter ran; both are false with the options off.
+drafter ran; both are false with the options off. Its `prefill_templates`
+holds the instance's prefill plan templates after the step: `templates`
+kept now of at most `limit`, and the counts so far of `hits`, `misses`,
+`busy`, `refused`, `kept` and `dropped`. The counts only grow, so two
+consecutive records give the later step's template reuse, miss and drop;
+the "prefill plan templates" line is logged only when a template is kept.
 
 The served A/B tuner records per-window clocks, per-visit major faults and
 job/visit enforced power limits. A changing limit voids the whole job.

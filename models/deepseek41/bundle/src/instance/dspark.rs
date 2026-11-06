@@ -623,7 +623,8 @@ impl Instance {
             .expect("drafter retained")
             .results
             .metadata = None;
-        if let (Ok(()), Some(times)) = (&result, times) {
+        if let (Ok(()), Some(mut times)) = (&result, times) {
+            times.prefill_templates = Some(self.plans.template_state());
             let context = self.dspark.as_ref().expect("enabled drafter").diagnostic;
             let _ = self
                 .services

@@ -521,11 +521,13 @@ pub(crate) fn early_stagings() -> u64 {
 /// (`dspark_early_prefill_engram`), and a prefill planned while the drafter
 /// runs is `prefill_plan`, outside `target` (`dspark_early_prefill_plan`).
 /// The record also says whether the step's prefill began its gathers or
-/// planned early.
+/// planned early, and holds the prefill plan templates after the step.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct PhaseTimes {
     pub prefill_began_early: bool,
     pub prefill_planned_early: bool,
+    /// The instance's templates after the step; none outside an instance.
+    pub prefill_templates: Option<PrefillTemplates>,
     pub catch_up_us: u64,
     pub catch_up_items: u32,
     pub catch_up_rows: u32,
@@ -541,13 +543,48 @@ pub struct PhaseTimes {
     pub target: super::timing::TargetTimes,
 }
 
+/// An instance's prefill plan templates: those kept now, the most kept at
+/// once, and the cache's counts so far. The counts only grow, so two
+/// consecutive step-shape records give the later step's template reuses,
+/// misses and drops.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct PrefillTemplates {
+    pub templates: usize,
+    pub limit: usize,
+    pub counts: bundle_runtime::template::Counts,
+}
+
+impl PrefillTemplates {
+    fn json(&self) -> String {
+        let counts = &self.counts;
+        format!(
+            concat!(
+                "{{\"templates\":{},\"limit\":{},\"hits\":{},\"misses\":{},",
+                "\"busy\":{},\"refused\":{},\"kept\":{},\"dropped\":{}}}"
+            ),
+            self.templates,
+            self.limit,
+            counts.hits,
+            counts.misses,
+            counts.busy,
+            counts.refused,
+            counts.kept,
+            counts.evicted,
+        )
+    }
+}
+
 impl PhaseTimes {
     pub fn record(&self, context: Context, items: usize, drafting: usize) -> String {
+        let templates = self
+            .prefill_templates
+            .map_or_else(|| "null".to_owned(), |templates| templates.json());
         format!(
             concat!(
                 "{{\"schema\":\"chopinfer.deepseek41.step-shape.v1\",",
                 "\"instance_id\":\"{}\",\"step_id\":\"{}\",\"items\":{},\"drafting\":{},",
                 "\"early_prefill_begin\":{},\"early_prefill_plan\":{},",
+                "\"prefill_templates\":{},",
                 "\"catch_up_items\":{},\"catch_up_rows\":{},\"bulk_passes\":{},",
                 "\"undrafted_ready\":{},\"undrafted_status_packets\":{},",
                 "\"micros\":{{\"catch_up\":{},\"bulk\":{},\"draft\":{},\"prefill_plan\":{},",
@@ -561,6 +598,7 @@ impl PhaseTimes {
             drafting,
             self.prefill_began_early,
             self.prefill_planned_early,
+            templates,
             self.catch_up_items,
             self.catch_up_rows,
             self.bulk_passes,

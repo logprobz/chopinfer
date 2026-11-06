@@ -146,6 +146,15 @@ impl Templates {
         self.kept.counts()
     }
 
+    /// The templates kept now, the most kept at once and the counts so far.
+    pub(super) fn state(&self) -> crate::dspark::staging::PrefillTemplates {
+        crate::dspark::staging::PrefillTemplates {
+            templates: self.kept.len(),
+            limit: self.kept.limit(),
+            counts: self.kept.counts(),
+        }
+    }
+
     /// `run`'s upper-skip plan: its key's template with the index
     /// selections lowered again, or a fresh plan, kept when it can be.
     pub(super) fn plan(

@@ -107,6 +107,11 @@ impl Cache {
         self.templates.counts()
     }
 
+    /// The prefill plan templates after a step, for its step-shape record.
+    pub(crate) fn template_state(&self) -> crate::dspark::staging::PrefillTemplates {
+        self.templates.state()
+    }
+
     /// Frees the templates this step dropped (`plan_templates::Templates::release`).
     pub(super) fn release_dropped(&self) {
         self.templates.release();

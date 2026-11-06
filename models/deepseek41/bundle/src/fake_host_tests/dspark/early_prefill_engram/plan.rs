@@ -192,6 +192,75 @@ fn step_shape_records_report_early_begins_and_plans() {
     }
 }
 
+/// With diagnostic step logs, each step-shape record holds the instance's
+/// prefill plan templates after its step, so consecutive records give each
+/// mixed step's template miss, reuse and drop, the same with and without
+/// the early candidates. With room for two templates: a 512-row miss, its
+/// reuse by another request, a 600-row miss and a 700-row miss that drops
+/// the oldest.
+#[test]
+fn step_shape_records_count_each_steps_template_reuse() {
+    use Then::*;
+    use model_deepseek41_contract::execution_options::DIAGNOSTIC_STEP_LOGS;
+    let steps = [
+        step(&[prefill(7, 8, 0, 512)], true, Commit),
+        step(&[prefill(8, 9, 0, 512)], true, Commit),
+        step(&[prefill(9, 10, 0, 600)], true, Commit),
+        step(&[prefill(10, 11, 0, 700)], true, Commit),
+    ];
+    let schedule = Schedule {
+        verify_rows: 32,
+        widths: &[4; 8],
+        restored: &[],
+        steps: &steps,
+    };
+    let logs = (DIAGNOSTIC_STEP_LOGS, serde_json::Value::from(true));
+    let plan = (DSPARK_EARLY_PREFILL_PLAN, true.into());
+    let begin = (DSPARK_EARLY_PREFILL_ENGRAM, true.into());
+    plan_templates::with_limit(2, || {
+        for options in [
+            vec![logs.clone()],
+            vec![logs.clone(), plan.clone()],
+            vec![logs.clone(), begin.clone(), plan.clone()],
+        ] {
+            let run = schedule.run(&options);
+            // The run's lines have their host times masked, so only the
+            // templates object is parsed.
+            let marker = "\"prefill_templates\":";
+            let records: Vec<serde_json::Value> = run
+                .logs
+                .iter()
+                .filter_map(|line| line.find(marker).map(|at| &line[at + marker.len()..]))
+                .map(|rest| serde_json::from_str(&rest[..=rest.find('}').unwrap()]).unwrap())
+                .collect();
+            let arm = format!("{options:?}");
+            // One record a step, the eight prompts' first.
+            assert_eq!(records.len(), 8 + steps.len(), "{arm}");
+            let count = |record: &serde_json::Value, name: &str| record[name].as_u64().unwrap();
+            let deltas: Vec<_> = records
+                .windows(2)
+                .skip(records.len() - 1 - steps.len())
+                .map(|pair| {
+                    ["hits", "misses", "kept", "dropped"]
+                        .map(|name| count(&pair[1], name) - count(&pair[0], name))
+                })
+                .collect();
+            assert_eq!(
+                deltas,
+                [[0, 1, 1, 0], [1, 0, 0, 0], [0, 1, 1, 0], [0, 1, 1, 1]],
+                "{arm}"
+            );
+            let last = records.last().unwrap();
+            assert_eq!(
+                (count(last, "templates"), count(last, "limit")),
+                (2, 2),
+                "{arm}"
+            );
+            assert!(records.iter().all(|r| count(r, "templates") <= 2), "{arm}");
+        }
+    });
+}
+
 /// On an instance that also serves images, as every served instance does,
 /// text-only mixed steps take the prepared verify-row gathers
 /// (`dspark_mixed_prepared_engram` admits them per step). Beside those

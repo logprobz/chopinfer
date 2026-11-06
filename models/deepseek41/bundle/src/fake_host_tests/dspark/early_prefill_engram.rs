@@ -628,22 +628,24 @@ fn a_step_refused_after_an_early_begin_settles_its_gathers_at_the_next_entry() {
             .iter()
             .any(|line| line.contains("differs from a fresh one"))
     );
-    // The early begin, and neither a join nor a completion.
-    let kinds = order(&host.journal.borrow()[begin..]);
-    assert_eq!(kinds.iter().filter(|&&kind| kind == "ids").count(), 2);
-    assert!(!kinds.contains(&"wait") && !kinds.contains(&"complete"));
     assert_eq!(
         crate::instance::prefill_engram::refusal_state(instance.handle()),
-        (false, true)
+        (true, true)
     );
-    let settle = host.journal.borrow().len();
-    crate::instance::prefill_engram::settle_refused(instance.handle()).unwrap();
     {
+        // The early begin, then the settle: a join on every stream, each
+        // stream's fence after its join, and both completions.
         let journal = host.journal.borrow();
-        let settled = &journal[settle..];
-        let kinds = order(settled);
+        let step = &journal[begin..];
+        let kinds = order(step);
+        assert_eq!(kinds.iter().filter(|&&kind| kind == "ids").count(), 2);
+        let first = step
+            .iter()
+            .position(|line| line.starts_with("async mapped wait "))
+            .expect("the refused step's settle");
+        let settled = &step[first..];
         assert_eq!(
-            kinds,
+            order(settled),
             [vec!["wait"; 8], vec!["complete"; 2]].concat(),
             "{settled:#?}"
         );
@@ -664,6 +666,9 @@ fn a_step_refused_after_an_early_begin_settles_its_gathers_at_the_next_entry() {
             );
         }
     }
+    let settle = host.journal.borrow().len();
+    crate::instance::prefill_engram::settle_refused(instance.handle()).unwrap();
+    assert_eq!(host.journal.borrow().len(), settle);
     assert!(crate::instance::prefill_engram::refusal_state(instance.handle()).0);
     let _ = instance.cancel();
     match instance.destroy() {

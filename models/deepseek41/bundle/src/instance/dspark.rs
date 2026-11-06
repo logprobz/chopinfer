@@ -593,6 +593,19 @@ impl Instance {
             text,
             &mut times,
         );
+        // A failed step settles the gathers it began early before it
+        // returns, fencing every destination, as an issue failure does: its
+        // poisoned runtime refuses the next execute before that entry's
+        // settle.
+        if result.is_err()
+            && self
+                .prefill_engram
+                .as_ref()
+                .is_some_and(|gathers| gathers.begun_early() && !gathers.idle())
+            && let Err(settle) = self.settle_prefill_engram()
+        {
+            self.log(&format!("prefill Engram cleanup failed: {settle}"));
+        }
         if result.is_ok()
             && let Err(error) = self.queue_dspark_prefetch()
         {

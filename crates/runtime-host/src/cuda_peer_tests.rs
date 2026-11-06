@@ -374,7 +374,6 @@ fn fill_peer_queue(f: &mut Fixture) {
 #[test]
 fn event_backpressure_waits_for_the_oldest_copy_alone() {
     let mut f = Fixture::new();
-    f.device.peer_backpressure = PeerBackpressure::Event;
     fill_peer_queue(&mut f);
     let (fences, waits, copies) = (
         fake_driver::call_count(5),
@@ -398,7 +397,6 @@ fn event_backpressure_waits_for_the_oldest_copy_alone() {
 #[test]
 fn a_failed_event_wait_keeps_the_oldest_copy_and_submits_nothing() {
     let mut f = Fixture::new();
-    f.device.peer_backpressure = PeerBackpressure::Event;
     fill_peer_queue(&mut f);
     let (fences, copies) = (fake_driver::call_count(5), fake_driver::call_count(18));
     fake_driver::fail_next(36, 719);
@@ -414,24 +412,6 @@ fn a_failed_event_wait_keeps_the_oldest_copy_and_submits_nothing() {
     }
     // Releasing the buffers drains the kept copies with stream fences.
     f.finish();
-}
-
-#[test]
-fn peer_backpressure_reads_its_candidate_switch() {
-    use std::ffi::OsStr;
-    assert_eq!(PeerBackpressure::from_env(None), PeerBackpressure::Event);
-    for (value, selected) in [
-        ("event", PeerBackpressure::Event),
-        ("stream", PeerBackpressure::Stream),
-        ("Event", PeerBackpressure::Event),
-        ("", PeerBackpressure::Event),
-    ] {
-        assert_eq!(
-            PeerBackpressure::from_env(Some(OsStr::new(value))),
-            selected,
-            "{value:?}"
-        );
-    }
 }
 
 #[test]

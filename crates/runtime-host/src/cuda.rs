@@ -100,42 +100,6 @@ pub struct CudaHostDeviceV1 {
     fill_rings: BTreeMap<u64, PinnedUploadRing>,
     /// Peer copies retain both allocations until their completion event.
     peer_copies: VecDeque<PeerTransfer>,
-    /// What a full `peer_copies` queue waits for, read once at creation.
-    peer_backpressure: PeerBackpressure,
-}
-
-/// Candidate switch: `event` (the default) or `stream`.
-const PEER_COPY_BACKPRESSURE_ENV: &str = "CHOPINFER_PEER_COPY_BACKPRESSURE";
-
-/// What a full peer-copy queue waits for before it takes another copy.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum PeerBackpressure {
-    /// Synchronize the oldest copy's stream, with everything queued on it
-    /// since, which empties the device when the host is far ahead.
-    Stream,
-    /// Wait for the oldest copy's own completion event.
-    Event,
-}
-
-impl PeerBackpressure {
-    /// The selection a set value names; an unknown one keeps `Event`.
-    fn from_env(value: Option<&std::ffi::OsStr>) -> Self {
-        let Some(value) = value else {
-            return Self::Event;
-        };
-        let selected = match value.to_str() {
-            Some("event") => Self::Event,
-            Some("stream") => Self::Stream,
-            _ => {
-                runtime_log::warn!(
-                    "{PEER_COPY_BACKPRESSURE_ENV}={value:?} is not stream or event; using event"
-                );
-                Self::Event
-            }
-        };
-        runtime_log::info!("peer copy backpressure: {selected:?}");
-        selected
-    }
 }
 
 const TENSOR_MAP_CACHE_CAPACITY: usize = 64;
@@ -183,9 +147,6 @@ impl CudaHostDeviceV1 {
             upload_rings: BTreeMap::new(),
             fill_rings: BTreeMap::new(),
             peer_copies: VecDeque::new(),
-            peer_backpressure: PeerBackpressure::from_env(
-                std::env::var_os(PEER_COPY_BACKPRESSURE_ENV).as_deref(),
-            ),
         })
     }
 
@@ -1836,23 +1797,16 @@ impl HostDeviceBackendV1 for CudaHostDeviceV1 {
         self.retire_peer_copies()?;
         // Backpressure is bounded. Normal collection has completed earlier
         // copies before the next cycle and retires them without a host wait.
+        // A full queue waits for its oldest copy's own completion event, not
+        // the copy's stream, which would also wait for everything queued on
+        // it since. A failed wait keeps the copy queued and submits nothing.
         if self.peer_copies.len() == MAX_PENDING_PEER_COPIES {
-            match self.peer_backpressure {
-                PeerBackpressure::Stream => self
-                    .peer_copies
-                    .pop_front()
-                    .expect("full peer queue")
-                    .finish(),
-                PeerBackpressure::Event => {
-                    // A failed wait keeps the copy queued and submits nothing.
-                    self.peer_copies
-                        .front_mut()
-                        .expect("full peer queue")
-                        .wait()
-                        .map_err(driver_status)?;
-                    self.peer_copies.pop_front();
-                }
-            }
+            self.peer_copies
+                .front_mut()
+                .expect("full peer queue")
+                .wait()
+                .map_err(driver_status)?;
+            self.peer_copies.pop_front();
         }
         let copy = destination_buffer
             .copy_peer_range_from_async(

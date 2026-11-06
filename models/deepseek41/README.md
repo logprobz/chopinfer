@@ -247,6 +247,16 @@ frees the plan templates that planning drops once the prefill launched.
 Adopted on 2026-11-06 with the other DSpark prefill steps ([served
 timing](#served-timing)).
 
+A full peer-copy queue in the CUDA host backend waits for its oldest copy's
+completion event, not for that copy's stream, which would also wait for
+everything queued on it since: in a 512-row mixed step, a DMA prefill beside
+verify rows, the stream wait drained the GPU four times per prefill pass
+(3.4 to 3.7 ms of idle per step on the 2026-11-04 captures). A failed wait
+keeps the copy queued with its leases and submits nothing; drains and
+teardown keep their stream fences. Adopted on 2026-11-06 ([served
+timing](#served-timing)), after served and fixed-batch replays of DeepSeek
+and GLM matched bitwise.
+
 ## Reference
 
 `reference.py` is the refrun adapter (`tools/refrun`). It executes the

@@ -153,9 +153,23 @@ fn pin_untuned_served_keys() {
                     q.m_capacity,
                 ));
             }
+            // The `prefill_compact_dense_rows` candidate's TP4 ranges.
+            if ranks == 4 {
+                domain.insert(key(
+                    "dense_prefill.compact_range.prefill",
+                    "mxfp8",
+                    &[
+                        ("n", q.n),
+                        ("k", q.k),
+                        ("groups", q.groups),
+                        ("ranks", ranks),
+                    ],
+                    q.m_capacity,
+                ));
+            }
         }
     }
-    assert_eq!(domain.len(), 83);
+    assert_eq!(domain.len(), 93);
     assert_untuned(
         Family::DensePrefill,
         domain,
@@ -188,6 +202,16 @@ const UNTUNED: &[&str] = &[
     "dense_prefill.compact.prefill mxfp8 groups=2,k=4096,n=1024 buckets=8192 rows=1..127,129..511,513..2047,2049..4095,4097..8191",
     "dense_prefill.compact.prefill mxfp8 groups=4,k=4096,n=1024 buckets=8192 rows=1..127,129..511,513..2047,2049..4095,4097..8191",
     "dense_prefill.compact.prefill mxfp8 groups=8,k=4096,n=1024 buckets=8192 rows=1..127,129..511,513..2047,2049..4095,4097..8191",
+    "dense_prefill.compact_range.prefill mxfp8 groups=1,k=1280,n=4096,ranks=4 buckets=8192 rows=all",
+    "dense_prefill.compact_range.prefill mxfp8 groups=1,k=1280,n=8192,ranks=4 buckets=8192 rows=all",
+    "dense_prefill.compact_range.prefill mxfp8 groups=1,k=15360,n=5120,ranks=4 buckets=8192 rows=all",
+    "dense_prefill.compact_range.prefill mxfp8 groups=1,k=2048,n=5120,ranks=4 buckets=8192 rows=all",
+    "dense_prefill.compact_range.prefill mxfp8 groups=1,k=5120,n=1280,ranks=4 buckets=8192 rows=1..1408,3072..8192",
+    "dense_prefill.compact_range.prefill mxfp8 groups=1,k=5120,n=512,ranks=4 buckets=8192 rows=1..1408,3072..8192",
+    "dense_prefill.compact_range.prefill mxfp8 groups=1,k=5120,n=576,ranks=4 buckets=8192 rows=1..1408,3072..8192",
+    "dense_prefill.compact_range.prefill mxfp8 groups=1,k=576,n=5120,ranks=4 buckets=8192 rows=all",
+    "dense_prefill.compact_range.prefill mxfp8 groups=1,k=6144,n=25600,ranks=4 buckets=8192 rows=all",
+    "dense_prefill.compact_range.prefill mxfp8 groups=2,k=4096,n=1024,ranks=4 buckets=8192 rows=1..1408,3072..8192",
     "dense_prefill.dspark_main.prefill mxfp8 groups=1,k=15360,n=5120,ranks=1 buckets=8192 rows=all",
     "dense_prefill.dspark_main.prefill mxfp8 groups=1,k=15360,n=5120,ranks=2 buckets=8192 rows=all",
     "dense_prefill.dspark_main.prefill mxfp8 groups=1,k=15360,n=5120,ranks=4 buckets=8192 rows=1..128,512..8192",

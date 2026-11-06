@@ -2,6 +2,7 @@
 //! Exact measured rows only; other geometries and counts keep their prior route.
 use kernel_build::CubinSpec;
 use kernel_core::mxfp8_gemm::Mxfp8FoldGemmQuery;
+use kernels_sm120::backend::Sm120;
 use kernels_sm120::gemm::mxfp8_prefill_compact::Entry;
 use model_deepseek41_contract::geometry::{FLASH, Geometry};
 
@@ -23,6 +24,77 @@ pub fn stages(g: &Geometry, q: Mxfp8FoldGemmQuery, rows: u32) -> Option<u32> {
     assert_eq!(row.knobs["matrix_fetch"].flag(), Some(false));
     assert_eq!(row.knobs["tile_rows"].count(), Some(Entry::tile(rows)));
     row.knobs["stages"].count()
+}
+
+/// The `prefill_compact_dense_rows` candidate's site: one contiguous row
+/// range per TP4 prefill projection, read only with the option on.
+pub const RANGE_SITE: &str = "dense_prefill.compact_range.prefill";
+
+/// The row range and compact stages the candidate site admits for `q` at
+/// `ranks`, if any.
+pub fn range(
+    g: &Geometry,
+    ranks: u32,
+    q: Mxfp8FoldGemmQuery,
+) -> Result<Option<(std::ops::RangeInclusive<u32>, u32)>, String> {
+    use model_deepseek41_contract::tuning::{Family, table};
+    let Some(table) = table(g, Family::DensePrefill) else {
+        return Ok(None);
+    };
+    let key: std::collections::BTreeMap<String, u32> = [
+        ("n", q.n),
+        ("k", q.k),
+        ("groups", q.groups),
+        ("ranks", ranks),
+    ]
+    .map(|(name, value)| (name.to_string(), value))
+    .into();
+    let mut rows = table.rows().iter().filter(|row| {
+        row.key.op == RANGE_SITE
+            && row.key.weights == "mxfp8"
+            && row.key.shape == key
+            && row.key.bucket == q.m_capacity
+    });
+    let Some(row) = rows.next() else {
+        return Ok(None);
+    };
+    if rows.next().is_some() {
+        return Err(format!(
+            "{}: one contiguous compact range per projection",
+            row.key
+        ));
+    }
+    let [first, last] = row
+        .key
+        .rows
+        .ok_or_else(|| format!("{}: the compact range has no rows", row.key))?;
+    if row.schedule != "prefill_tiles"
+        || row.knobs.get("matrix_fetch").and_then(|v| v.flag()) != Some(false)
+        || row.knobs.get("tile_rows").and_then(|v| v.count()) != Some(Entry::tile(first))
+        || Entry::tile(first) != Entry::tile(last)
+    {
+        return Err(format!("{}: unsupported compact range recipe", row.key));
+    }
+    let stages = row
+        .knobs
+        .get("stages")
+        .and_then(|v| v.count())
+        .ok_or_else(|| format!("{}: the compact range has no stages", row.key))?;
+    Ok(Some((first..=last, stages)))
+}
+
+/// Registers each prefill projection's candidate range on the shared
+/// compact wrapper, which plans each count as it launches. The measured
+/// exact rows keep precedence inside a range.
+pub fn register_range(mut backend: Sm120, g: &Geometry, ranks: u32) -> Result<Sm120, String> {
+    for base in super::prefill_entries(g, ranks)? {
+        let Some((rows, stages)) = range(g, ranks, base.query)? else {
+            continue;
+        };
+        let entry = Entry::new(base, stages).map_err(|e| e.to_string())?;
+        backend = backend.with_mxfp8_prefill_compact_range(entry, rows);
+    }
+    Ok(backend)
 }
 
 /// Retain the complete qualified translation unit, including controls and
@@ -71,7 +143,6 @@ mod tests {
     use super::*;
     use kernel_core::backend::{Backend, Counts, Need, View};
     use kernel_core::mxfp8_gemm::Mxfp8FoldGemmBuffers;
-    use kernels_sm120::backend::Sm120;
 
     #[test]
     fn route_only_measured_flash_rows_across_all_topologies() {
@@ -146,5 +217,87 @@ mod tests {
             }
         }
         assert_eq!(changed.len(), 66);
+    }
+
+    /// With the candidate's ranges registered, every count of a range runs
+    /// the compact entry the lab compares, and every other count, shape and
+    /// topology launches as before, with the same layout and guarantees.
+    #[test]
+    fn candidate_ranges_change_only_their_counts() {
+        let mut ranged = std::collections::BTreeSet::new();
+        for ranks in [1, 2, 4] {
+            let old = super::super::register(Sm120::new(), &FLASH, ranks).unwrap();
+            let new = super::super::register(Sm120::new(), &FLASH, ranks).unwrap();
+            let new = register_range(new, &FLASH, ranks).unwrap();
+            for base in super::super::prefill_entries(&FLASH, ranks).unwrap() {
+                let q = base.query;
+                let range = range(&FLASH, ranks, q).unwrap();
+                let a = old
+                    .mxfp8_prefill_gemm(&q, Need::rows(q.m_capacity))
+                    .unwrap();
+                let b = new
+                    .mxfp8_prefill_gemm(&q, Need::rows(q.m_capacity))
+                    .unwrap();
+                assert_eq!(a.info().bytes, b.info().bytes);
+                assert_eq!(a.info().workspace, b.info().workspace);
+                assert_eq!(a.info().weight_layouts, b.info().weight_layouts);
+                assert_eq!(a.info().guarantees, b.info().guarantees);
+                let size = base.bytes(q.m_capacity);
+                let v = |handle, bytes| View { handle, bytes };
+                let views = Mxfp8FoldGemmBuffers {
+                    activations: v(1, size.activations),
+                    activation_scales: v(2, size.activation_scales),
+                    weights: v(3, size.weights),
+                    weight_scales: v(4, size.weight_scales),
+                    output: v(5, size.output),
+                    live_rows: v(6, 4),
+                    status: v(7, size.status),
+                    status_row_offset: 0,
+                };
+                let counts: Vec<u32> = if range.is_some() {
+                    (1..=q.m_capacity).collect()
+                } else {
+                    vec![1, 64, 1408, 1409, 1500, 2048, 2304, 3071, 3072, 8192]
+                };
+                for count in counts {
+                    let rows = Counts::rows(count);
+                    let before = a.launches(&views, View::EMPTY, rows).unwrap();
+                    let after = b.launches(&views, View::EMPTY, rows).unwrap();
+                    match &range {
+                        Some((band, stages)) if band.contains(&count) => {
+                            assert_eq!(*stages, 2);
+                            let lab = Entry::new(base.clone(), *stages)
+                                .unwrap()
+                                .prepare(count)
+                                .unwrap()
+                                .launches(&views, View::EMPTY, rows)
+                                .unwrap();
+                            assert_eq!(after, lab, "n{} rows={count}", q.n);
+                            for call in &after {
+                                assert!(b.info().symbols.iter().any(|(symbol, shared)| {
+                                    symbol == &call.symbol
+                                        && *shared >= call.plan.dynamic_shared_bytes
+                                }));
+                                let tag = b.route(rows, call).unwrap();
+                                assert_eq!(tag.class, kernel_core::route::RouteClass::Fast);
+                                assert!(tag.admitted.iter().any(|r| r.contains(&count)));
+                            }
+                            ranged.insert((q.n, q.k, q.groups));
+                        }
+                        _ => assert_eq!(before, after, "ranks={ranks} n{} rows={count}", q.n),
+                    }
+                }
+            }
+        }
+        assert_eq!(
+            ranged,
+            [
+                (512, 5120, 1),
+                (576, 5120, 1),
+                (1024, 4096, 2),
+                (1280, 5120, 1)
+            ]
+            .into()
+        );
     }
 }

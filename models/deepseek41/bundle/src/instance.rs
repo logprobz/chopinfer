@@ -957,6 +957,7 @@ fn create(services: HostServicesV1, bytes: &[u8]) -> Result<Instance, Failed<Ins
         .shape
         .with_verify_rows(verify.rows_per_step)
         .with_wide_verify(config.execution.wide_verify)
+        .with_prefill_compact_dense_rows(config.execution.prefill_compact_dense_rows)
         .with_wide_draft(config.execution.wide_draft)
         .with_phased_decode_reduce(config.execution.phased_decode_reduce)
         .with_dspark_markov_staged(config.execution.dspark_markov_staged)

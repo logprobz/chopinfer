@@ -87,6 +87,19 @@ pub(super) struct Plan {
     /// A kept template's Engram plan, made at its first step with prepared
     /// gathers (`engram`); none for a plan not kept.
     engram: Option<OnceCell<Engram>>,
+    /// Tells a test when the plan is freed (`super::observe_events`).
+    #[cfg(test)]
+    _freed: Freed,
+}
+
+#[cfg(test)]
+struct Freed;
+
+#[cfg(test)]
+impl Drop for Freed {
+    fn drop(&mut self) {
+        super::event("plan freed");
+    }
 }
 
 /// An index selection of the body: its layer, and the packed rows of the
@@ -598,6 +611,8 @@ impl Plan {
             head,
             copies,
             engram: None,
+            #[cfg(test)]
+            _freed: Freed,
         })
     }
 

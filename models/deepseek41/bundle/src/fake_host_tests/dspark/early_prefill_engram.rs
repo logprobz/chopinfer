@@ -12,8 +12,8 @@ use crate::fake_host_tests::ar_engram::order;
 use crate::fake_host_tests::prefill_engram::create_backend_with_options;
 use crate::instance::execute::plan_timing::restore_without_snapshot;
 use model_deepseek41_contract::execution_options::{
-    DSPARK_EARLY_PREFILL_ENGRAM, DSPARK_GRAPH_HANDLES_PER_RANK, DSPARK_MIXED_PREPARED_ENGRAM,
-    PREFILL_PLAN_CACHE_VERIFY,
+    DSPARK_EARLY_PREFILL_ENGRAM, DSPARK_EARLY_PREFILL_PLAN, DSPARK_GRAPH_HANDLES_PER_RANK,
+    DSPARK_MIXED_PREPARED_ENGRAM, PREFILL_PLAN_CACHE_VERIFY,
 };
 use runtime_bundle_sdk::prefill::{Boundary, encode};
 
@@ -559,13 +559,22 @@ fn spans(instance: &BundleInstanceV1) -> Vec<DeviceBufferSpanV1> {
 
 /// A failed prefill join or completion refuses the mixed step as the
 /// default's does, with the same journal but for the moved begin, and
-/// publishes nothing. A failed enqueue, now before catch-up and
-/// drafting, refuses the step before any device work.
+/// publishes nothing. A failed enqueue, of the first layer or of the second
+/// after the first began, now before catch-up and drafting, refuses the
+/// step before any device work. Planning while the drafter runs changes
+/// none of these journals, with or without the early begin, and no device
+/// access touches a pending gather's ids or rows in any arm.
 #[test]
 fn gather_failures_after_an_early_begin_refuse_as_the_default_does() {
-    let on = [(DSPARK_EARLY_PREFILL_ENGRAM, true.into())];
+    let early = [(DSPARK_EARLY_PREFILL_ENGRAM, true.into())];
+    let plan = [(DSPARK_EARLY_PREFILL_PLAN, true.into())];
     // Eight prompts join two layers on four ranks each and complete both.
-    for (stage, after) in [("wait", 64 + 2), ("complete", 16), ("enqueue", 16)] {
+    for (stage, after) in [
+        ("wait", 64 + 2),
+        ("complete", 16),
+        ("enqueue", 16),
+        ("enqueue", 17),
+    ] {
         let run = |options: &[(&str, serde_json::Value)]| {
             let (host, mut instance, mixed) = prompted(options, |host| {
                 MappedHost::with_row_ids(host).failing(stage, after)
@@ -582,30 +591,39 @@ fn gather_failures_after_an_early_begin_refuse_as_the_default_does() {
                 Ok(()) => assert_eq!(host.acquired.get(), host.released.get()),
                 Err(_) => assert!(instance.is_poisoned()),
             }
+            assert!(host.races.borrow().is_empty(), "{:#?}", host.races.borrow());
             (step, indices)
         };
+        let context = format!("{stage} after {after}");
         let (off, indices) = run(&[]);
-        let (early, _) = run(&on);
+        let (begun, _) = run(&early);
+        let (planned, _) = run(&plan);
+        let (both, _) = run(&with(&early, &plan));
+        assert_same_lines(&off, &planned, &format!("{context}: early plans"));
+        assert_same_lines(&begun, &both, &format!("{context}: both"));
         if stage == "enqueue" {
-            assert!(!early.iter().any(|line| is_device_work(line)), "{early:#?}");
+            assert!(!begun.iter().any(|line| is_device_work(line)), "{begun:#?}");
             assert!(off.iter().any(|line| is_device_work(line)));
             continue;
         }
         let (begin_off, rest_off) = split(&off, &indices);
-        let (begin_on, rest_on) = split(&early, &indices);
-        assert_eq!(begin_off.len(), 4, "{stage}");
-        assert_same_lines(&begin_off, &begin_on, &format!("{stage}: the begins"));
-        assert_same_lines(&rest_off, &rest_on, stage);
+        let (begin_on, rest_on) = split(&begun, &indices);
+        assert_eq!(begin_off.len(), 4, "{context}");
+        assert_same_lines(&begin_off, &begin_on, &format!("{context}: the begins"));
+        assert_same_lines(&rest_off, &rest_on, &context);
     }
 }
 
 /// A mixed step its target refuses after the early begin (here a reused
-/// template's stale Engram plan, which the verify mode refuses) leaves
-/// its gathers pending for the next execute's entry. That settle joins
-/// them on every stream, fences every stream and completes both before
-/// any later upload can reuse their rows.
+/// template's stale Engram plan, which the verify mode refuses) poisons its
+/// runtime, so the ABI's poison check refuses the next execute before that
+/// entry's settle would run. The step settles its gathers before it
+/// returns instead: it joins them on every stream, fences every stream and
+/// completes both, so no later upload or teardown can reuse their rows
+/// while the host's copies run. The instance's own settle, reached past
+/// the poison check (`settle_refused`), then finds nothing pending.
 #[test]
-fn a_step_refused_after_an_early_begin_settles_its_gathers_at_the_next_entry() {
+fn a_step_refused_after_an_early_begin_settles_its_gathers_before_it_returns() {
     let options = [
         (DSPARK_EARLY_PREFILL_ENGRAM, true.into()),
         (PREFILL_PLAN_CACHE_VERIFY, true.into()),

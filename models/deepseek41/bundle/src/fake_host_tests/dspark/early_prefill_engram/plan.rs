@@ -6,7 +6,6 @@
 //! every result is the default's, with or without the early Engram begin.
 use super::*;
 use crate::instance::execute::plan_templates;
-use model_deepseek41_contract::execution_options::DSPARK_EARLY_PREFILL_PLAN;
 
 /// Each step of `on` issues `off`'s journal and results exactly, and every
 /// log line matches.
@@ -144,7 +143,8 @@ fn long_context_and_eager_verify_early_plans_issue_the_default_journal() {
 
 /// A reused template's stale Engram plan, which the verify mode refuses,
 /// planned while the drafter ran, refuses the step at its target as the
-/// default's lowering there does: the same journal, logs and state.
+/// default's lowering there does: the same journal, logs and state, with
+/// or without the early begin.
 #[test]
 fn a_refused_early_plan_refuses_the_target_as_the_default_does() {
     let refuse = |options: &[(&str, serde_json::Value)]| {
@@ -176,21 +176,128 @@ fn a_refused_early_plan_refuses_the_target_as_the_default_does() {
             Ok(()) => assert_eq!(host.acquired.get(), host.released.get()),
             Err(_) => assert!(instance.is_poisoned()),
         }
+        assert!(host.races.borrow().is_empty(), "{:#?}", host.races.borrow());
         (journal, logs, state)
     };
     let verify = [(PREFILL_PLAN_CACHE_VERIFY, true.into())];
-    let off = refuse(&verify);
-    let on = refuse(&with(&verify, &[(DSPARK_EARLY_PREFILL_PLAN, true.into())]));
-    assert_same_lines(&off.0, &on.0, "the refused step");
-    assert_same_lines(&off.1, &on.1, "its logs");
-    assert_eq!(off.2, on.2);
+    for options in [
+        verify.to_vec(),
+        with(&verify, &[(DSPARK_EARLY_PREFILL_ENGRAM, true.into())]),
+    ] {
+        let off = refuse(&options);
+        let on = refuse(&with(&options, &[(DSPARK_EARLY_PREFILL_PLAN, true.into())]));
+        assert_same_lines(&off.0, &on.0, "the refused step");
+        assert_same_lines(&off.1, &on.1, "its logs");
+        assert_eq!(off.2, on.2);
+    }
+}
+
+/// A mixed step that fails after its prefill was planned while the drafter
+/// ran, at the draft readback (an id outside the vocabulary, before the
+/// target) or at the target's last upload, refuses as the default does:
+/// the same journal, status and poisoning, with or without the early
+/// begin, and no device access touches a pending gather's ids or rows.
+/// Only the plan made before a readback failure differs: the default never
+/// planned that step, so the candidate's logs hold one more template line.
+#[test]
+fn failures_after_an_early_plan_refuse_as_the_default_does() {
+    let rows = |logs: &[String]| {
+        logs.iter()
+            .filter(|line| line.contains("prefill plan templates:"))
+            .count()
+    };
+    for early in [false, true] {
+        let begin = [(DSPARK_EARLY_PREFILL_ENGRAM, early.into())];
+        for failure in ["readback", "upload"] {
+            let fail = |options: &[(&str, serde_json::Value)]| {
+                // The step's uploads, for failing its last one.
+                let uploads = {
+                    let (host, mut instance, mixed) = prompted(options, MappedHost::with_row_ids);
+                    let begin = host.journal.borrow().len();
+                    run(&mut instance, &host, &mixed);
+                    let uploads = host.journal.borrow()[begin..]
+                        .iter()
+                        .filter(|line| line.starts_with("upload "))
+                        .count();
+                    instance.cancel().unwrap();
+                    instance.destroy().unwrap();
+                    uploads as u32
+                };
+                let (host, mut instance, mixed) = prompted(options, MappedHost::with_row_ids);
+                let begin = host.journal.borrow().len();
+                let logs = host.logs.borrow().len();
+                if failure == "readback" {
+                    host.injected.replace(Some(vec![0xff; 8 * 5 * 4]));
+                } else {
+                    host.fail_upload.set(Some(uploads - 1));
+                }
+                let status = instance.execute_prefill(&mixed, &mut Sink::default());
+                assert!(status.is_err(), "{failure}");
+                let journal = host.journal.borrow()[begin..].to_vec();
+                let logs: Vec<_> = host.logs.borrow()[logs..]
+                    .iter()
+                    .map(|line| untimed(line))
+                    .collect();
+                let expected = if failure == "readback" {
+                    "outside the vocabulary"
+                } else {
+                    "execute failed"
+                };
+                assert!(
+                    logs.iter().any(|line| line.contains(expected)),
+                    "{failure}: {logs:#?}"
+                );
+                let state = crate::instance::prefill_engram::refusal_state(instance.handle());
+                let _ = instance.cancel();
+                match instance.destroy() {
+                    Ok(()) => assert_eq!(host.acquired.get(), host.released.get()),
+                    Err(_) => assert!(instance.is_poisoned()),
+                }
+                assert!(host.races.borrow().is_empty(), "{:#?}", host.races.borrow());
+                (journal, logs, state, format!("{status:?}"))
+            };
+            let context = format!("early begin {early}, failed {failure}");
+            let (off, plans) = planned_with(|| fail(&begin));
+            let (on, early_plans) =
+                planned_with(|| fail(&with(&begin, &[(DSPARK_EARLY_PREFILL_PLAN, true.into())])));
+            assert_eq!(plans, 0, "{context}");
+            // Both runs of the candidate plan early: the dry run and the step.
+            assert_eq!(early_plans, 2, "{context}");
+            assert_same_lines(&off.0, &on.0, &context);
+            assert_eq!((&off.2, &off.3), (&on.2, &on.3), "{context}");
+            if failure == "readback" {
+                assert_eq!(rows(&on.1), rows(&off.1) + 1, "{context}");
+            }
+            let other = |logs: &[String]| -> Vec<String> {
+                logs.iter()
+                    .filter(|line| !line.contains("prefill plan templates:"))
+                    .cloned()
+                    .collect()
+            };
+            assert_same_lines(&other(&off.1), &other(&on.1), &format!("{context}: logs"));
+            if failure == "upload" {
+                assert_same_lines(&off.1, &on.1, &format!("{context}: logs"));
+            }
+        }
+    }
+}
+
+/// What `run` returned, and the prefills planned early meanwhile.
+fn planned_with<T>(run: impl FnOnce() -> T) -> (T, u64) {
+    let before = crate::instance::execute::early_prefill_plans();
+    let result = run();
+    (
+        result,
+        crate::instance::execute::early_prefill_plans() - before,
+    )
 }
 
 /// With room for two templates, prefills of 512, 600, 700 and 512 rows drop
 /// the oldest template at each of the last two, and the journals match.
 /// With the candidate a dropped template is freed once the prefill that
 /// dropped it launched, and one a plan outside a step dropped at the next
-/// step's entry, with or without a prefill; without it, at once.
+/// step's entry, with or without a prefill; without it, at once. The
+/// frees are observed as they happen, in order with the prefill's launch.
 #[test]
 fn dropped_templates_are_freed_after_the_prefill_launch() {
     use Then::*;
@@ -236,7 +343,10 @@ fn dropped_templates_are_freed_after_the_prefill_launch() {
             assert_eq!(plan_templates::retired(instance.handle()), held);
             // A step without a prefill frees it at its entry.
             let verifies: Vec<_> = (0..8).map(|slot| (slot, 3, 4)).collect();
-            run(&mut instance, &host, &batch(&[], &verifies));
+            let (_, events) = crate::instance::execute::observe_events(|| {
+                run(&mut instance, &host, &batch(&[], &verifies))
+            });
+            assert_eq!(events, vec!["plan freed"; held]);
             assert_eq!(plan_templates::retired(instance.handle()), 0);
             let kept: Vec<_> = (0..8).map(|slot| kept(verifier(slot), 4)).collect();
             instance.commit_accepted(&kept).unwrap();
@@ -246,11 +356,20 @@ fn dropped_templates_are_freed_after_the_prefill_launch() {
             // The mixed step frees those at its entry and the template its
             // own lowering drops once its prefill launched.
             let verifies: Vec<_> = (0..8).map(|slot| (slot, 7, 4)).collect();
-            run(
-                &mut instance,
-                &host,
-                &batch(&[prefill(7, 8, 0, 512)], &verifies),
-            );
+            let (_, events) = crate::instance::execute::observe_events(|| {
+                run(
+                    &mut instance,
+                    &host,
+                    &batch(&[prefill(7, 8, 0, 512)], &verifies),
+                )
+            });
+            let launch = ["prefill launch", "prefill launched"];
+            if held == 0 {
+                assert_eq!(events, [&["plan freed"][..], &launch].concat());
+            } else {
+                let entry = ["plan freed"; 2];
+                assert_eq!(events, [&entry[..], &launch, &["plan freed"]].concat());
+            }
             assert_eq!(evicted(&instance), 4);
             assert_eq!(plan_templates::retired(instance.handle()), 0);
             instance.cancel().unwrap();

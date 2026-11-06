@@ -59,6 +59,46 @@ pub(crate) fn early_prefill_plans() -> u64 {
     EARLY_PLANS.get()
 }
 
+#[cfg(test)]
+thread_local! {
+    static EVENTS: std::cell::RefCell<Option<Vec<&'static str>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Notes `event` for `observe_events`. A plan an instance left in its
+/// thread's table is freed after this thread's events are gone.
+#[cfg(test)]
+fn event(event: &'static str) {
+    let _ = EVENTS.try_with(|events| {
+        if let Ok(mut events) = events.try_borrow_mut()
+            && let Some(events) = events.as_mut()
+        {
+            events.push(event);
+        }
+    });
+}
+
+/// Runs `run`, and returns with its result what happened on this thread
+/// meanwhile, in order: each prefill run's launch beginning and end
+/// ("prefill launch", "prefill launched") and each upper-skip plan freed
+/// ("plan freed").
+#[cfg(test)]
+pub(crate) fn observe_events<T>(run: impl FnOnce() -> T) -> (T, Vec<&'static str>) {
+    struct Reset;
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            EVENTS.with_borrow_mut(|events| *events = None);
+        }
+    }
+    let _reset = Reset;
+    EVENTS.with_borrow_mut(|events| *events = Some(Vec::new()));
+    let result = run();
+    (
+        result,
+        EVENTS.with_borrow_mut(Option::take).unwrap_or_default(),
+    )
+}
+
 /// Phase-arena indexes (`Instance::arenas`).
 const PREFILL: usize = 0;
 const DECODE: usize = 1;
@@ -1836,9 +1876,17 @@ impl Instance {
             )?;
             #[cfg(feature = "diagnostic-taps")]
             self.kv_taps(run, false)?;
+            #[cfg(test)]
+            if run.phase.prefill() {
+                event("prefill launch");
+            }
             measure(times.as_deref_mut().map(|t| &mut t.submit_us), || {
                 self.launch(run)
             })?;
+            #[cfg(test)]
+            if run.phase.prefill() {
+                event("prefill launched");
+            }
             // The templates its planning dropped are freed while it runs,
             // charged to the target's lowering.
             if run.phase.prefill() {

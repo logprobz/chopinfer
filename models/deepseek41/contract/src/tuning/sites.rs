@@ -41,6 +41,7 @@ pub(super) fn validate(row: &Row) -> Result<(), TuningError> {
         }
         "dense_fold.stream.decode" => (&["stream"], &[], &[]),
         "dense_prefill.compact.prefill"
+        | "dense_prefill.compact_range.prefill"
         | "dense_prefill.matrix.prefill"
         | "dense_prefill.dspark_main.prefill" => (
             &["prefill_tiles"],
@@ -82,6 +83,7 @@ pub(super) fn validate(row: &Row) -> Result<(), TuningError> {
         | "hc.draft_admit.verify"
         | "hc.wide_mix.verify"
         | "norm.input_admit.prefill"
+        | "norm.input_range.prefill"
         | "norm.query_admit.prefill"
         | "norm.small_admit.decode" => (&["admit"], &[], &[]),
         "hc.expand_mix.prefill" | "hc.lagged_mix.prefill" => {
@@ -245,7 +247,9 @@ fn validate_values(row: &Row) -> Result<(), TuningError> {
                 && (8..=64).contains(&count("tile_n"))
                 && count("tile_n") % 8 == 0
         }
-        "dense_prefill.compact.prefill" | "dense_prefill.dspark_main.prefill" => {
+        "dense_prefill.compact.prefill"
+        | "dense_prefill.compact_range.prefill"
+        | "dense_prefill.dspark_main.prefill" => {
             !flag("matrix_fetch")
                 && count("tile_rows") == compact_tile(first)
                 && count("tile_rows") == compact_tile(last)

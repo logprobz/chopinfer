@@ -168,8 +168,11 @@ enum Lead {
 /// plane of a large leader's table, width and ids copies the leader's bytes.
 /// Every other plane then gathers on its own, as [`gather_plane_v1`] does;
 /// another rank's copy of a resident-path leader finds its rows in the
-/// resident cache, or without one in the page cache. The bytes equal
-/// gathering plane by plane: each is the mapped table's row or a copy of it.
+/// resident cache, or without one in the page cache. With more than one
+/// `CHOPINFER_MAPPED_FANOUT_COPIERS`, the copies of large leaders come last,
+/// on that many threads. The bytes equal gathering plane by plane: each is
+/// the mapped table's row or a copy of it. A gather that succeeds has
+/// written every byte of every output.
 pub fn gather_planes_v1(
     planes: &[MappedGatherPlaneV1],
     input: &[u8],
@@ -249,6 +252,11 @@ pub fn gather_planes_v1(
             Lead::No => unreachable!("only leaders copy"),
         }
     }
+    // With more than one fanout copier, the copies of large leaders wait
+    // for the planes that gather on their own, which read no other plane,
+    // and then fan out together; with one, each plane copies in turn.
+    let parallel = fetch::fanout_copiers() > 1;
+    let mut twins = Vec::new();
     for index in 0..planes.len() {
         if leads[index] != Lead::No {
             continue;
@@ -267,12 +275,42 @@ pub fn gather_planes_v1(
         match twin {
             Some(leader) => {
                 let _ = gather::mapped_async_read_ahead_v1();
-                rest[0].copy_from_slice(done[leader]);
+                if parallel {
+                    twins.push((index, leader));
+                } else {
+                    rest[0].copy_from_slice(done[leader]);
+                }
             }
             None => gather_plane_v1(plane, input, rest[0])?,
         }
     }
+    if !twins.is_empty() {
+        fan_out(outputs, &twins);
+    }
     Ok(())
+}
+
+/// Copies each `(twin, leader)` plane's leader bytes into the twin
+/// (`fetch::copy_fanout`).
+fn fan_out(outputs: &mut [&mut [u8]], twins: &[(usize, usize)]) {
+    let mut slots = outputs
+        .iter_mut()
+        .map(|output| Some(&mut **output))
+        .collect::<Vec<_>>();
+    let mut copies = Vec::with_capacity(twins.len());
+    for &(twin, leader) in twins {
+        copies.push((slots[twin].take().expect("one copy per twin"), leader));
+    }
+    let leaders = slots
+        .into_iter()
+        .map(|slot| slot.map(|bytes| &*bytes))
+        .collect::<Vec<_>>();
+    crate::host_rows::fetch::copy_fanout(
+        copies
+            .into_iter()
+            .map(|(to, leader)| (to, leaders[leader].expect("a leader copies no other plane")))
+            .collect(),
+    );
 }
 
 /// Each plane's output inside a gather's per-stream outputs, in plane order:

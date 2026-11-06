@@ -16,9 +16,20 @@ pub(crate) mod host_work {
         Box<dyn FnOnce(&[u8], &mut [&mut [u8]]) -> Result<(), String> + Send>;
     pub(crate) type HostResult = Arc<Mutex<Option<(u64, Result<(), String>)>>>;
 
+    /// When the work's outputs are zeroed for their uploads
+    /// (`HostTransformInit`).
+    #[derive(Clone, Debug, Eq, PartialEq)]
+    pub(crate) enum Init {
+        /// Every output zeroed before the work.
+        Extents,
+        /// Each output's uploaded `ranges` zeroed only after work that fails.
+        OnFailure { ranges: Vec<Vec<(usize, usize)>> },
+    }
+
     struct Work {
         input: (usize, usize),
         outputs: Vec<(usize, usize)>,
+        init: Init,
         call: HostWork,
         result: HostResult,
     }
@@ -35,38 +46,64 @@ pub(crate) mod host_work {
     extern "C" fn run(pointer: *mut c_void) {
         // SAFETY-REVIEWED: enqueue transfers one Box to CUDA, invoked exactly once.
         let work = unsafe { Box::from_raw(pointer.cast::<Work>()) };
-        let result = Arc::clone(&work.result);
+        let Work {
+            input,
+            outputs,
+            init,
+            call,
+            result,
+        } = *work;
         let start = std::time::Instant::now();
-        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            // SAFETY-REVIEWED: private pinned allocations remain retained and inaccessible
-            // to the caller until completion; the preceding D2H has finished.
-            let input =
-                unsafe { std::slice::from_raw_parts(work.input.0 as *const u8, work.input.1) };
-            let mut outputs: Vec<_> = work
-                .outputs
+        let slices = || -> Vec<&mut [u8]> {
+            outputs
                 .iter()
                 .map(|&(pointer, length)| {
-                    // SAFETY-REVIEWED: each range belongs to a distinct retained allocation.
+                    // SAFETY-REVIEWED: each range belongs to a distinct retained allocation,
+                    // and no other slice of it is live when this one is made.
                     unsafe { std::slice::from_raw_parts_mut(pointer as *mut u8, length) }
                 })
-                .collect();
-            for output in &mut outputs {
-                output.fill(0);
+                .collect()
+        };
+        let mut outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            // SAFETY-REVIEWED: private pinned allocations remain retained and inaccessible
+            // to the caller until completion; the preceding D2H has finished.
+            let input = unsafe { std::slice::from_raw_parts(input.0 as *const u8, input.1) };
+            let mut outputs = slices();
+            if init == Init::Extents {
+                for output in &mut outputs {
+                    output.fill(0);
+                }
             }
-            (work.call)(input, &mut outputs)
+            call(input, &mut outputs)
         }))
         .unwrap_or_else(|_| Err("host transform panicked".into()));
+        // Failed work's uploads still copy, so its ranges are zeroed now.
+        if outcome.is_err()
+            && let Init::OnFailure { ranges } = &init
+            && std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                for (output, ranges) in slices().iter_mut().zip(ranges) {
+                    for &(start, length) in ranges {
+                        output[start..start + length].fill(0);
+                    }
+                }
+            }))
+            .is_err()
+        {
+            outcome = Err("host transform output initialization panicked".into());
+        }
         let elapsed = u64::try_from(start.elapsed().as_nanos()).unwrap_or(u64::MAX);
         *result.lock().unwrap_or_else(|error| error.into_inner()) = Some((elapsed, outcome));
     }
 
     /// The owner must keep every allocation alive and inaccessible until the
-    /// enqueued work completes, including when a later enqueue fails.
+    /// enqueued work completes, including when a later enqueue fails. Each
+    /// output's `OnFailure` ranges lie within its bytes.
     pub(crate) fn enqueue(
         stream: StreamHandle,
         input: &PinnedAllocation,
         input_bytes: usize,
         outputs: &[(&PinnedAllocation, usize)],
+        init: Init,
         call: HostWork,
     ) -> (c_int, HostResult) {
         let result = Arc::new(Mutex::new(None));
@@ -76,6 +113,7 @@ pub(crate) mod host_work {
                 .iter()
                 .map(|(buffer, bytes)| (buffer.pointer as usize, *bytes))
                 .collect(),
+            init,
             call,
             result: Arc::clone(&result),
         });
@@ -99,6 +137,15 @@ pub(crate) mod host_work {
             outputs: &mut [&mut [u8]],
             call: HostWork,
         ) -> (u64, Result<(), String>) {
+            invoke_with(input, outputs, Init::Extents, call)
+        }
+
+        fn invoke_with(
+            input: &[u8],
+            outputs: &mut [&mut [u8]],
+            init: Init,
+            call: HostWork,
+        ) -> (u64, Result<(), String>) {
             let result = Arc::new(Mutex::new(None));
             let work = Box::new(Work {
                 input: (input.as_ptr() as usize, input.len()),
@@ -106,6 +153,7 @@ pub(crate) mod host_work {
                     .iter_mut()
                     .map(|bytes| (bytes.as_mut_ptr() as usize, bytes.len()))
                     .collect(),
+                init,
                 call,
                 result: Arc::clone(&result),
             });
@@ -154,6 +202,49 @@ pub(crate) mod host_work {
                     }
                 );
                 assert_eq!(output, [0; 4]);
+            }
+        }
+
+        /// Two uploaded ranges of a six-byte output, a gap between them.
+        fn on_failure() -> Init {
+            Init::OnFailure {
+                ranges: vec![vec![(0, 2), (4, 2)]],
+            }
+        }
+
+        #[test]
+        fn failure_initialization_leaves_written_bytes_and_zeroes_a_failure() {
+            // Work that succeeds wrote every uploaded byte: nothing else is touched.
+            let mut output = [0xff; 6];
+            let (_, result) = invoke_with(
+                &[9],
+                &mut [&mut output],
+                on_failure(),
+                Box::new(|input, output| {
+                    output[0][..2].fill(input[0]);
+                    output[0][4..].fill(input[0]);
+                    Ok(())
+                }),
+            );
+            assert_eq!(result, Ok(()));
+            assert_eq!(output, [9, 9, 0xff, 0xff, 9, 9]);
+            // Failed or panicking work leaves its uploaded ranges zeroed.
+            for panic in [false, true] {
+                let mut output = [0xff; 6];
+                let (_, result) = invoke_with(
+                    &[9],
+                    &mut [&mut output],
+                    on_failure(),
+                    Box::new(move |input, output| {
+                        output[0][0] = input[0];
+                        if panic {
+                            panic!("injected host failure");
+                        }
+                        Err("row outside table".into())
+                    }),
+                );
+                assert!(result.is_err());
+                assert_eq!(output, [0, 0, 0xff, 0xff, 0, 0]);
             }
         }
     }
@@ -381,6 +472,8 @@ unsafe extern "C" {
     fn runtime_cuda_fake_call_count(operation: c_int) -> usize;
     fn runtime_cuda_fake_ordering_violations() -> usize;
     fn runtime_cuda_fake_set_api_call_copies(enabled: c_int);
+    #[cfg(test)]
+    fn runtime_cuda_fake_fill_host_allocations(byte: c_int);
     fn runtime_cuda_fake_set_visible_devices(count: c_int);
     #[cfg(test)]
     fn runtime_cuda_fake_encoded_tensor_map(
@@ -471,6 +564,15 @@ pub fn fake_driver_ordering_violations() -> usize {
 pub fn fake_driver_set_api_call_copies(enabled: bool) {
     // SAFETY-REVIEWED: the no-device test stub stores one integer flag.
     unsafe { runtime_cuda_fake_set_api_call_copies(c_int::from(enabled)) }
+}
+
+/// Makes the no-device stub's new host allocations on this thread hold
+/// `byte`, as the real driver's hold whatever they held, instead of zeros,
+/// until the next reset.
+#[cfg(all(test, feature = "fake-driver-tests"))]
+pub fn fake_driver_fill_host_allocations(byte: u8) {
+    // SAFETY-REVIEWED: the no-device test stub stores one thread-local integer.
+    unsafe { runtime_cuda_fake_fill_host_allocations(c_int::from(byte)) }
 }
 
 /// Makes the no-device stub show this thread `count` synthetic devices
@@ -840,8 +942,13 @@ impl PinnedAllocation {
         let mut pointer = ptr::null_mut();
         // SAFETY-REVIEWED: the shim validates byte length and initializes one pointer.
         let code = result_code(unsafe { runtime_cuda_host_alloc(&mut pointer, bytes) });
-        let allocation =
-            (code == CUDA_SUCCESS && !pointer.is_null()).then_some(Self { pointer, bytes });
+        let allocation = (code == CUDA_SUCCESS && !pointer.is_null()).then(|| {
+            // SAFETY-REVIEWED: the driver returned `bytes` writable bytes that
+            // nothing references yet and that it does not initialize. They are
+            // zeroed once here, before any slice of them is formed.
+            unsafe { ptr::write_bytes(pointer.cast::<u8>(), 0, bytes) };
+            Self { pointer, bytes }
+        });
         (code, allocation)
     }
 
@@ -882,13 +989,18 @@ impl MappedHostAllocation {
         let code = result_code(unsafe {
             runtime_cuda_host_alloc_mapped(&mut pointer, &mut device, bytes)
         });
-        let allocation =
-            (code == CUDA_SUCCESS && !pointer.is_null() && device != 0).then_some(Self {
+        let allocation = (code == CUDA_SUCCESS && !pointer.is_null() && device != 0).then(|| {
+            // SAFETY-REVIEWED: the driver returned `bytes` writable host bytes
+            // that nothing references yet and that it does not initialize. They
+            // are zeroed once here, before any slice of them is formed.
+            unsafe { ptr::write_bytes(pointer.cast::<u8>(), 0, bytes) };
+            Self {
                 pointer,
                 device,
                 bytes,
                 freed: std::cell::Cell::new(false),
-            });
+            }
+        });
         (code, allocation)
     }
 

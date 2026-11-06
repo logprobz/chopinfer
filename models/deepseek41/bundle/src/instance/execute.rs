@@ -49,6 +49,56 @@ pub(crate) mod plan_templates;
 pub(crate) mod plan_timing;
 pub(crate) mod skip;
 
+#[cfg(test)]
+thread_local! { static EARLY_PLANS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) }; }
+
+/// The prefills planned while their drafter ran on this thread
+/// (`Instance::stage_early_prefill`).
+#[cfg(test)]
+pub(crate) fn early_prefill_plans() -> u64 {
+    EARLY_PLANS.get()
+}
+
+#[cfg(test)]
+thread_local! {
+    static EVENTS: std::cell::RefCell<Option<Vec<&'static str>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Notes `event` for `observe_events`. A plan an instance left in its
+/// thread's table is freed after this thread's events are gone.
+#[cfg(test)]
+fn event(event: &'static str) {
+    let _ = EVENTS.try_with(|events| {
+        if let Ok(mut events) = events.try_borrow_mut()
+            && let Some(events) = events.as_mut()
+        {
+            events.push(event);
+        }
+    });
+}
+
+/// Runs `run`, and returns with its result what happened on this thread
+/// meanwhile, in order: each prefill run's launch beginning and end
+/// ("prefill launch", "prefill launched") and each upper-skip plan freed
+/// ("plan freed").
+#[cfg(test)]
+pub(crate) fn observe_events<T>(run: impl FnOnce() -> T) -> (T, Vec<&'static str>) {
+    struct Reset;
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            EVENTS.with_borrow_mut(|events| *events = None);
+        }
+    }
+    let _reset = Reset;
+    EVENTS.with_borrow_mut(|events| *events = Some(Vec::new()));
+    let result = run();
+    (
+        result,
+        EVENTS.with_borrow_mut(Option::take).unwrap_or_default(),
+    )
+}
+
 /// Phase-arena indexes (`Instance::arenas`).
 const PREFILL: usize = 0;
 const DECODE: usize = 1;
@@ -57,8 +107,21 @@ pub(super) const VERIFY: usize = 2;
 /// after its prefill (`Instance::admits_mixed_engram`).
 const MIXED_VERIFY_ROWS: u32 = 64;
 
+/// What a run takes, fixed when it is planned. Uploads, gather begins,
+/// admission checks and completions read these, never whether a plan is
+/// complete yet.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct Route {
+    /// An upper-skip prefill: its logits rows upload compacted, its index
+    /// status is cleared, and its DSpark pack counts are the plan's.
+    skip: bool,
+    /// A prefill whose Engram rows arrive through the prepared gathers.
+    prepared_gathers: bool,
+}
+
 /// One phase of a step, planned before the step opens.
 pub(super) struct Run {
+    route: Route,
     execution: Execution,
     /// The selected synchronous cause, absent when a prepared gather serves the phase.
     pub(super) sync_engram: Option<crate::engram_rows::SyncReason>,
@@ -112,17 +175,41 @@ enum Execution {
     Standard,
     PrefillEngram(super::prefill_engram::Plan),
     Skip {
-        plan: std::rc::Rc<skip::Plan>,
+        plan: SkipPlan,
+        /// The body's Engram plan, made with the plan once it is ready; a
+        /// pending plan makes its own while it issues.
         engram: Option<super::prefill_engram::Plan>,
     },
 }
 
+/// An upper-skip plan: ready, from a kept plan, a template or a fresh
+/// lowering, or pending, to lower while it issues
+/// (`prefill_streamed_lowering`).
+enum SkipPlan {
+    Ready(std::rc::Rc<skip::Plan>),
+    Pending(Box<plan_cache::Pending>),
+}
+
 impl Execution {
+    /// The ready upper-skip plan; none for a pending one.
     fn skip(&self) -> Option<&skip::Plan> {
         match self {
-            Self::Skip { plan, .. } => Some(plan),
+            Self::Skip {
+                plan: SkipPlan::Ready(plan),
+                ..
+            } => Some(plan),
             _ => None,
         }
+    }
+
+    fn pending(&self) -> bool {
+        matches!(
+            self,
+            Self::Skip {
+                plan: SkipPlan::Pending(_),
+                ..
+            }
+        )
     }
 
     fn prefill_engram(&self) -> Option<&super::prefill_engram::Plan> {
@@ -159,16 +246,29 @@ impl<'a> Executor<'a> {
         programs: &[impl AsRef<[PreparedLaunch]>],
         collectives: &[impl AsRef<[bool]>],
     ) -> Result<(), DispatchError> {
+        self.issue_in(&mut Unit::default(), programs, collectives)
+    }
+
+    /// `issue` as part of `unit`, which earlier calls may have started: a
+    /// refusal, before or between submissions, poisons once any submission
+    /// of the unit succeeded.
+    pub(super) fn issue_in(
+        &self,
+        unit: &mut Unit,
+        programs: &[impl AsRef<[PreparedLaunch]>],
+        collectives: &[impl AsRef<[bool]>],
+    ) -> Result<(), DispatchError> {
         let streams = self.streams;
-        if self.instance.collectives.is_poisoned() {
+        let poison = &self.instance.collectives;
+        if poison.is_poisoned() {
             return Err(BundleAbiError::Status(BundleStatusV1::InvalidState).into());
         }
         if programs.len() != streams.len() || self.instance.symbols.len() != streams.len() {
-            return Err(DispatchError::InvalidPlan);
+            return unit.record(poison, Err(DispatchError::InvalidPlan));
         }
         if let Err(error) = check_collectives(programs, collectives) {
             self.instance.log(&error);
-            return Err(DispatchError::InvalidPlan);
+            return unit.record(poison, Err(DispatchError::InvalidPlan));
         }
         let segments = programs
             .iter()
@@ -178,8 +278,8 @@ impl<'a> Executor<'a> {
         self.run(|| {
             let mut started = vec![false; streams.len()];
             launch_segments(
-                &self.instance.collectives,
-                &mut Unit::default(),
+                poison,
+                unit,
                 &mut started,
                 &segments,
                 |rank, launches| {
@@ -197,8 +297,9 @@ impl<'a> Executor<'a> {
     }
 }
 
-/// Prefill hashes retained for execution, or a legacy phase planned before
-/// staging uploads so its reason reflects the actual selected schedule.
+/// Prefill hashes retained for execution, or a phase planned before its
+/// target: a legacy one before staging uploads so its reason reflects the
+/// actual selected schedule, or one planned while its drafter ran.
 pub(super) enum StagedPrefill {
     Hashes(Hashed),
     Planned {
@@ -213,6 +314,21 @@ impl StagedPrefill {
         match self {
             Self::Planned { run: Ok(run), .. } => Some(&mut run.inputs),
             _ => None,
+        }
+    }
+
+    pub(super) fn inputs(&self) -> Option<&PhaseInputs> {
+        match self {
+            Self::Planned { run: Ok(run), .. } => Some(&run.inputs),
+            _ => None,
+        }
+    }
+
+    /// Whether the planned prefill takes prepared gathers with its staged ids.
+    pub(super) fn prepared(&self) -> bool {
+        match self {
+            Self::Planned { run: Ok(run), .. } => run.route.prepared_gathers,
+            _ => false,
         }
     }
 }
@@ -735,6 +851,10 @@ impl Instance {
         };
         advance_step();
         let mut run = Run {
+            route: Route {
+                skip: skipping,
+                prepared_gathers: false,
+            },
             execution: Execution::Standard,
             sync_engram: None,
             ar_engram,
@@ -774,10 +894,12 @@ impl Instance {
             } else {
                 Some(crate::engram_rows::SyncReason::HostTarget)
             };
+            run.route.prepared_gathers =
+                run.phase.prefill() && run.sync_engram.is_none() && self.prefill_engram.is_some();
             if let Some(gathers) = self
                 .prefill_engram
                 .as_ref()
-                .filter(|_| run.phase.prefill() && run.sync_engram.is_none())
+                .filter(|_| run.route.prepared_gathers && !run.execution.pending())
             {
                 let plan = if let Some(skip) = run.execution.skip() {
                     skip.engram(gathers, self.plans.verifies())
@@ -798,6 +920,15 @@ impl Instance {
                     _ => run.execution = Execution::PrefillEngram(plan),
                 }
             }
+            // The route says what the complete plans would.
+            debug_assert_eq!(
+                run.route.skip,
+                run.execution.skip().is_some() || run.execution.pending()
+            );
+            debug_assert!(
+                run.execution.pending()
+                    || run.route.prepared_gathers == run.execution.prefill_engram().is_some()
+            );
             Ok(())
         })();
         if let Err(error) = planned {
@@ -848,6 +979,31 @@ impl Instance {
             && verify.verify
             && verify.live_tokens() <= MIXED_VERIFY_ROWS
             && matches!(self.phase_of(verify), Ok((_, VERIFY, _, Some(_))))
+    }
+
+    /// Plans a DSpark prefill that reads no encoder rows from its staged
+    /// ids `hashed` while the drafter runs (`dspark_early_prefill_plan`),
+    /// as its target would plan it: the same inputs, plan caches and
+    /// gathers, with no encoder or gather work. The target consumes the
+    /// plan after its encode and advances the index-tag sequence where it
+    /// would have planned.
+    pub(super) fn stage_early_prefill(
+        &self,
+        inputs: &mut PhaseInputs,
+        hashed: &Hashed,
+    ) -> StagedPrefill {
+        #[cfg(test)]
+        EARLY_PLANS.set(EARLY_PLANS.get() + 1);
+        let advance_step = std::cell::Cell::new(false);
+        let run = self
+            .prepare_run(inputs, None, Some(hashed.clone()), || {
+                advance_step.set(true)
+            })
+            .map(Box::new);
+        StagedPrefill::Planned {
+            run,
+            advance_step: advance_step.get(),
+        }
     }
 
     /// Plan a legacy DSpark prefill without issuing encoder or gather work.
@@ -932,7 +1088,7 @@ impl Instance {
             },
         );
         // Only a prefill gathers its logits rows; decode rows are its items.
-        let rows = if run.execution.skip().is_some() {
+        let rows = if run.route.skip {
             (0..run.head_rows).collect()
         } else if run.arena == PREFILL {
             run.inputs.logit_rows()
@@ -974,7 +1130,7 @@ impl Instance {
                     .zero_device_buffer(stream, scratch.row_status)?;
                 self.services
                     .zero_device_buffer(stream, scratch.shared_row_status)?;
-                if run.execution.skip().is_some() {
+                if run.route.skip {
                     self.services
                         .zero_device_buffer(stream, scratch.index_status)?;
                 }
@@ -1017,7 +1173,7 @@ impl Instance {
                     &self.engram,
                     run.engram
                         .as_ref()
-                        .filter(|_| run.execution.prefill_engram().is_none() && !run.ar_engram),
+                        .filter(|_| !run.route.prepared_gathers && !run.ar_engram),
                     self.image,
                 ) {
                     let reason = run
@@ -1095,13 +1251,37 @@ impl Instance {
         if run.graph.is_some() {
             self.activate_indexer_graphs(run.bank);
         }
+        if run.execution.pending() {
+            let Execution::Skip {
+                plan: SkipPlan::Pending(pending),
+                ..
+            } = std::mem::replace(&mut run.execution, Execution::Standard)
+            else {
+                unreachable!("a pending upper-skip plan");
+            };
+            let (plan, engram) = skip::launch_streamed(self, run, &pending.layout)?;
+            let plan = self.plans.keep_streamed(self, run, plan, engram, *pending);
+            run.execution = Execution::Skip {
+                plan: SkipPlan::Ready(plan),
+                engram: None,
+            };
+            return Ok(());
+        }
         match &run.execution {
-            Execution::Skip { plan, engram } => {
+            Execution::Skip {
+                plan: SkipPlan::Ready(plan),
+                engram,
+            } => {
                 return plan.execute(self, engram.as_ref());
             }
+            Execution::Skip {
+                plan: SkipPlan::Pending(_),
+                ..
+            } => unreachable!("launched above"),
             Execution::PrefillEngram(plan) => {
+                // One unit for the whole prefill, as an upper-skip plan's.
                 return plan
-                    .execute(self, &run.programs, &run.collectives)
+                    .execute(self, &mut Unit::default(), &run.programs, &run.collectives)
                     .map_err(|error| self.dispatch_failed(error));
             }
             Execution::Standard => {}
@@ -1319,6 +1499,17 @@ impl Instance {
         Executor::new(self, streams).issue(programs, collectives)
     }
 
+    /// `launch_eager` as part of `unit` (`Executor::issue_in`).
+    pub(super) fn launch_eager_in(
+        &self,
+        unit: &mut Unit,
+        streams: &[BundleStreamHandleV1],
+        programs: &[impl AsRef<[PreparedLaunch]>],
+        collectives: &[impl AsRef<[bool]>],
+    ) -> Result<(), DispatchError> {
+        Executor::new(self, streams).issue_in(unit, programs, collectives)
+    }
+
     /// Capture every rank before replay, with each fork/join region in one piece.
     fn launch_overlapped(
         &mut self,
@@ -1499,6 +1690,9 @@ impl Instance {
         if self.ledger.step().is_some() {
             return BundleStatusV1::InvalidState;
         }
+        // A step that failed before its prefill launched left the templates
+        // its planning dropped.
+        self.plans.release_dropped();
         if let Err(error) = self.settle_prefill_engram() {
             self.log(&format!("prefill Engram: a failed step's uploads: {error}"));
             return status(error);
@@ -1641,12 +1835,25 @@ impl Instance {
                 Err(error) => return error,
             }
         }
+        // Gathers begun before drafting serve only the prefill's prepared
+        // gathers (`admits_early_prefill_engram`).
+        if self
+            .prefill_engram
+            .as_ref()
+            .is_some_and(|gathers| gathers.begun_early())
+            && !runs
+                .first()
+                .is_some_and(|run| run.phase.prefill() && run.route.prepared_gathers)
+        {
+            self.log("DSpark prefill Engram began early for a step without prepared gathers");
+            return BundleStatusV1::InternalError;
+        }
         // A mixed step's verify rows wait for its prefill's prepared gathers
         // (`admits_mixed_engram`).
         if self.mixed_engram_deferred()
             && !runs
                 .first()
-                .is_some_and(|run| run.phase.prefill() && run.execution.prefill_engram().is_some())
+                .is_some_and(|run| run.phase.prefill() && run.route.prepared_gathers)
         {
             self.log("DSpark mixed Engram rows have no prepared prefill gathers");
             return BundleStatusV1::InternalError;
@@ -1737,23 +1944,24 @@ impl Instance {
                                 .ok_or(BundleAbiError::InvalidRange("AR Engram hashes"))?,
                         )?;
                     }
-                    if run.execution.prefill_engram().is_some() {
-                        self.prefill_engram
+                    if run.route.prepared_gathers {
+                        let gathers = self
+                            .prefill_engram
                             .as_ref()
-                            .expect("prepared prefill gather")
-                            .begin(
-                                &self.services,
-                                self.ranks[0].2,
-                                run.engram.as_ref().expect("prefill hashes"),
-                                run.inputs.positions.first().copied().unwrap_or(0),
-                            )?;
+                            .expect("prepared prefill gather");
+                        let hashed = run.engram.as_ref().expect("prefill hashes");
+                        let start = run.inputs.positions.first().copied().unwrap_or(0);
+                        // Gathers begun before drafting already copy these rows.
+                        if !gathers.take_early(hashed.rows(), start)? {
+                            gathers.begin(&self.services, self.ranks[0].2, hashed, start)?;
+                        }
                     }
                     self.upload_dspark_cycle(run.arena, run.layout, &run.inputs)
                         .map_err(|error| {
                             self.log(&error);
                             BundleAbiError::Status(BundleStatusV1::BundleError)
                         })?;
-                    if run.execution.skip().is_none() {
+                    if !run.route.skip {
                         let live = if self.allocated_step().is_some() && run.inputs.verify {
                             run.phase.rows()
                         } else {
@@ -1766,9 +1974,24 @@ impl Instance {
             )?;
             #[cfg(feature = "diagnostic-taps")]
             self.kv_taps(run, false)?;
+            #[cfg(test)]
+            if run.phase.prefill() {
+                event("prefill launch");
+            }
             measure(times.as_deref_mut().map(|t| &mut t.submit_us), || {
                 self.launch(run)
             })?;
+            #[cfg(test)]
+            if run.phase.prefill() {
+                event("prefill launched");
+            }
+            // The templates its planning dropped are freed while it runs,
+            // charged to the target's lowering.
+            if run.phase.prefill() {
+                measure(times.as_deref_mut().map(|t| &mut t.lower_us), || {
+                    self.plans.release_dropped()
+                });
+            }
             #[cfg(feature = "diagnostic-taps")]
             self.kv_taps(run, true)?;
             if run.media.is_some() {
@@ -1781,7 +2004,7 @@ impl Instance {
                 if run.ar_engram {
                     self.finish_ar_engram()?;
                 }
-                if run.execution.prefill_engram().is_some() && self.dspark.is_none() {
+                if run.route.prepared_gathers && self.dspark.is_none() {
                     self.prefill_engram
                         .as_ref()
                         .expect("prepared prefill gather")
@@ -1846,11 +2069,7 @@ impl Instance {
         })?;
         // DSpark's per-phase status checks only save device rows. The
         // consolidated boundary above completes every consumer stream.
-        if self.dspark.is_some()
-            && runs
-                .iter()
-                .any(|run| run.execution.prefill_engram().is_some())
-        {
+        if self.dspark.is_some() && runs.iter().any(|run| run.route.prepared_gathers) {
             self.prefill_engram
                 .as_ref()
                 .expect("prepared prefill gather")
@@ -1872,7 +2091,7 @@ impl Instance {
                     if run.ar_engram {
                         self.finish_ar_engram()?;
                     }
-                    if run.execution.prefill_engram().is_some() {
+                    if run.route.prepared_gathers {
                         self.prefill_engram
                             .as_ref()
                             .expect("prepared prefill gather")

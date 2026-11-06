@@ -7,7 +7,9 @@ compile_error!("runtime-cuda supports only Linux x86_64 CUDA deployments");
 
 mod ffi;
 mod host_transform;
-pub use host_transform::{HostTransform, HostTransformStats, HostTransformTarget};
+pub use host_transform::{
+    HostTransform, HostTransformInit, HostTransformStats, HostTransformTarget,
+};
 mod page_copy;
 pub use page_copy::{PageCopyArena, PageCopyDirection, PageCopyPair};
 
@@ -3094,6 +3096,22 @@ mod tests {
         assert_eq!(ffi::fake_driver_call_count(HOST_FREE), 1);
         drop(clone);
         assert_eq!(ffi::fake_driver_call_count(HOST_FREE), 2);
+    }
+
+    /// The driver leaves page-locked bytes uninitialized; both host
+    /// allocations zero theirs before any slice of them exists.
+    #[cfg(feature = "fake-driver-tests")]
+    #[test]
+    fn page_locked_host_allocations_start_zeroed_whatever_the_driver_left() {
+        let _context = live_fake_context(0, 0x100);
+        ffi::fake_driver_reset();
+        ffi::fake_driver_fill_host_allocations(0xa5);
+        let (code, pinned) = ffi::PinnedAllocation::allocate(4099);
+        assert_eq!(code, 0);
+        assert!(pinned.unwrap().as_slice().iter().all(|&byte| byte == 0));
+        let (code, mapped) = ffi::MappedHostAllocation::allocate(4099);
+        assert_eq!(code, 0);
+        assert!(mapped.unwrap().as_mut_slice().iter().all(|&byte| byte == 0));
     }
 
     #[cfg(feature = "fake-driver-tests")]

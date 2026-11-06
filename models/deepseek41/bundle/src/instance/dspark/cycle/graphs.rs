@@ -20,12 +20,44 @@ impl Instance {
         ranges: &[Vec<std::ops::Range<usize>>],
         programs: &[Vec<PreparedLaunch>],
         collectives: &[Vec<bool>],
+        join: impl FnMut(usize) -> Result<(), BundleAbiError>,
+    ) -> Result<(), DispatchError> {
+        self.launch_pieces(None, streams, ranges, programs, collectives, join)
+    }
+
+    /// `launch_layered_pieces` as part of `unit`: a refusal or a failed join
+    /// after any submission of the unit poisons, as within one piece. A
+    /// prefill's pieces write persistent state from the first one on.
+    pub(in crate::instance) fn launch_layered_pieces_in(
+        &self,
+        unit: &mut Unit,
+        streams: &[BundleStreamHandleV1],
+        ranges: &[Vec<std::ops::Range<usize>>],
+        programs: &[Vec<PreparedLaunch>],
+        collectives: &[Vec<bool>],
+        join: impl FnMut(usize) -> Result<(), BundleAbiError>,
+    ) -> Result<(), DispatchError> {
+        self.launch_pieces(Some(unit), streams, ranges, programs, collectives, join)
+    }
+
+    /// Each piece in its own unit, or all in `unit`.
+    fn launch_pieces(
+        &self,
+        mut unit: Option<&mut Unit>,
+        streams: &[BundleStreamHandleV1],
+        ranges: &[Vec<std::ops::Range<usize>>],
+        programs: &[Vec<PreparedLaunch>],
+        collectives: &[Vec<bool>],
         mut join: impl FnMut(usize) -> Result<(), BundleAbiError>,
     ) -> Result<(), DispatchError> {
         let pieces = ranges.first().ok_or(DispatchError::InvalidPlan)?.len();
         for piece in 0..pieces {
             if piece > 0 {
-                join(piece - 1)?;
+                let joined = join(piece - 1).map_err(DispatchError::from);
+                match unit.as_deref_mut() {
+                    Some(unit) => unit.record(&self.collectives, joined)?,
+                    None => joined?,
+                }
             }
             let ops = (0..streams.len())
                 .map(|rank| &programs[rank][ranges[rank][piece].clone()])
@@ -33,7 +65,10 @@ impl Instance {
             let waits = (0..streams.len())
                 .map(|rank| &collectives[rank][ranges[rank][piece].clone()])
                 .collect::<Vec<_>>();
-            self.launch_eager(streams, &ops, &waits)?;
+            match unit.as_deref_mut() {
+                Some(unit) => self.launch_eager_in(unit, streams, &ops, &waits)?,
+                None => self.launch_eager(streams, &ops, &waits)?,
+            }
         }
         Ok(())
     }

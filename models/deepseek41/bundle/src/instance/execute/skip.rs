@@ -2,13 +2,13 @@
 //! state and local row zero for each part's transient compute scratch.
 
 use super::{PREFILL, Programs, Run};
-use crate::buffers::row_range;
 use crate::instance::prefill_engram::{Gathers, Plan as Engram};
 use crate::instance::{Instance, dspark::PrefillFeatureRange};
 use crate::lower::Lowering;
 use crate::ops::Lowered;
 use crate::program::{Phase, Stage, Sublayer};
-use bundle_runtime::pipeline::PreparedLaunch;
+use bundle_runtime::dispatch::DispatchError;
+use bundle_runtime::pipeline::{PoisonOnUnwind, PreparedLaunch, Unit};
 use bundle_runtime::template::{self, Patch, Site};
 use bundle_runtime::upload::DeviceInputs;
 use model_deepseek41_contract::prefill_cone::{self, Item};
@@ -20,8 +20,19 @@ use std::ops::Range;
 type Copy = (Span, Span);
 
 mod dma;
+mod lower;
+mod stream;
 #[cfg(test)]
 pub(crate) use dma::with_enabled as with_dma;
+use lower::Lowerer;
+#[cfg(test)]
+pub(super) use lower::sweep;
+pub(super) use stream::launch as launch_streamed;
+#[cfg(test)]
+pub(crate) use stream::{
+    Failure as StreamedFailure, describing as describing_streamed, launches as streamed_launches,
+    with_failure as with_streamed_failure, with_lead,
+};
 
 #[cfg(test)]
 thread_local! { static PATCHES: std::cell::Cell<bool> = const { std::cell::Cell::new(true) }; }
@@ -38,6 +49,49 @@ pub(crate) fn without_patches<T>(run: impl FnOnce() -> T) -> T {
     }
     let _reset = Reset(PATCHES.replace(false));
     run()
+}
+
+#[cfg(test)]
+thread_local! { static LOWERINGS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) }; }
+
+/// The whole plans lowered before their launch (`Plan::lower`) on this
+/// thread.
+#[cfg(test)]
+pub(crate) fn lowerings() -> u64 {
+    LOWERINGS.get()
+}
+
+#[cfg(test)]
+thread_local! { static KEPT: std::cell::RefCell<Option<Vec<String>>> = const { std::cell::RefCell::new(None) }; }
+
+/// Runs `run`, recording every template kept on this thread meanwhile as
+/// lines in order: its description when it was kept
+/// (`Plan::describe_template`), then its Engram plan once a step made it
+/// after the keep. Nothing is recorded outside such a run, so a long test
+/// keeps no description.
+#[cfg(test)]
+pub(crate) fn recording_kept<T>(run: impl FnOnce() -> T) -> (T, Vec<String>) {
+    struct Reset(Option<Vec<String>>);
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            KEPT.set(self.0.take());
+        }
+    }
+    let reset = Reset(KEPT.replace(Some(Vec::new())));
+    let result = run();
+    let lines = KEPT.take().unwrap_or_default();
+    drop(reset);
+    (result, lines)
+}
+
+/// Records the lines `lines` makes during `recording_kept`.
+#[cfg(test)]
+pub(super) fn record_kept(lines: impl FnOnce() -> Vec<String>) {
+    KEPT.with_borrow_mut(|kept| {
+        if let Some(kept) = kept {
+            kept.extend(lines());
+        }
+    });
 }
 
 #[cfg(test)]
@@ -87,6 +141,35 @@ pub(super) struct Plan {
     /// A kept template's Engram plan, made at its first step with prepared
     /// gathers (`engram`); none for a plan not kept.
     engram: Option<OnceCell<Engram>>,
+    /// Tells a test when the plan is freed (`super::observe_events`).
+    #[cfg(test)]
+    _freed: Freed,
+}
+
+#[cfg(test)]
+struct Freed;
+
+/// A group of a lowering in groups (`Plan::lower_in_groups`): its layer,
+/// every rank's body launches after it, and its median host time.
+#[cfg(test)]
+pub(super) type LoweredGroup = (Option<u32>, Vec<usize>, std::time::Duration);
+
+/// A lowering in groups (`Plan::lower_in_groups`): its groups, and the
+/// median host times of its layout and of its finish (the head, copies,
+/// collective checks and DMA plan).
+#[cfg(test)]
+pub(super) struct InGroups {
+    pub groups: Vec<LoweredGroup>,
+    pub layout: std::time::Duration,
+    pub finish: std::time::Duration,
+    pub plan: Plan,
+}
+
+#[cfg(test)]
+impl Drop for Freed {
+    fn drop(&mut self) {
+        super::event("plan freed");
+    }
 }
 
 /// An index selection of the body: its layer, and the packed rows of the
@@ -302,313 +385,33 @@ impl Plan {
         Self::lower(instance, run, &Layout::of(instance, run)?)
     }
 
-    /// The plan of `run`, whose layout is `layout`.
+    /// The plan of `run`, whose layout is `layout`: the lowerer drained,
+    /// then the head and row copies (`Lowerer::finish`).
     pub(super) fn lower(instance: &Instance, run: &Run, layout: &Layout) -> Result<Self, String> {
-        let g = instance.config.shape.geometry;
-        let (anchors, cone, features) = (&layout.anchors, &layout.cone, &layout.features);
-        let cells = super::anchors::ring_cells(g);
-        let ring_buffer = instance
-            .state
-            .buffers
-            .iter()
-            .position(|buffer| buffer.name == "window.ring")
-            .ok_or("the request state has no window rings")?;
-        let full_stages = crate::program::stages(g, run.phase);
-        let mut body = (Vec::new(), Vec::new(), Vec::new());
-        let mut sites = Vec::new();
-        let mut head = (Vec::new(), Vec::new(), Vec::new());
-        let mut copies = Vec::new();
-        for (rank, buffers) in instance.buffers.iter().enumerate() {
-            let full = DeviceInputs::within(instance.arenas[PREFILL][rank], &run.layout);
-            let base = lowering(instance, run, rank, &full, None);
-            let mut program = (Vec::new(), Vec::new(), Vec::new());
-            // After a layer's window write into the slots, write the same
-            // key rows within a ring of each anchor into its spare ring.
-            // `part` holds the lowering's packed rows, from its transient
-            // row zero.
-            let anchor_writes = |program: &mut (Vec<PreparedLaunch>, Vec<bool>, Vec<Stage>),
-                                 lowering: &Lowering<'_>,
-                                 layer: u32,
-                                 part: &Range<u32>|
-             -> Result<(), String> {
-                for anchor in anchors {
-                    let ring = anchor.ring_rows(cells);
-                    let rows = ring.start.max(part.start)..ring.end.min(part.end);
-                    if rows.is_empty() {
-                        continue;
-                    }
-                    let n = rows.end - rows.start;
-                    let spares = &instance.anchor_spares[rank];
-                    let spare = crate::lower::spare_ring(
-                        g,
-                        instance.config.kv.storage,
-                        instance.anchor_spare_count(),
-                        spares.buffers[ring_buffer].ok_or("the window rings have no spare")?,
-                        layer,
-                        anchor.spare,
-                    )?;
-                    let stage = Stage::WindowRingWrite(layer);
-                    push(
-                        program,
-                        stage,
-                        required(
-                            lowering.spare_ring_write(
-                                layer,
-                                rows.start - part.start,
-                                rows.start,
-                                n,
-                                spare,
-                                byte_range(
-                                    full.positions,
-                                    u64::from(rows.start) * 4,
-                                    u64::from(n) * 4,
-                                )?,
-                                byte_range(full.positions, u64::from(anchor.row - 1) * 4, 4)?,
-                                byte_range(spares.zeros, 0, u64::from(n) * 4)?,
-                                count(instance, rank, n)?,
-                            )?,
-                            stage,
-                        )?,
-                    );
-                }
-                Ok(())
-            };
-            for &stage in full_stages
-                .iter()
-                .take_while(|stage| stage.layer().is_none_or(|id| id < cone.last_source))
-            {
-                let ops = match stage {
-                    Stage::EngramRows(id) if instance.dspark.is_some() => {
-                        instance.dspark_engram(&base, run.phase, id)?
-                    }
-                    Stage::DsparkFeature(id) if instance.dspark.is_some() => {
-                        Some(instance.dspark_feature(&base, run.phase, id)?)
-                    }
-                    // Only this full-width prefix has qualified cached attention.
-                    // Retained parts below keep their native row origins.
-                    _ => base.stage_with_prefill_context(
-                        run.phase,
-                        stage,
-                        &run.inputs.positions,
-                        run.cache,
-                    )?,
-                };
-                let at = program.0.len();
-                push(&mut program, stage, required(ops, stage)?);
-                if let Stage::IndexSelect(layer) = stage {
-                    sites.push(Site {
-                        rank,
-                        at,
-                        len: program.0.len() - at,
-                        input: Selection { layer, part: None },
-                    });
-                }
-                if let Stage::WindowRingWrite(layer) = stage {
-                    anchor_writes(&mut program, &base, layer, &(0..cone.rows))?;
-                }
-            }
-            // The final compressed and indexed source still consumes all rows.
-            for stage in prefix(cone.last_source).into_iter().chain(
-                crate::program::attention(g, cone.last_source, run.phase)
-                    .into_iter()
-                    .filter(|&stage| compressed(stage)),
-            ) {
-                push(
-                    &mut program,
-                    stage,
-                    required(base.stage(run.phase, stage)?, stage)?,
-                );
-            }
-            for layer in &cone.layers {
-                for &feature in features
-                    .iter()
-                    .filter(|_| g.shape.dspark.targets.contains(&layer.id))
-                {
-                    let range = feature.packed_start..feature.packed_start + feature.rows;
-                    let input = part(instance, rank, full, &range)?;
-                    let lowering = lowering(instance, run, rank, &input, Some(range.start));
-                    push(
-                        &mut program,
-                        Stage::DsparkFeature(layer.id),
-                        instance.dspark_feature_range(&lowering, layer.id, feature)?,
-                    );
-                }
-                if layer
-                    .keys
-                    .ranges()
-                    .first()
-                    .is_some_and(|range| range.start > 0)
-                {
-                    push(
-                        &mut program,
-                        Stage::WindowKv(layer.id),
-                        required(
-                            base.prefill_window_prefix(layer.id)?,
-                            Stage::WindowKv(layer.id),
-                        )?,
-                    );
-                }
-                // Produce every needed key before any output overwrites its HC streams.
-                for range in layer.keys.parts(4096) {
-                    let input = part(instance, rank, full, &range)?;
-                    let lowering = lowering(instance, run, rank, &input, Some(range.start));
-                    let phase = Phase::Prefill {
-                        rows: range.end - range.start,
-                    };
-                    for stage in prefix(layer.id).into_iter().chain([
-                        Stage::Project(layer.id, "attention.kv"),
-                        Stage::WindowKv(layer.id),
-                        Stage::WindowRingWrite(layer.id),
-                    ]) {
-                        push(
-                            &mut program,
-                            stage,
-                            required(
-                                lowering.stage_with_positions(
-                                    phase,
-                                    stage,
-                                    &run.inputs.positions[range.start as usize..range.end as usize],
-                                )?,
-                                stage,
-                            )?,
-                        );
-                    }
-                    anchor_writes(&mut program, &lowering, layer.id, &range)?;
-                }
-                for range in layer.outputs.parts(4096) {
-                    let input = part(instance, rank, full, &range)?;
-                    let lowering = lowering(instance, run, rank, &input, Some(range.start));
-                    let phase = Phase::Prefill {
-                        rows: range.end - range.start,
-                    };
-                    for &stage in full_stages
-                        .iter()
-                        .filter(|stage| stage.layer() == Some(layer.id))
-                    {
-                        if compressed(stage)
-                            || matches!(
-                                stage,
-                                Stage::DsparkFeature(_)
-                                    | Stage::WindowKv(_)
-                                    | Stage::WindowRingWrite(_)
-                                    | Stage::Project(_, "attention.kv")
-                            )
-                        {
-                            continue;
-                        }
-                        let at = program.0.len();
-                        push(
-                            &mut program,
-                            stage,
-                            required(
-                                lowering.stage_with_prefill_context(
-                                    phase,
-                                    stage,
-                                    &run.inputs.positions[range.start as usize..range.end as usize],
-                                    run.cache,
-                                )?,
-                                stage,
-                            )?,
-                        );
-                        if let Stage::IndexSelect(layer) = stage {
-                            sites.push(Site {
-                                rank,
-                                at,
-                                len: program.0.len() - at,
-                                input: Selection {
-                                    layer,
-                                    part: Some(range.clone()),
-                                },
-                            });
-                        }
-                    }
-                }
-            }
-            for &feature in features {
-                let counts = instance
-                    .dspark
-                    .as_ref()
-                    .ok_or("DSpark is absent")?
-                    .prepared
-                    .feature_pack_counts(feature.rows, feature.rows)?
-                    .into_iter()
-                    .map(|n| count(instance, rank, n))
-                    .collect::<Result<Vec<_>, _>>()?;
-                push(
-                    &mut program,
-                    Stage::HeadCollapse,
-                    instance.dspark_pack_feature_range(rank, feature, &counts)?,
-                );
-            }
-            body.0.push(program.0);
-            body.1.push(program.1);
-            body.2.push(program.2);
-            let mut program = (Vec::new(), Vec::new(), Vec::new());
-            let mut rank_copies = Vec::new();
-            if run.head_rows > 0 {
-                // Ascending original rows imply destination <= source. No copy
-                // can overwrite the source of a later logits row.
-                for (destination, &source) in cone.logits.iter().enumerate() {
-                    if destination as u32 == source {
-                        continue;
-                    }
-                    for span in [buffers.scratch.streams, buffers.scratch.pre_odd] {
-                        rank_copies.push((
-                            row_range(span, destination as u32, 1)?,
-                            row_range(span, source, 1)?,
-                        ));
-                    }
-                }
-                let input = DeviceInputs {
-                    live_tokens: count(instance, rank, run.head_rows)?,
-                    ..full
-                };
-                let lowering = lowering(instance, run, rank, &input, None);
-                let phase = Phase::Prefill {
-                    rows: run.head_rows,
-                };
-                for stage in [
-                    Stage::HeadCollapse,
-                    Stage::FinalNorm,
-                    Stage::GatherHeadRows,
-                    Stage::LmHead,
-                    Stage::GatherLogits,
-                ] {
-                    push(
-                        &mut program,
-                        stage,
-                        required(lowering.stage(phase, stage)?, stage)?,
-                    );
-                }
-            }
-            head.0.push(program.0);
-            head.1.push(program.1);
-            head.2.push(program.2);
-            copies.push(rank_copies);
-        }
-        bundle_runtime::pipeline::check_collectives(&body.0, &body.1)
-            .map_err(|e| format!("prefill body collectives: {e:?}"))?;
-        bundle_runtime::pipeline::check_collectives(&head.0, &head.1)
-            .map_err(|e| format!("prefill head collectives: {e:?}"))?;
-        let dma = dma::Plan::prepare(instance, run, &body)?;
-        Ok(Self {
-            body,
-            sites,
-            dma,
-            head,
-            copies,
-            engram: None,
-        })
+        #[cfg(test)]
+        LOWERINGS.set(LOWERINGS.get() + 1);
+        Lowerer::new(instance, run, layout)?.finish(instance, run, layout)
     }
 
-    /// Whether `other` issues the same launches, transport, copies and head.
+    /// Whether `other` issues the same launches, transport, copies and head
+    /// at the same index-selection sites, with the same Engram plan where
+    /// both are templates that made one.
     pub(super) fn same(&self, other: &Self) -> Result<bool, String> {
         let dma = match (&self.dma, &other.dma) {
             (None, None) => true,
             (Some(a), Some(b)) => a.same(b)?,
             _ => false,
         };
+        let engram = match (
+            self.engram.as_ref().and_then(OnceCell::get),
+            other.engram.as_ref().and_then(OnceCell::get),
+        ) {
+            (Some(a), Some(b)) => a == b,
+            _ => true,
+        };
         Ok(dma
+            && engram
+            && self.sites == other.sites
             && self.copies == other.copies
             && super::plan_cache::same_programs(&self.body, &other.body)?
             && super::plan_cache::same_programs(&self.head, &other.head)?)
@@ -686,6 +489,184 @@ impl Plan {
             .collect()
     }
 
+    /// Lowers the plan of `run` one group at a time, `repeats` times
+    /// (`InGroups`): each group's layer (`Lowerer::lowered`), every rank's
+    /// body launches after it and its median host time.
+    #[cfg(test)]
+    pub(super) fn lower_in_groups(
+        instance: &Instance,
+        run: &Run,
+        repeats: usize,
+    ) -> Result<InGroups, String> {
+        use std::time::{Duration, Instant};
+        let median = |times: &mut Vec<Duration>| {
+            times.sort_unstable();
+            times[times.len() / 2]
+        };
+        let mut groups = Vec::new();
+        let mut times: Vec<Vec<Duration>> = Vec::new();
+        let (mut layouts, mut finishes) = (Vec::new(), Vec::new());
+        let mut plan = None;
+        for _ in 0..repeats.max(1) {
+            let started = Instant::now();
+            let layout = Layout::of(instance, run)?;
+            layouts.push(started.elapsed());
+            let mut lowering = Lowerer::new(instance, run, &layout)?;
+            groups.clear();
+            for at in 0.. {
+                let started = Instant::now();
+                if !lowering.lower_next(instance, run, &layout)? {
+                    break;
+                }
+                let elapsed = started.elapsed();
+                if times.len() == at {
+                    times.push(Vec::new());
+                }
+                times[at].push(elapsed);
+                groups.push(lowering.lowered(&layout));
+            }
+            let started = Instant::now();
+            plan = Some(lowering.finish(instance, run, &layout)?);
+            finishes.push(started.elapsed());
+        }
+        let groups = groups
+            .into_iter()
+            .zip(&mut times)
+            .map(|((launches, layer), times)| (layer, launches, median(times)))
+            .collect();
+        Ok(InGroups {
+            groups,
+            layout: median(&mut layouts),
+            finish: median(&mut finishes),
+            plan: plan.expect("one lowering"),
+        })
+    }
+
+    /// Prepares `run`'s DMA plan as its body is lowered one group at a time
+    /// (`dma::Builder`): the blocks prepared after each group, and whether
+    /// the plan equals the one prepared from the whole body.
+    #[cfg(test)]
+    pub(super) fn dma_in_groups(
+        instance: &Instance,
+        run: &Run,
+    ) -> Result<(Vec<usize>, bool), String> {
+        let layout = Layout::of(instance, run)?;
+        let mut lowerer = Lowerer::new(instance, run, &layout)?;
+        let mut builder = dma::Builder::new(instance, run).ok_or("the run takes no DMA")?;
+        let mut ready = Vec::new();
+        while lowerer.lower_next(instance, run, &layout)? {
+            builder.advance(instance, lowerer.body(), false)?;
+            ready.push(builder.blocks());
+        }
+        builder.advance(instance, lowerer.body(), true)?;
+        ready.push(builder.blocks());
+        let streamed = builder.finish(lowerer.body()).ok_or("no DMA block")?;
+        let whole = dma::Plan::prepare(instance, run, lowerer.body())?.ok_or("no DMA block")?;
+        Ok((ready, streamed.same(&whole)?))
+    }
+
+    /// Makes `run`'s Engram plan as its body is lowered one group at a time
+    /// (`prefill_engram::Builder`), splitting each DMA block as it is
+    /// prepared, and whether it equals the plan made from the whole plan
+    /// (`engram`).
+    #[cfg(test)]
+    pub(super) fn engram_in_groups(
+        instance: &Instance,
+        run: &Run,
+        gathers: &Gathers,
+    ) -> Result<bool, String> {
+        let layout = Layout::of(instance, run)?;
+        let mut lowerer = Lowerer::new(instance, run, &layout)?;
+        let mut builder = dma::Builder::new(instance, run);
+        let mut engram =
+            crate::instance::prefill_engram::Builder::new(gathers, instance.buffers.len());
+        let mut split = 0;
+        loop {
+            let more = lowerer.lower_next(instance, run, &layout)?;
+            let body = lowerer.body();
+            engram.advance(gathers, &body.0, &body.1, &body.2)?;
+            if let Some(dma) = &mut builder {
+                dma.advance(instance, body, !more)?;
+                while split < dma.blocks() {
+                    dma.split_engram(split, &mut engram, gathers)?;
+                    split += 1;
+                }
+            }
+            if !more {
+                break;
+            }
+        }
+        let plan = lowerer.finish(instance, run, &layout)?;
+        let dma = builder.and_then(|builder| builder.finish(&plan.body));
+        if let Some(dma) = &dma {
+            engram.split_dma(dma.tail())?;
+        }
+        let streamed = engram.finish(&plan.body.0, &plan.body.1)?;
+        if dma.is_some() {
+            streamed.check_dma_collectives(&plan.body.0, &plan.body.1)?;
+        }
+        Ok(streamed == plan.engram(gathers, false)?)
+    }
+
+    /// Rank `rank`'s body launches as (symbol, stage), then its head's
+    /// symbols.
+    #[cfg(test)]
+    pub(super) fn symbols(&self, rank: usize) -> (Vec<(String, Stage)>, Vec<String>) {
+        let body = self.body.0[rank]
+            .iter()
+            .zip(&self.body.2[rank])
+            .map(|(launch, &stage)| (launch.symbol.clone(), stage))
+            .collect();
+        let head = self.head.0[rank].iter().map(|l| l.symbol.clone()).collect();
+        (body, head)
+    }
+
+    /// The plan as lines, for the metadata pins: every body and head launch
+    /// with its stage and collective flag, the sites, the DMA plan and the
+    /// row copies.
+    #[cfg(test)]
+    pub(super) fn describe(&self) -> Vec<String> {
+        let mut lines = Vec::new();
+        for (name, programs) in [("body", &self.body), ("head", &self.head)] {
+            for (rank, launches) in programs.0.iter().enumerate() {
+                for (at, launch) in launches.iter().enumerate() {
+                    lines.push(format!(
+                        "{name} {rank} {at} {:?} {} {}",
+                        programs.2[rank][at],
+                        programs.1[rank][at],
+                        super::dma::describe_launch(launch)
+                    ));
+                }
+            }
+        }
+        for site in &self.sites {
+            lines.push(format!(
+                "site {} {} {} {} {:?}",
+                site.rank, site.at, site.len, site.input.layer, site.input.part
+            ));
+        }
+        if let Some(dma) = &self.dma {
+            dma.describe(&mut lines);
+        }
+        for (rank, copies) in self.copies.iter().enumerate() {
+            for (destination, source) in copies {
+                lines.push(format!("copy {rank} {destination:?} {source:?}"));
+            }
+        }
+        lines
+    }
+
+    /// The template as lines (`describe`), then its kept Engram plan once a
+    /// step made it.
+    #[cfg(test)]
+    pub(super) fn describe_template(&self) -> Vec<String> {
+        let mut lines = self.describe();
+        if let Some(engram) = self.engram.as_ref().and_then(OnceCell::get) {
+            lines.push(format!("engram {engram:?}"));
+        }
+        lines
+    }
+
     pub(super) fn uses_dma(&self) -> bool {
         self.dma.is_some()
     }
@@ -699,6 +680,21 @@ impl Plan {
     /// DMA (`dma::admits`).
     pub(super) fn dma_admits(instance: &Instance, requests: usize) -> bool {
         dma::admits(instance, requests)
+    }
+
+    /// Moves the first site to the next layer, as a template of another
+    /// structure would hold it; whether there was one.
+    #[cfg(test)]
+    pub(super) fn move_first_site(&mut self) -> bool {
+        self.sites
+            .first_mut()
+            .map(|site| site.input.layer += 1)
+            .is_some()
+    }
+
+    /// Keeps `plan` as this template's Engram plan.
+    pub(super) fn keep_engram_plan(&mut self, plan: Engram) {
+        self.engram = Some(OnceCell::from(plan));
     }
 
     /// Keeps this template's first Engram plan for its later steps
@@ -725,6 +721,8 @@ impl Plan {
         };
         let Some(plan) = kept.get() else {
             let plan = fresh()?;
+            #[cfg(test)]
+            record_kept(|| vec![format!("engram {plan:?}")]);
             return Ok(kept.get_or_init(|| plan).clone());
         };
         let sites = self
@@ -750,80 +748,98 @@ impl Plan {
             dma.prepare_engram(plan, gathers)?;
             plan.check_dma_collectives(&self.body.0, &self.body.1)?;
         }
-        // The head and its row copies run beside a mixed step's verify-row
-        // gathers, which begin after the body's last Engram join.
-        let verify = gathers.pending_spans(plan.layer_count());
-        if !verify.is_empty() {
-            for (head, copies) in self.head.0.iter().zip(&self.copies) {
-                crate::shared_overlap::disjoint_copy_spans(&verify, head)?;
-                let aliased = copies
-                    .iter()
-                    .flat_map(|&(to, from)| [to, from])
-                    .any(|span| {
-                        verify.iter().any(|pending| {
-                            pending.buffer == span.buffer
-                                && pending.length != 0
-                                && span.length != 0
-                                && pending.offset < span.offset.saturating_add(span.length)
-                                && span.offset < pending.offset.saturating_add(pending.length)
-                        })
-                    });
-                if aliased {
-                    return Err("a prefill row copy aliases pending verify Engram rows".into());
-                }
+        self.audit_head(&gathers.pending_spans(plan.layer_count()))
+    }
+
+    /// The head and its row copies run beside a mixed step's verify-row
+    /// gathers `verify`, which begin after the body's last Engram join:
+    /// none touches their spans.
+    fn audit_head(&self, verify: &[Span]) -> Result<(), String> {
+        if verify.is_empty() {
+            return Ok(());
+        }
+        for (head, copies) in self.head.0.iter().zip(&self.copies) {
+            crate::shared_overlap::disjoint_copy_spans(verify, head)?;
+            let aliased = copies
+                .iter()
+                .flat_map(|&(to, from)| [to, from])
+                .any(|span| {
+                    verify.iter().any(|pending| {
+                        pending.buffer == span.buffer
+                            && pending.length != 0
+                            && span.length != 0
+                            && pending.offset < span.offset.saturating_add(span.length)
+                            && span.offset < pending.offset.saturating_add(pending.length)
+                    })
+                });
+            if aliased {
+                return Err("a prefill row copy aliases pending verify Engram rows".into());
             }
         }
         Ok(())
     }
 
+    /// Issues the prefill as one unit: the body, the row copies and the
+    /// head. Once any of it is submitted, the step's ring, KV and
+    /// compressor writes have begun, so a later refusal, failed copy or
+    /// panic poisons the instance instead of leaving the step to cancel.
     pub(super) fn execute(
         &self,
         instance: &Instance,
         gathers: Option<&crate::instance::prefill_engram::Plan>,
     ) -> Result<(), BundleAbiError> {
-        self.execute_body(instance, gathers)?;
-        self.compact_rows(instance)?;
-        self.execute_head(instance)
+        let _unwinding = PoisonOnUnwind(&instance.collectives);
+        let mut unit = Unit::default();
+        self.execute_body(instance, gathers, &mut unit)?;
+        self.compact_rows(instance, &mut unit)?;
+        self.execute_head(instance, &mut unit)
     }
 
     /// The body: through upper-skip DMA, between prepared gather joins, or
-    /// in one eager unit.
+    /// in one eager unit, all part of `unit`.
     fn execute_body(
         &self,
         instance: &Instance,
         gathers: Option<&crate::instance::prefill_engram::Plan>,
+        unit: &mut Unit,
     ) -> Result<(), BundleAbiError> {
         let streams: Vec<_> = instance.ranks.iter().map(|r| r.2).collect();
         if let Some(dma) = &self.dma {
-            dma.execute(instance, &self.body, gathers)
+            // The DMA body poisons on any failure; once it ran, so does
+            // every later failure of the unit.
+            dma.execute(instance, &self.body, gathers)?;
+            unit.record(&instance.collectives, Ok(()))
+                .map_err(|e: DispatchError| instance.dispatch_failed(e))
         } else {
             if let Some(gathers) = gathers {
-                gathers.execute(instance, &self.body.0, &self.body.1)
+                gathers.execute(instance, unit, &self.body.0, &self.body.1)
             } else {
-                instance.launch_eager(&streams, &self.body.0, &self.body.1)
+                instance.launch_eager_in(unit, &streams, &self.body.0, &self.body.1)
             }
             .map_err(|e| instance.dispatch_failed(e))
         }
     }
 
     /// Moves each scored row to its logits position for the head.
-    fn compact_rows(&self, instance: &Instance) -> Result<(), BundleAbiError> {
+    fn compact_rows(&self, instance: &Instance, unit: &mut Unit) -> Result<(), BundleAbiError> {
         for (rank, copies) in self.copies.iter().enumerate() {
             for &(destination, source) in copies {
-                instance.services.copy_device_to_device(
+                let copied = instance.services.copy_device_to_device(
                     instance.ranks[rank].2,
                     destination,
                     source,
-                )?;
+                );
+                unit.record(&instance.collectives, copied.map_err(DispatchError::from))
+                    .map_err(|e| instance.dispatch_failed(e))?;
             }
         }
         Ok(())
     }
 
-    fn execute_head(&self, instance: &Instance) -> Result<(), BundleAbiError> {
+    fn execute_head(&self, instance: &Instance, unit: &mut Unit) -> Result<(), BundleAbiError> {
         let streams: Vec<_> = instance.ranks.iter().map(|r| r.2).collect();
         instance
-            .launch_eager(&streams, &self.head.0, &self.head.1)
+            .launch_eager_in(unit, &streams, &self.head.0, &self.head.1)
             .map_err(|e| instance.dispatch_failed(e))
     }
 }

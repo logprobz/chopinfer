@@ -109,6 +109,20 @@ impl Sm120 {
                     e.prepare(*r).expect("registered TMA scales route"),
                 );
             }
+            for (e, r) in self
+                .mxfp8_prefill_compact_ranges
+                .iter()
+                .filter(|(e, _)| e.base.query == *q)
+            {
+                admitted.push(r.clone());
+                wrappers.push(super::mxfp8_prefill_compact::RANGE_WRAPPER);
+                let op = e.prepare(*r.start()).expect("registered compact range");
+                tags.extend(
+                    symbols(op)
+                        .into_iter()
+                        .map(|symbol| super::mxfp8_prefill_compact::range_tag(symbol, r.clone())),
+                );
+            }
             if admitted.is_empty() {
                 return;
             }

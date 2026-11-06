@@ -1,15 +1,20 @@
 # Served route gaps. Remove each entry when its tracked range is qualified.
 # P4 also covers preserved full TMA launches at unanchored packed-2 widths
 # 8190 and 8191. Separate allowances for those widths are stale with anchors.
+# `tp4-dspark*` also names tp4-dspark-compact-rows, the profile with the
+# `prefill_compact_dense_rows` candidate on.
 # The backbone router finish covers Decode-2/4 and Verify-2..32; its eight
 # unfused-stage exceptions are retired. HC and drafter entries remain separate.
+# `tp4-dspark*` also names tp4-dspark-dma-intervals, the profile with the
+# `prefill_dma_producer_intervals` candidate on.
 # `tp4-dspark*` also names tp4-dspark-rows192, the profile at the package's 192
 # verify rows (fake_host_tests/conformance/wide.rs), whose envelope repeats
 # the profile's shapes, tp4-dspark-rows192-wide, the same override with the
 # `wide_verify` candidate on, tp4-dspark-rows192-wide-draft, with
 # `wide_draft` too, tp4-dspark-rows192-phased, with the
-# `phased_decode_reduce` candidate on, and tp4-dspark-drafter, the profile
-# with the five drafter cost candidates on.
+# `phased_decode_reduce` candidate on, tp4-dspark-drafter, the profile
+# with the five drafter cost candidates on, and tp4-dspark-norm-rows, the
+# profile with the `prefill_norm_ceil_rows` candidate on.
 
 [[allow]]
 profiles = ["tp4-ar", "tp4-dspark*"]

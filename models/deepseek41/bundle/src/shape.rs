@@ -24,6 +24,10 @@ pub struct Shape {
     /// Whether verify steps above the 64-row decode route run the wide
     /// verify buckets (the `wide_verify` candidate option).
     pub wide_verify: bool,
+    /// Whether Flash TP4 prefill projections run the compact prefill entry
+    /// at the row counts the candidate table admits (the
+    /// `prefill_compact_dense_rows` candidate option).
+    pub prefill_compact_dense_rows: bool,
     /// Whether drafter steps of more than twelve drafting items run them in
     /// the fewest forwards the widest wide verify bucket holds, on the wide
     /// verify buckets (the `wide_draft` candidate option).
@@ -31,6 +35,10 @@ pub struct Shape {
     /// Whether decode and verify steps' complete all-reduces take the phased
     /// F32 rounding entries (the `phased_decode_reduce` candidate option).
     pub phased_decode_reduce: bool,
+    /// Whether prefill steps whose rows the candidate table admits run the
+    /// fused prefill norm-ceil (the `prefill_norm_ceil_rows` candidate
+    /// option).
+    pub prefill_norm_ceil_rows: bool,
     /// Whether drafter Markov steps of two or more items run the staged
     /// step over each position's base logits in place (the
     /// `dspark_markov_staged` candidate option).
@@ -52,6 +60,10 @@ pub struct Shape {
     /// route through the drafter table (the `dspark_hc_draft_rows`
     /// candidate option, which takes effect with `dspark_hc_fusion`).
     pub dspark_hc_draft_rows: bool,
+    /// Whether TP4 DMA prefill reductions of any row count split their MoE
+    /// producer over the transport's owner intervals at every layer (the
+    /// `prefill_dma_producer_intervals` candidate option).
+    pub prefill_dma_producer_intervals: bool,
 }
 
 impl Shape {
@@ -64,13 +76,16 @@ impl Shape {
             runtime: geometry.runtime_defaults(),
             verify_rows: DECODE_BATCH,
             wide_verify: false,
+            prefill_compact_dense_rows: false,
             wide_draft: false,
             phased_decode_reduce: false,
+            prefill_norm_ceil_rows: false,
             dspark_hc_draft_rows: false,
             dspark_moe_direct: false,
             dspark_confidence_staged: false,
             dspark_hc_fusion: false,
             dspark_markov_staged: false,
+            prefill_dma_producer_intervals: false,
         })
     }
 
@@ -85,6 +100,14 @@ impl Shape {
     /// (`model_deepseek41_contract::execution_options::WIDE_VERIFY`).
     pub fn with_wide_verify(mut self, enabled: bool) -> Shape {
         self.wide_verify = enabled;
+        self
+    }
+
+    /// This shape with the compact prefill entry's candidate row ranges on
+    /// or off
+    /// (`model_deepseek41_contract::execution_options::PREFILL_COMPACT_DENSE_ROWS`).
+    pub fn with_prefill_compact_dense_rows(mut self, enabled: bool) -> Shape {
+        self.prefill_compact_dense_rows = enabled;
         self
     }
 
@@ -110,6 +133,13 @@ impl Shape {
     /// (`model_deepseek41_contract::execution_options::PHASED_DECODE_REDUCE`).
     pub fn with_phased_decode_reduce(mut self, enabled: bool) -> Shape {
         self.phased_decode_reduce = enabled;
+        self
+    }
+
+    /// This shape with the fused prefill norm-ceil's candidate rows on or
+    /// off (`model_deepseek41_contract::execution_options::PREFILL_NORM_CEIL_ROWS`).
+    pub fn with_prefill_norm_ceil_rows(mut self, enabled: bool) -> Shape {
+        self.prefill_norm_ceil_rows = enabled;
         self
     }
 
@@ -145,6 +175,14 @@ impl Shape {
     /// (`model_deepseek41_contract::execution_options::DSPARK_HC_DRAFT_ROWS`).
     pub fn with_dspark_hc_draft_rows(mut self, enabled: bool) -> Shape {
         self.dspark_hc_draft_rows = enabled;
+        self
+    }
+
+    /// This shape with the MoE producer split over every DMA call's owner
+    /// intervals on or off
+    /// (`model_deepseek41_contract::execution_options::PREFILL_DMA_PRODUCER_INTERVALS`).
+    pub fn with_prefill_dma_producer_intervals(mut self, enabled: bool) -> Shape {
+        self.prefill_dma_producer_intervals = enabled;
         self
     }
 

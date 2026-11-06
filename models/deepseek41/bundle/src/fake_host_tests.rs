@@ -51,6 +51,7 @@ mod prefill_dma;
 mod prefill_gate_journal;
 mod prefill_long;
 mod prefill_matrix;
+mod prefill_norm_ceil_rows;
 mod prefill_plan_cache;
 mod prefill_plan_templates;
 mod prefill_reduce;
@@ -482,6 +483,22 @@ pub(crate) struct FakeHost {
     /// a repeated selection returns the live handle, and releasing any
     /// reference but the last gives nothing back and is not ordered.
     pub references: RefCell<Vec<(Handle, usize)>>,
+    /// Device accesses that touched a prepared gather's pending ids or
+    /// destinations (`dspark::host::MappedHost`); a host dropped with any
+    /// fails its test.
+    pub races: RefCell<Vec<String>>,
+}
+
+impl Drop for FakeHost {
+    fn drop(&mut self) {
+        if !std::thread::panicking() {
+            let races = self.races.get_mut();
+            assert!(
+                races.is_empty(),
+                "device accesses raced pending gathers: {races:#?}"
+            );
+        }
+    }
 }
 
 pub(crate) type Host = Backend<FakeHost>;
@@ -710,6 +727,7 @@ impl FakeHost {
             fail_upload: Default::default(),
             release_order: RefCell::new(Vec::new()),
             references: RefCell::new(Vec::new()),
+            races: RefCell::new(Vec::new()),
         }))
     }
 

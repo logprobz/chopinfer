@@ -312,6 +312,12 @@ fn run(shape: Shape, budget: u32, kept: Option<u32>) -> ResultCase {
         serde_json::from_str(&times.record(adapter.diagnostic, 1, drafting)).unwrap();
     assert_eq!(record["schema"], "chopinfer.deepseek41.step-shape.v1");
     assert_eq!(record["drafting"], drafting);
+    // The fake program neither begins nor plans its prefill early.
+    assert_eq!(record["early_prefill_begin"], false);
+    assert_eq!(record["early_prefill_plan"], false);
+    assert_eq!(record["streamed_lowering"], false);
+    // Only an instance has prefill plan templates.
+    assert!(record["prefill_templates"].is_null());
     assert!(record["micros"]["target"].is_u64());
     let diagnostic = match kept {
         Some(kept) => {

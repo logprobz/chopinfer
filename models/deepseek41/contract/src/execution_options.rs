@@ -8,8 +8,20 @@ use std::collections::BTreeMap;
 pub const SHARED_OVERLAP_MAX_ROWS: &str = "shared_overlap_max_rows";
 pub const PREFILL_PLAN_CACHE_PLANS: &str = "prefill_plan_cache_plans";
 pub const PREFILL_PLAN_CACHE_VERIFY: &str = "prefill_plan_cache_verify";
+/// Candidate: Flash prefill steps whose rows the candidate table admits
+/// (`norm.input_range.prefill`) run each sublayer input norm and its
+/// quantizer as the fused prefill norm-ceil, as the measured rows of
+/// `norm.input_admit.prefill` do, instead of the row norm, widen and
+/// serial quantizer. Normed, widened, codes, scales and row status are
+/// unchanged.
+pub const PREFILL_NORM_CEIL_ROWS: &str = "prefill_norm_ceil_rows";
 pub const DSPARK_GRAPH_HANDLES_PER_RANK: &str = "dspark_graph_handles_per_rank";
 pub const DIAGNOSTIC_STEP_LOGS: &str = "diagnostic_step_logs";
+/// Candidate: Flash TP4 prefill projections whose row counts the candidate
+/// table admits (`dense_prefill.compact_range.prefill`) run the compact
+/// prefill entry at the step's exact rows instead of the full 128-row tiles
+/// with their exact-row tail folds. Every row's bytes are unchanged.
+pub const PREFILL_COMPACT_DENSE_ROWS: &str = "prefill_compact_dense_rows";
 /// Candidate: Flash TP4 verify steps above the 64-row decode route run the
 /// wide verify buckets (`crate::verify_bounds::WIDE`).
 pub const WIDE_VERIFY: &str = "wide_verify";
@@ -21,6 +33,12 @@ pub const WIDE_DRAFT: &str = "wide_draft";
 /// Candidate: Flash TP4 decode and verify all-reduces whose round no HC
 /// boundary defers take the phased F32 rounding entries.
 pub const PHASED_DECODE_REDUCE: &str = "phased_decode_reduce";
+/// Candidate: a TP4 DMA prefill reduction of any row count splits its MoE
+/// producer (the routed sum with its shared expert addend) over the
+/// transport's owner intervals, `ceil(rows / 4)` rows clipped at the end,
+/// at every layer, so each owner's rows are sent as soon as they are
+/// produced. Every row's bytes and the owner sums are unchanged.
+pub const PREFILL_DMA_PRODUCER_INTERVALS: &str = "prefill_dma_producer_intervals";
 /// Candidate: DSpark drafter Markov steps of two or more items load each
 /// thread's rank-256 weight chain into registers before the dependency
 /// wait and read each position's base logits in place, so no row copy
@@ -50,6 +68,18 @@ pub const DSPARK_HC_DRAFT_ROWS: &str = "dspark_hc_draft_rows";
 /// prepared layer gathers, begun after the prefill's last Engram join,
 /// instead of synchronously before the step.
 pub const DSPARK_MIXED_PREPARED_ENGRAM: &str = "dspark_mixed_prepared_engram";
+/// Candidate: a DSpark step's prefill hashes its rows' Engram ids and
+/// begins its prepared gathers before catch-up and drafting, instead of
+/// after the draft readback and the prefill's lowering.
+pub const DSPARK_EARLY_PREFILL_ENGRAM: &str = "dspark_early_prefill_engram";
+/// Candidate: a DSpark step plans its prefill while its drafter runs,
+/// before the draft readback, and frees the plan templates that planning
+/// drops once the prefill launched.
+pub const DSPARK_EARLY_PREFILL_PLAN: &str = "dspark_early_prefill_plan";
+/// Candidate: an upper-skip prefill whose plan has no template lowers its
+/// body one layer at a time while it issues the units already lowered,
+/// instead of lowering the whole plan before its first launch.
+pub const PREFILL_STREAMED_LOWERING: &str = "prefill_streamed_lowering";
 /// Maximum prompt-ending items whose interior grid anchor one step retains.
 pub const MAX_ANCHOR_ITEMS: u32 = 8;
 pub const DEFAULT_PLANS: usize = 16;
@@ -62,20 +92,26 @@ pub struct Options {
     pub shared_overlap_max_rows: u32,
     pub prefill_plan_cache_plans: usize,
     pub prefill_plan_cache_verify: bool,
+    pub prefill_norm_ceil_rows: bool,
     pub dspark_graph_handles_per_rank: usize,
     pub diagnostic_step_logs: bool,
+    pub prefill_compact_dense_rows: bool,
     pub wide_verify: bool,
     pub wide_draft: bool,
     pub phased_decode_reduce: bool,
+    pub prefill_dma_producer_intervals: bool,
     pub dspark_markov_staged: bool,
     pub dspark_hc_fusion: bool,
     pub dspark_confidence_staged: bool,
     pub dspark_moe_direct: bool,
     pub dspark_hc_draft_rows: bool,
     pub dspark_mixed_prepared_engram: bool,
+    pub dspark_early_prefill_engram: bool,
+    pub dspark_early_prefill_plan: bool,
+    pub prefill_streamed_lowering: bool,
 }
 
-pub fn declarations() -> [ModelOptionV1; 14] {
+pub fn declarations() -> [ModelOptionV1; 20] {
     [
         (
             DIAGNOSTIC_STEP_LOGS,
@@ -83,6 +119,14 @@ pub fn declarations() -> [ModelOptionV1; 14] {
         ),
         (
             DSPARK_CONFIDENCE_STAGED,
+            OptionDefinitionV1::Boolean { default: false },
+        ),
+        (
+            DSPARK_EARLY_PREFILL_ENGRAM,
+            OptionDefinitionV1::Boolean { default: false },
+        ),
+        (
+            DSPARK_EARLY_PREFILL_PLAN,
             OptionDefinitionV1::Boolean { default: false },
         ),
         (
@@ -118,6 +162,18 @@ pub fn declarations() -> [ModelOptionV1; 14] {
             OptionDefinitionV1::Boolean { default: false },
         ),
         (
+            PREFILL_COMPACT_DENSE_ROWS,
+            OptionDefinitionV1::Boolean { default: false },
+        ),
+        (
+            PREFILL_DMA_PRODUCER_INTERVALS,
+            OptionDefinitionV1::Boolean { default: false },
+        ),
+        (
+            PREFILL_NORM_CEIL_ROWS,
+            OptionDefinitionV1::Boolean { default: false },
+        ),
+        (
             PREFILL_PLAN_CACHE_PLANS,
             OptionDefinitionV1::Integer {
                 default: DEFAULT_PLANS as i64,
@@ -127,6 +183,10 @@ pub fn declarations() -> [ModelOptionV1; 14] {
         ),
         (
             PREFILL_PLAN_CACHE_VERIFY,
+            OptionDefinitionV1::Boolean { default: false },
+        ),
+        (
+            PREFILL_STREAMED_LOWERING,
             OptionDefinitionV1::Boolean { default: false },
         ),
         (
@@ -183,19 +243,25 @@ impl Options {
             prefill_plan_cache_verify: values[PREFILL_PLAN_CACHE_VERIFY]
                 .as_bool()
                 .expect("checked boolean"),
+            prefill_norm_ceil_rows: flag(PREFILL_NORM_CEIL_ROWS),
             dspark_graph_handles_per_rank: count(DSPARK_GRAPH_HANDLES_PER_RANK)?,
             diagnostic_step_logs: values[DIAGNOSTIC_STEP_LOGS]
                 .as_bool()
                 .expect("checked boolean"),
             wide_verify,
+            prefill_compact_dense_rows: flag(PREFILL_COMPACT_DENSE_ROWS),
             wide_draft,
             phased_decode_reduce: flag(PHASED_DECODE_REDUCE),
+            prefill_dma_producer_intervals: flag(PREFILL_DMA_PRODUCER_INTERVALS),
             dspark_hc_draft_rows: flag(DSPARK_HC_DRAFT_ROWS),
             dspark_moe_direct: flag(DSPARK_MOE_DIRECT),
             dspark_confidence_staged: flag(DSPARK_CONFIDENCE_STAGED),
             dspark_hc_fusion: flag(DSPARK_HC_FUSION),
             dspark_markov_staged: flag(DSPARK_MARKOV_STAGED),
             dspark_mixed_prepared_engram: flag(DSPARK_MIXED_PREPARED_ENGRAM),
+            dspark_early_prefill_engram: flag(DSPARK_EARLY_PREFILL_ENGRAM),
+            dspark_early_prefill_plan: flag(DSPARK_EARLY_PREFILL_PLAN),
+            prefill_streamed_lowering: flag(PREFILL_STREAMED_LOWERING),
         })
     }
 }
@@ -305,17 +371,23 @@ mod tests {
             shared_overlap_max_rows: u32::MAX,
             prefill_plan_cache_plans: 16,
             prefill_plan_cache_verify: false,
+            prefill_norm_ceil_rows: false,
             dspark_graph_handles_per_rank: 512,
             diagnostic_step_logs: false,
+            prefill_compact_dense_rows: false,
             wide_verify: false,
             wide_draft: false,
             phased_decode_reduce: false,
+            prefill_dma_producer_intervals: false,
             dspark_hc_draft_rows: false,
             dspark_moe_direct: false,
             dspark_confidence_staged: false,
             dspark_hc_fusion: false,
             dspark_markov_staged: false,
             dspark_mixed_prepared_engram: false,
+            dspark_early_prefill_engram: false,
+            dspark_early_prefill_plan: false,
+            prefill_streamed_lowering: false,
         };
         assert_eq!(Options::read(&defaults).unwrap(), expected);
         assert_eq!(Options::read(&BTreeMap::new()).unwrap(), expected);
@@ -329,17 +401,23 @@ mod tests {
             (SHARED_OVERLAP_MAX_ROWS.into(), "8".into()),
             (PREFILL_PLAN_CACHE_PLANS.into(), "2".into()),
             (PREFILL_PLAN_CACHE_VERIFY.into(), "true".into()),
+            (PREFILL_NORM_CEIL_ROWS.into(), "true".into()),
             (DSPARK_GRAPH_HANDLES_PER_RANK.into(), "0".into()),
             (DIAGNOSTIC_STEP_LOGS.into(), "true".into()),
+            (PREFILL_COMPACT_DENSE_ROWS.into(), "true".into()),
             (WIDE_VERIFY.into(), "true".into()),
             (WIDE_DRAFT.into(), "true".into()),
             (PHASED_DECODE_REDUCE.into(), "true".into()),
+            (PREFILL_DMA_PRODUCER_INTERVALS.into(), "true".into()),
             (DSPARK_HC_DRAFT_ROWS.into(), "true".into()),
             (DSPARK_MOE_DIRECT.into(), "true".into()),
             (DSPARK_CONFIDENCE_STAGED.into(), "true".into()),
             (DSPARK_HC_FUSION.into(), "true".into()),
             (DSPARK_MARKOV_STAGED.into(), "true".into()),
             (DSPARK_MIXED_PREPARED_ENGRAM.into(), "true".into()),
+            (DSPARK_EARLY_PREFILL_ENGRAM.into(), "true".into()),
+            (DSPARK_EARLY_PREFILL_PLAN.into(), "true".into()),
+            (PREFILL_STREAMED_LOWERING.into(), "true".into()),
         ]);
         let resolved = declaration.resolve(&overrides).unwrap();
         assert_eq!(
@@ -348,17 +426,23 @@ mod tests {
                 shared_overlap_max_rows: 8,
                 prefill_plan_cache_plans: 2,
                 prefill_plan_cache_verify: true,
+                prefill_norm_ceil_rows: true,
                 dspark_graph_handles_per_rank: 0,
                 diagnostic_step_logs: true,
+                prefill_compact_dense_rows: true,
                 wide_verify: true,
                 wide_draft: true,
                 phased_decode_reduce: true,
+                prefill_dma_producer_intervals: true,
                 dspark_hc_draft_rows: true,
                 dspark_moe_direct: true,
                 dspark_confidence_staged: true,
                 dspark_hc_fusion: true,
                 dspark_markov_staged: true,
                 dspark_mixed_prepared_engram: true,
+                dspark_early_prefill_engram: true,
+                dspark_early_prefill_plan: true,
+                prefill_streamed_lowering: true,
             }
         );
         assert!(!declaration.is_qualified(&resolved));
@@ -374,16 +458,22 @@ mod tests {
             (PREFILL_PLAN_CACHE_PLANS, "65"),
             (PREFILL_PLAN_CACHE_PLANS, "1.5"),
             (PREFILL_PLAN_CACHE_VERIFY, "1"),
+            (PREFILL_NORM_CEIL_ROWS, "1"),
             (DIAGNOSTIC_STEP_LOGS, "\"true\""),
+            (PREFILL_COMPACT_DENSE_ROWS, "1"),
             (WIDE_VERIFY, "1"),
             (WIDE_DRAFT, "1"),
             (PHASED_DECODE_REDUCE, "1"),
+            (PREFILL_DMA_PRODUCER_INTERVALS, "1"),
             (DSPARK_HC_DRAFT_ROWS, "1"),
             (DSPARK_MOE_DIRECT, "1"),
             (DSPARK_CONFIDENCE_STAGED, "1"),
             (DSPARK_HC_FUSION, "1"),
             (DSPARK_MARKOV_STAGED, "1"),
             (DSPARK_MIXED_PREPARED_ENGRAM, "1"),
+            (DSPARK_EARLY_PREFILL_ENGRAM, "1"),
+            (DSPARK_EARLY_PREFILL_PLAN, "1"),
+            (PREFILL_STREAMED_LOWERING, "1"),
             (DSPARK_GRAPH_HANDLES_PER_RANK, "-1"),
             (DSPARK_GRAPH_HANDLES_PER_RANK, "9223372036854775808"),
         ] {

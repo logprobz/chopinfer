@@ -3,12 +3,19 @@
 //! but the positions, and a template whose index selections no longer
 //! match falls back to a full lowering.
 use super::*;
-use crate::instance::execute::{plan_templates, plan_timing};
+use crate::instance::execute::{plan_templates, plan_timing, skip};
 use bundle_runtime::fake_host::RecordingSink;
 use bundle_runtime::template::Counts;
-use model_deepseek41_contract::execution_options::PREFILL_PLAN_CACHE_VERIFY;
+use model_deepseek41_contract::execution_options::{
+    PREFILL_PLAN_CACHE_VERIFY, PREFILL_STREAMED_LOWERING,
+};
 use runtime_bundle_sdk::prefill::{Boundary, encode};
 use runtime_bundle_sdk::{BatchAppendV1, BatchItemV1, BatchRequestV1, BatchWireVersionV1};
+
+mod envelope;
+mod failures;
+mod groups;
+mod metadata;
 
 type Sink = RecordingSink<super::conformance::Limits>;
 
@@ -464,10 +471,19 @@ enum Then {
 /// served 512-row prompt ends at 100K and 200K, alone and beside decode or
 /// DSpark verify items, grid chunks past the cached range and, without
 /// DSpark, a step that fails once planned and before its launches. Returns
-/// the device journal and the template counts.
-fn lifecycle(dspark: bool, verify: bool) -> (Vec<String>, Counts) {
+/// the device journal and the template counts. With `streamed` each plan
+/// no template serves is lowered while it issues.
+fn lifecycle(dspark: bool, verify: bool, streamed: bool) -> (Vec<String>, Counts) {
     let host = host(dspark);
-    let mut instance = create(&host, verify);
+    let mut instance = super::prefill_skip::create_profile_with_options(
+        &host,
+        8192,
+        true,
+        &[
+            (PREFILL_PLAN_CACHE_VERIFY, verify.into()),
+            (PREFILL_STREAMED_LOWERING, streamed.into()),
+        ],
+    );
     let restore = |instance: &BundleInstanceV1, request: u64, slot: u64, tokens: u64| {
         let ids: Vec<_> = (0..tokens).map(|p| token(0, p)).collect();
         plan_timing::restore_without_snapshot(instance.handle(), request, slot as u32, &ids)
@@ -550,7 +566,7 @@ fn lifecycle(dspark: bool, verify: bool) -> (Vec<String>, Counts) {
         assert_eq!(
             counts(&instance).hits,
             planned.hits + 1,
-            "the failed step reused its template"
+            "the failed step reused its template (verify={verify} streamed={streamed})"
         );
         for request in [3, 4] {
             instance.retire_request(request).unwrap();
@@ -587,12 +603,19 @@ fn lifecycle(dspark: bool, verify: bool) -> (Vec<String>, Counts) {
 
 /// The long-context lifecycle issues, with templates and with each reused
 /// template lowered again, the journal pinned from fresh lowerings before
-/// templates were kept by default. Both verification modes are captured by
-/// the journal proof, with identical bodies sharing the same pin.
+/// templates were kept by default, and so it does with every plan no
+/// template serves lowered while it issues (`prefill_streamed_lowering`),
+/// one, two or four groups ahead: those plans are the ones the batch run
+/// lowered before their launch but for the verify mode's, and they keep the
+/// same templates with the same Engram plans. Both verification modes are
+/// captured by the journal proof, with identical bodies sharing the same
+/// pin.
 #[test]
 fn long_context_templates_issue_the_fresh_lowerings_journal() {
     let mut mismatches = Vec::new();
     for dspark in [false, true] {
+        let mut batch = [0; 2];
+        let mut kept = None;
         let (name, expected) = if dspark {
             (
                 "flash-tp4-dspark-long-context-templates",
@@ -604,8 +627,45 @@ fn long_context_templates_issue_the_fresh_lowerings_journal() {
                 (166669, 0xbe1cbe2e5b85e219),
             )
         };
-        for verify in [false, true] {
-            let (journal, counts) = lifecycle(dspark, verify);
+        for (verify, streamed, lead) in [
+            (false, false, 2),
+            (true, false, 2),
+            (false, true, 2),
+            (true, true, 2),
+            (false, true, 1),
+            (false, true, 4),
+        ] {
+            let context =
+                format!("dspark={dspark} verify={verify} streamed={streamed} lead={lead}");
+            let before = (skip::streamed_launches(), skip::lowerings());
+            let ((journal, counts), templates) = skip::with_lead(lead, || {
+                skip::recording_kept(|| lifecycle(dspark, verify, streamed))
+            });
+            let launched = skip::streamed_launches() - before.0;
+            let lowered = skip::lowerings() - before.1;
+            if streamed {
+                // No template served the 200K end, the 100K end or the
+                // first grid chunk.
+                assert_eq!(launched, 3, "{context}");
+                assert_eq!(launched + lowered, batch[usize::from(verify)], "{context}");
+            } else {
+                assert_eq!(launched, 0, "{context}");
+                batch[usize::from(verify)] = lowered;
+            }
+            // Each of the three templates ends with the Engram plan of its
+            // prepared gathers, which only the DSpark target has.
+            let engram = templates.iter().filter(|line| line.starts_with("engram "));
+            assert_eq!(engram.count(), if dspark { 3 } else { 0 }, "{context}");
+            let first = kept.get_or_insert_with(|| templates.clone());
+            if let Some(at) =
+                (0..first.len().max(templates.len())).find(|&at| first.get(at) != templates.get(at))
+            {
+                panic!(
+                    "{context}: kept template line {at}: {:?} against {:?}",
+                    templates.get(at),
+                    first.get(at)
+                );
+            }
             assert!(journal.iter().filter(|l| l.starts_with("launch ")).count() > 20_000);
             // The 200K end (kept), its 128-token shift (reused), the 100K end
             // (refused: other index batches, so kept beside it), its shifts
@@ -621,14 +681,20 @@ fn long_context_templates_issue_the_fresh_lowerings_journal() {
                     kept: 3,
                     evicted: 0,
                 },
-                "dspark={dspark} verify={verify}"
+                "{context}"
             );
             if let Err(error) = bundle_runtime::fake_host::check_journal(
                 &journal,
                 expected,
-                &format!("{name}-{verify}.journal"),
+                &if streamed {
+                    format!("{name}-{verify}-streamed-{lead}.journal")
+                } else {
+                    format!("{name}-{verify}.journal")
+                },
             ) {
-                mismatches.push(format!("{name} verify={verify}: {error}"));
+                mismatches.push(format!(
+                    "{name} verify={verify} streamed={streamed} lead={lead}: {error}"
+                ));
             }
         }
     }

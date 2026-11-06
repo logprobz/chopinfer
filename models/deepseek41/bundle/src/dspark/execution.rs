@@ -152,6 +152,13 @@ pub trait Host {
     fn prefetch_engram(&mut self, _inputs: &[Input]) -> Result<(), Self::Error> {
         Ok(())
     }
+    /// Before catch-up and drafting, with every input of the step: the host
+    /// may hash its prefill rows, whose Engram ids read only their own
+    /// tokens and committed history, and begin gathering their table rows
+    /// for the target. It never changes results.
+    fn begin_prefill_engram(&mut self, _inputs: &[Input]) -> Result<(), Self::Error> {
+        Ok(())
+    }
     /// Observe completed catch-up before a draft can change provisional rings.
     /// This diagnostic must not advance state or request another catch-up.
     #[cfg(feature = "state-capture")]
@@ -167,6 +174,12 @@ pub trait Host {
     fn draft(&mut self, inputs: &[DraftInput]) -> Result<(), Self::Error>;
     fn computed_positions(&self) -> u32 {
         BLOCK_ROWS
+    }
+    /// After the drafter's launch and before its ids are read: the host may
+    /// plan the step's prefill now, while the drafter runs, as its target
+    /// would plan it. It never changes results.
+    fn plan_prefill(&mut self) -> Result<(), Self::Error> {
+        Ok(())
     }
     /// Copy exactly five int32 IDs per drafting item, after drafting finishes.
     fn read_draft_ids(&mut self, ids: &mut [[u32; WIDTH]]) -> Result<(), Self::Error>;
@@ -311,6 +324,7 @@ impl Runtime {
             .prepare(inputs.iter().map(|input| input.rows).collect())
             .map_err(Error::State)?;
         self.diagnostics.clear();
+        self.host_result(host.begin_prefill_engram(inputs))?;
         // The device target's steps: each item's first row is known now.
         if inputs.iter().any(|input| input.rows.kind.drafts() > 0)
             && inputs
@@ -372,6 +386,7 @@ impl Runtime {
                     "DSpark computed head depth does not cover emitted positions",
                 ));
             }
+            self.host_result(host.plan_prefill())?;
             let ids = match self.host_result(host.device_target(inputs, &draft_inputs))? {
                 Some(ids) => {
                     device_target = true;

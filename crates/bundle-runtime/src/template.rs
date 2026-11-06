@@ -212,6 +212,11 @@ impl<K: PartialEq, T> Templates<K, T> {
         self.counts.get()
     }
 
+    /// The most templates kept at once.
+    pub fn limit(&self) -> usize {
+        self.limit
+    }
+
     /// The templates kept now.
     pub fn len(&self) -> usize {
         self.kept.borrow().len()
@@ -276,19 +281,18 @@ impl<K: PartialEq, T> Templates<K, T> {
     }
 
     /// Keeps `template` under `key`, beside the key's other templates;
-    /// returns whether the least recently used template was dropped to stay
-    /// within the limit.
-    pub fn keep(&self, key: K, template: Rc<T>) -> bool {
+    /// returns the least recently used template when it was dropped to stay
+    /// within the limit, for the caller to free when it chooses.
+    pub fn keep(&self, key: K, template: Rc<T>) -> Option<Rc<T>> {
         let used = self.next_use();
         let mut kept = self.kept.borrow_mut();
         self.count(|c| c.kept += 1);
-        let mut dropped = false;
+        let mut dropped = None;
         if kept.len() >= self.limit
             && let Some(oldest) = (0..kept.len()).min_by_key(|&at| kept[at].used)
         {
-            kept.remove(oldest);
+            dropped = Some(kept.remove(oldest).template);
             self.count(|c| c.evicted += 1);
-            dropped = true;
         }
         kept.push(Kept {
             key,
@@ -512,7 +516,7 @@ mod tests {
             Ok::<_, ()>(Patch::Applied)
         };
         assert_eq!(cache.reuse(&1, applied), Ok(None));
-        assert!(!cache.keep(1, Rc::new(vec![0])));
+        assert!(cache.keep(1, Rc::new(vec![0])).is_none());
         let held = cache.reuse(&1, applied).unwrap().unwrap();
         assert_eq!(*held, [0, 1]);
         // A step still holds the template: it is neither patched nor dropped.
@@ -581,11 +585,11 @@ mod tests {
     fn caches_drop_the_least_recently_used_template() {
         let cache = Templates::<u32, u32>::new(2);
         let applied = |_: &mut u32| Ok::<_, ()>(Patch::Applied);
-        assert!(!cache.keep(1, Rc::new(10)));
-        assert!(!cache.keep(2, Rc::new(20)));
-        // Reusing 1 makes 2 the oldest.
+        assert!(cache.keep(1, Rc::new(10)).is_none());
+        assert!(cache.keep(2, Rc::new(20)).is_none());
+        // Reusing 1 makes 2 the oldest, which the caller receives.
         assert_eq!(*cache.reuse(&1, applied).unwrap().unwrap(), 10);
-        assert!(cache.keep(3, Rc::new(30)));
+        assert_eq!(cache.keep(3, Rc::new(30)).as_deref(), Some(&20));
         assert_eq!(cache.reuse(&2, applied), Ok(None));
         assert_eq!(*cache.reuse(&1, applied).unwrap().unwrap(), 10);
         assert_eq!(*cache.reuse(&3, applied).unwrap().unwrap(), 30);

@@ -73,9 +73,34 @@ pub trait Program {
     }
 
     /// Retain prefill IDs for target planning. This must not enqueue IO:
-    /// the target first validates its consumer boundaries and fallback.
+    /// the target first validates its consumer boundaries and fallback,
+    /// unless the gathers already began (`begin_prefill_engram`).
     fn stage_prefill_engram(&mut self, _hashed: &Hashed) -> Result<bool, String> {
         Ok(false)
+    }
+
+    /// Whether this step's prefill begins its prepared gathers before
+    /// catch-up and drafting, where its target takes them
+    /// (`dspark_early_prefill_engram`).
+    fn begins_prefill_engram(&self) -> bool {
+        false
+    }
+
+    /// Begins the prefill's prepared gathers of `hashed`, its rows' ids,
+    /// for the target to join.
+    fn begin_prefill_engram(&mut self, _hashed: &Hashed) -> Result<(), String> {
+        Ok(())
+    }
+
+    /// Whether this step plans its prefill while the drafter runs, as its
+    /// target would plan it (`dspark_early_prefill_plan`).
+    fn plans_prefill_early(&self) -> bool {
+        false
+    }
+
+    /// Plans the prefill of `hashed`, its rows' ids, for the target.
+    fn plan_prefill(&mut self, _hashed: &Hashed) -> Result<(), String> {
+        Ok(())
     }
 
     /// Takes the decode phase's ids of a mixed target whose prefill staged
@@ -141,6 +166,9 @@ pub struct Staging {
     head_dim: u64,
     pending: Vec<Pending>,
     confidence: Option<Vec<[u32; BLOCK_ROWS as usize]>>,
+    /// The prefill rows this execute hashed before drafting, and their
+    /// phase, which its target hash takes instead of hashing them again.
+    early: Option<(Vec<TargetRows>, GatheredPhase)>,
 }
 
 pub struct Gathered {
@@ -201,6 +229,7 @@ impl Staging {
             rows: EngramRows::new(hash),
             pending: Vec::new(),
             confidence: None,
+            early: None,
         })
     }
 
@@ -224,6 +253,7 @@ impl Staging {
     pub fn cancel(&mut self) {
         self.pending.clear();
         self.confidence = None;
+        self.early = None;
     }
 
     fn pending_rows(
@@ -267,14 +297,23 @@ impl Staging {
             return Err("DSpark Engram staging needs every rank".into());
         }
         let pending = Self::pending_rows(rows, text)?;
+        let mut early = self.early.take();
         let phases = [true, false]
             .into_iter()
             .map(|prefill| {
-                let steps = pending
+                let phase = pending
                     .iter()
-                    .filter(|row| matches!(row.rows.rows.kind, Kind::Prefill { .. }) == prefill)
-                    .map(Pending::step)
-                    .collect::<Vec<_>>();
+                    .filter(|row| matches!(row.rows.rows.kind, Kind::Prefill { .. }) == prefill);
+                // The prefill rows hashed before drafting, unchanged since.
+                if prefill && let Some((hashed, gathered)) = early.take() {
+                    if !phase.map(|row| &row.rows).eq(&hashed) {
+                        return Err(
+                            "DSpark early prefill Engram rows differ from the target".into()
+                        );
+                    }
+                    return Ok(gathered);
+                }
+                let steps = phase.map(Pending::step).collect::<Vec<_>>();
                 self.hash_phase(&steps, prefill, ranks)
             })
             .collect::<Result<Vec<_>, _>>()?;
@@ -462,18 +501,43 @@ impl Staging {
     }
 }
 
+#[cfg(test)]
+thread_local! {
+    static EARLY_STAGINGS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// The steps that staged their prefill rows before catch-up on this thread
+/// (`Adapter::begin_prefill_engram`).
+#[cfg(test)]
+pub(crate) fn early_stagings() -> u64 {
+    EARLY_STAGINGS.get()
+}
+
 /// Host wall time of each synchronous phase of one execute, in microseconds.
 /// Catch-up, drafting and readback end in device synchronizations, so they
 /// include their device time. Prefill target includes upload, submission and
 /// status waits; a device-resident decode target records its own phases.
+/// The phases are disjoint: an early prefill begin is part of `gather`
+/// (`dspark_early_prefill_engram`), and a prefill planned while the drafter
+/// runs is `prefill_plan`, outside `target` (`dspark_early_prefill_plan`).
+/// The record also says whether the step's prefill began its gathers or
+/// planned early, whether it was lowered while it issued
+/// (`prefill_streamed_lowering`), and holds the prefill plan templates
+/// after the step.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct PhaseTimes {
+    pub prefill_began_early: bool,
+    pub prefill_planned_early: bool,
+    pub prefill_streamed: bool,
+    /// The instance's templates after the step; none outside an instance.
+    pub prefill_templates: Option<PrefillTemplates>,
     pub catch_up_us: u64,
     pub catch_up_items: u32,
     pub catch_up_rows: u32,
     pub bulk_us: u64,
     pub bulk_passes: u32,
     pub draft_us: u64,
+    pub prefill_plan_us: u64,
     pub read_ids_us: u64,
     pub read_confidence_us: u64,
     pub gather_us: u64,
@@ -482,15 +546,52 @@ pub struct PhaseTimes {
     pub target: super::timing::TargetTimes,
 }
 
+/// An instance's prefill plan templates: those kept now, the most kept at
+/// once, and the cache's counts so far. The counts only grow, so two
+/// consecutive step-shape records give the later step's template reuses,
+/// misses and drops.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct PrefillTemplates {
+    pub templates: usize,
+    pub limit: usize,
+    pub counts: bundle_runtime::template::Counts,
+}
+
+impl PrefillTemplates {
+    fn json(&self) -> String {
+        let counts = &self.counts;
+        format!(
+            concat!(
+                "{{\"templates\":{},\"limit\":{},\"hits\":{},\"misses\":{},",
+                "\"busy\":{},\"refused\":{},\"kept\":{},\"dropped\":{}}}"
+            ),
+            self.templates,
+            self.limit,
+            counts.hits,
+            counts.misses,
+            counts.busy,
+            counts.refused,
+            counts.kept,
+            counts.evicted,
+        )
+    }
+}
+
 impl PhaseTimes {
     pub fn record(&self, context: Context, items: usize, drafting: usize) -> String {
+        let templates = self
+            .prefill_templates
+            .map_or_else(|| "null".to_owned(), |templates| templates.json());
         format!(
             concat!(
                 "{{\"schema\":\"chopinfer.deepseek41.step-shape.v1\",",
                 "\"instance_id\":\"{}\",\"step_id\":\"{}\",\"items\":{},\"drafting\":{},",
+                "\"early_prefill_begin\":{},\"early_prefill_plan\":{},\"streamed_lowering\":{},",
+                "\"prefill_templates\":{},",
                 "\"catch_up_items\":{},\"catch_up_rows\":{},\"bulk_passes\":{},",
                 "\"undrafted_ready\":{},\"undrafted_status_packets\":{},",
-                "\"micros\":{{\"catch_up\":{},\"bulk\":{},\"draft\":{},\"read_ids\":{},",
+                "\"micros\":{{\"catch_up\":{},\"bulk\":{},\"draft\":{},\"prefill_plan\":{},",
+                "\"read_ids\":{},",
                 "\"read_confidence\":{},\"gather\":{},\"upload\":{},\"target\":{},",
                 "\"target_lower\":{},\"target_upload\":{},\"target_submit\":{},\"target_wait\":{}}}}}"
             ),
@@ -498,6 +599,10 @@ impl PhaseTimes {
             context.step_id,
             items,
             drafting,
+            self.prefill_began_early,
+            self.prefill_planned_early,
+            self.prefill_streamed,
+            templates,
             self.catch_up_items,
             self.catch_up_rows,
             self.bulk_passes,
@@ -506,6 +611,7 @@ impl PhaseTimes {
             self.catch_up_us,
             self.bulk_us,
             self.draft_us,
+            self.prefill_plan_us,
             self.read_ids_us,
             self.read_confidence_us,
             self.gather_us,
@@ -637,6 +743,56 @@ impl<P: Program> Host for Adapter<'_, P> {
             .map_err(|e| format!("Engram hash: {e:?}"))?;
         self.program.prefetch_engram(&hashed)
     }
+    fn begin_prefill_engram(&mut self, inputs: &[Input]) -> Result<(), String> {
+        self.staging.early = None;
+        let is_prefill = |input: &&Input| matches!(input.rows.kind, Kind::Prefill { .. });
+        let begins = self.program.begins_prefill_engram();
+        // A prefill plans early only beside the drafter (`plan_prefill`).
+        let plans = self.program.plans_prefill_early()
+            && inputs.iter().any(|input| input.rows.kind.drafts() > 0);
+        // Neither, or no prefill, leaves the step as it was.
+        if !(begins || plans) || !inputs.iter().any(|i| is_prefill(&i)) {
+            return Ok(());
+        }
+        let prefill = inputs
+            .iter()
+            .filter(is_prefill)
+            .map(|input| TargetRows {
+                rows: input.rows,
+                tokens: input.tokens.clone(),
+            })
+            .collect::<Vec<_>>();
+        // The target hashes these rows alike: its prefill rows are the
+        // inputs' own, and nothing commits history in between.
+        let (staging, text, ranks) = (&mut *self.staging, self.text, self.ranks);
+        let phase = timed(
+            &mut self.times,
+            |t| &mut t.gather_us,
+            || -> Result<_, String> {
+                let pending = Staging::pending_rows(&prefill, text)?;
+                let steps = pending.iter().map(Pending::step).collect::<Vec<_>>();
+                staging.hash_phase(&steps, true, ranks)
+            },
+        )?;
+        if phase.hashed.rows() == 0 {
+            return Ok(());
+        }
+        if begins {
+            let program = &mut *self.program;
+            timed(
+                &mut self.times,
+                |t| &mut t.gather_us,
+                || program.begin_prefill_engram(&phase.hashed),
+            )?;
+            if let Some(times) = self.times.as_mut() {
+                times.prefill_began_early = true;
+            }
+        }
+        #[cfg(test)]
+        EARLY_STAGINGS.set(EARLY_STAGINGS.get() + 1);
+        self.staging.early = Some((prefill, phase));
+        Ok(())
+    }
     fn draft(&mut self, inputs: &[DraftInput]) -> Result<(), String> {
         let program = &mut *self.program;
         timed(
@@ -647,6 +803,23 @@ impl<P: Program> Host for Adapter<'_, P> {
     }
     fn computed_positions(&self) -> u32 {
         self.program.computed_positions()
+    }
+    fn plan_prefill(&mut self) -> Result<(), String> {
+        match &self.staging.early {
+            Some((_, phase)) if self.program.plans_prefill_early() => {
+                let program = &mut *self.program;
+                timed(
+                    &mut self.times,
+                    |t| &mut t.prefill_plan_us,
+                    || program.plan_prefill(&phase.hashed),
+                )?;
+                if let Some(times) = self.times.as_mut() {
+                    times.prefill_planned_early = true;
+                }
+                Ok(())
+            }
+            _ => Ok(()),
+        }
     }
     fn read_draft_ids(&mut self, ids: &mut [[u32; BLOCK_ROWS as usize]]) -> Result<(), String> {
         let _range = bundle_runtime::profile_ranges::BorrowedRange::new(

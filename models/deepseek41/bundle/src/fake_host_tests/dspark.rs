@@ -13,6 +13,8 @@ mod drafter_hc;
 mod drafter_moe;
 mod drafter_rows;
 mod early;
+mod early_prefill_engram;
+pub(super) use early_prefill_engram::untimed;
 mod graph_budget;
 pub(super) mod host;
 mod item_keys;

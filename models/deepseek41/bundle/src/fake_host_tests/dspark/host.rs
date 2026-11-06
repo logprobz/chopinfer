@@ -1,8 +1,18 @@
 //! A logical zero-filled mapped table with bounded gather allocations, or
 //! one whose rows' bytes follow their ids (`MappedHost::with_row_ids`).
 //! All other services use the ordinary fake host, including span checks.
+//!
+//! The fake gather writes its rows when a consumer stream waits, but the
+//! host's copies of a gather's ids and rows run asynchronously from its
+//! enqueue. So every device access between the two is checked against the
+//! pending spans (`MappedHost::touch`): a launch, a graph replay (through
+//! the spans its captured launches named), a copy, a zeroing, a pointer
+//! table and the spans it names, a collective or a custom operation that
+//! touches a pending gather's ids before it completes, or a plane's
+//! destination rows before its stream waits, is a race (`FakeHost::races`).
 use super::*;
 use runtime_bundle_abi::{BundleMappedGatherHandleV1, MappedGatherPlaneV1, MappedGatherStatsV1};
+use std::collections::BTreeMap;
 
 /// Services backed by the model fake device, with optional encoder support.
 pub(in crate::fake_host_tests) trait MappedServices:
@@ -26,9 +36,42 @@ struct Gather {
     waited: std::collections::BTreeSet<u64>,
     waited_at: usize,
 }
+
+/// Device spans the race check follows (`MappedHost::touch`).
+#[derive(Default)]
+struct Spans {
+    /// The spans each open capture's launches touch, by capturing stream.
+    capturing: BTreeMap<u32, Vec<DeviceBufferSpanV1>>,
+    /// The spans each captured graph's launches touch, by graph.
+    graphs: BTreeMap<u64, Vec<DeviceBufferSpanV1>>,
+    /// Pointer tables on the device by (buffer, offset): their length and
+    /// the spans their slots name, which an access of the table touches.
+    tables: BTreeMap<(u64, u64), (u64, Vec<DeviceBufferSpanV1>)>,
+}
+
+fn overlaps(a: DeviceBufferSpanV1, b: DeviceBufferSpanV1) -> bool {
+    a.buffer.raw == b.buffer.raw && a.offset < b.offset + b.length && b.offset < a.offset + a.length
+}
+
+/// The device spans a launch's arguments name.
+fn argument_spans(arguments: &[KernelArgumentV1]) -> Vec<DeviceBufferSpanV1> {
+    arguments
+        .iter()
+        .flat_map(|argument| match argument {
+            KernelArgumentV1::DeviceBuffer(span) => vec![*span],
+            KernelArgumentV1::TensorMap(map) => vec![map.buffer],
+            KernelArgumentV1::DevicePointerArray(slots) => {
+                slots.iter().flatten().copied().collect()
+            }
+            _ => Vec::new(),
+        })
+        .collect()
+}
+
 pub(in crate::fake_host_tests) struct MappedHost {
     host: Rc<dyn MappedServices>,
     gathers: std::cell::RefCell<std::collections::BTreeMap<u64, Gather>>,
+    spans: std::cell::RefCell<Spans>,
     peer_copies: bool,
     delayed_completion: bool,
     completed_at: std::cell::Cell<usize>,
@@ -40,6 +83,7 @@ impl MappedHost {
         Self {
             host,
             gathers: Default::default(),
+            spans: Default::default(),
             peer_copies: false,
             delayed_completion: false,
             completed_at: Default::default(),
@@ -66,6 +110,90 @@ impl MappedHost {
     pub(in crate::fake_host_tests) fn failing(self, stage: &'static str, after: usize) -> Self {
         self.fail_gather.set(Some((stage, after)));
         self
+    }
+
+    /// Every pending gather's spans that no other device access may touch:
+    /// its ids until it completes, and each plane's destination rows until
+    /// the plane's stream waits for them.
+    fn pending(&self) -> Vec<(DeviceBufferSpanV1, String)> {
+        let mut pending = Vec::new();
+        for (handle, gather) in self.gathers.borrow().iter() {
+            let Some(rows) = gather.pending else {
+                continue;
+            };
+            pending.push((gather.indices, format!("gather {handle} ids")));
+            for plane in &gather.planes {
+                if !gather.waited.contains(&plane.stream.raw) {
+                    let rows_span = DeviceBufferSpanV1::new(
+                        plane.destination.buffer,
+                        plane.destination.offset,
+                        rows * plane.row_bytes,
+                    );
+                    let view = String::from_utf8_lossy(&plane.view_id);
+                    pending.push((
+                        rows_span,
+                        format!("gather {handle} rank {} {view}", plane.rank),
+                    ));
+                }
+            }
+        }
+        pending
+    }
+
+    /// A device access of `spans` on `stream`, with the spans a pointer
+    /// table among them names: kept for the graph an open capture builds,
+    /// or else checked against every pending gather.
+    fn touch(
+        &self,
+        what: &str,
+        stream: BundleStreamHandleV1,
+        spans: impl IntoIterator<Item = DeviceBufferSpanV1>,
+    ) {
+        let mut touched: Vec<_> = spans.into_iter().collect();
+        let mut recorded = self.spans.borrow_mut();
+        let named: Vec<_> = touched
+            .iter()
+            .flat_map(|&span| {
+                recorded
+                    .tables
+                    .range((span.buffer.raw, 0)..=(span.buffer.raw, u64::MAX))
+                    .filter(move |&(&(_, offset), &(length, _))| {
+                        overlaps(span, DeviceBufferSpanV1::new(span.buffer, offset, length))
+                    })
+                    .flat_map(|(_, (_, slots))| slots.iter().copied())
+            })
+            .collect();
+        touched.extend(named);
+        if let Some(capture) = self.host.fake().capture_of(stream.slot()) {
+            recorded
+                .capturing
+                .entry(capture)
+                .or_default()
+                .extend(touched);
+            return;
+        }
+        drop(recorded);
+        self.check(what, stream, &touched);
+    }
+
+    /// Records each of `touched` that a pending gather holds as a race.
+    fn check(&self, what: &str, stream: BundleStreamHandleV1, touched: &[DeviceBufferSpanV1]) {
+        let pending = self.pending();
+        if pending.is_empty() {
+            return;
+        }
+        let fake = self.host.fake();
+        for &span in touched {
+            for (held, name) in &pending {
+                if overlaps(span, *held) {
+                    let line = fake.journal.borrow().len();
+                    fake.races.borrow_mut().push(format!(
+                        "journal line {line}: {what} on stream {} touches {span:?}, {name} {held:?}",
+                        stream.slot()
+                    ));
+                }
+            }
+        }
     }
 
     /// The uploaded ids `indices` holds, the first `rows` of them.
@@ -230,19 +358,36 @@ impl HostServicesBackendV1 for MappedHost {
     forward!(wait_event(stream: BundleStreamHandleV1, event: BundleEventHandleV1) -> ());
     forward!(synchronize_event(event: BundleEventHandleV1) -> ());
     forward!(release_event(event: BundleEventHandleV1) -> ());
-    forward!(copy_host_to_device(stream: BundleStreamHandleV1, destination: DeviceBufferSpanV1, source: &[u8]) -> ());
+    fn copy_host_to_device(
+        &self,
+        stream: BundleStreamHandleV1,
+        destination: DeviceBufferSpanV1,
+        source: &[u8],
+    ) -> HostServiceResultV1<()> {
+        self.touch("upload", stream, [destination]);
+        self.host.copy_host_to_device(stream, destination, source)
+    }
     fn copy_device_to_host(
         &self,
         stream: BundleStreamHandleV1,
         destination: &mut [u8],
         source: DeviceBufferSpanV1,
     ) -> HostServiceResultV1<()> {
+        self.touch("readback", stream, [source]);
         self.host.copy_device_to_host(stream, destination, source)?;
         self.completed_at
             .set(self.host.fake().journal.borrow().len());
         Ok(())
     }
-    forward!(copy_device_to_device(stream: BundleStreamHandleV1, destination: DeviceBufferSpanV1, source: DeviceBufferSpanV1) -> ());
+    fn copy_device_to_device(
+        &self,
+        stream: BundleStreamHandleV1,
+        destination: DeviceBufferSpanV1,
+        source: DeviceBufferSpanV1,
+    ) -> HostServiceResultV1<()> {
+        self.touch("device copy", stream, [destination, source]);
+        self.host.copy_device_to_device(stream, destination, source)
+    }
     fn copy_peer_to_peer(
         &self,
         stream: BundleStreamHandleV1,
@@ -251,6 +396,7 @@ impl HostServicesBackendV1 for MappedHost {
         source_context: BundleContextHandleV1,
         source: DeviceBufferSpanV1,
     ) -> HostServiceResultV1<()> {
+        self.touch("peer copy", stream, [destination, source]);
         let issuer = self.host.fake().stream_ranks.borrow()[&stream.slot()] + 1;
         assert!(
             issuer == destination_context.slot() || issuer == source_context.slot(),
@@ -277,12 +423,45 @@ impl HostServicesBackendV1 for MappedHost {
         }
         self.host.copy_device_to_device(stream, destination, source)
     }
-    forward!(zero_device_buffer(stream: BundleStreamHandleV1, destination: DeviceBufferSpanV1) -> ());
-    forward!(write_device_pointer_table(stream: BundleStreamHandleV1, destination: DeviceBufferSpanV1, slots: &[Option<DeviceBufferSpanV1>]) -> ());
+    fn zero_device_buffer(
+        &self,
+        stream: BundleStreamHandleV1,
+        destination: DeviceBufferSpanV1,
+    ) -> HostServiceResultV1<()> {
+        self.touch("zeroing", stream, [destination]);
+        self.host.zero_device_buffer(stream, destination)
+    }
+    fn write_device_pointer_table(
+        &self,
+        stream: BundleStreamHandleV1,
+        destination: DeviceBufferSpanV1,
+        slots: &[Option<DeviceBufferSpanV1>],
+    ) -> HostServiceResultV1<()> {
+        self.touch("pointer table", stream, [destination]);
+        self.spans.borrow_mut().tables.insert(
+            (destination.buffer.raw, destination.offset),
+            (
+                destination.length,
+                slots.iter().flatten().copied().collect(),
+            ),
+        );
+        self.host
+            .write_device_pointer_table(stream, destination, slots)
+    }
     forward!(load_cuda_module(context: BundleContextHandleV1, module_bytes: &[u8]) -> BundleCudaModuleHandleV1);
     forward!(resolve_cuda_symbol(module: BundleCudaModuleHandleV1, symbol_name: &[u8]) -> BundleCudaSymbolHandleV1);
     forward!(configure_cuda_symbol(symbol: BundleCudaSymbolHandleV1, dynamic_shared_memory_bytes: u32) -> ());
-    forward!(launch_cuda_symbol(stream: BundleStreamHandleV1, symbol: BundleCudaSymbolHandleV1, config: LaunchConfigV1, arguments: &[KernelArgumentV1]) -> ());
+    fn launch_cuda_symbol(
+        &self,
+        stream: BundleStreamHandleV1,
+        symbol: BundleCudaSymbolHandleV1,
+        config: LaunchConfigV1,
+        arguments: &[KernelArgumentV1],
+    ) -> HostServiceResultV1<()> {
+        self.touch("launch", stream, argument_spans(arguments));
+        self.host
+            .launch_cuda_symbol(stream, symbol, config, arguments)
+    }
     forward!(release_cuda_symbol(symbol: BundleCudaSymbolHandleV1) -> ());
     forward!(release_cuda_module(module: BundleCudaModuleHandleV1) -> ());
     forward!(allocate_physical_kv(request: &PhysicalKvRequestV1) -> BundlePhysicalKvHandleV1);
@@ -302,13 +481,75 @@ impl HostServicesBackendV1 for MappedHost {
     forward!(resolve_state_view(state: BundleStateHandleV1, rank: u32) -> DeviceBufferSpanV1);
     forward!(release_state(state: BundleStateHandleV1) -> ());
     forward!(create_collective(request: &CollectiveRequestV1) -> BundleCollectiveHandleV1);
-    forward!(execute_collective(collective: BundleCollectiveHandleV1, stream: BundleStreamHandleV1, operation: &[u8], arguments: &[KernelArgumentV1]) -> ());
+    fn execute_collective(
+        &self,
+        collective: BundleCollectiveHandleV1,
+        stream: BundleStreamHandleV1,
+        operation: &[u8],
+        arguments: &[KernelArgumentV1],
+    ) -> HostServiceResultV1<()> {
+        self.touch("collective", stream, argument_spans(arguments));
+        self.host
+            .execute_collective(collective, stream, operation, arguments)
+    }
     forward!(release_collective(collective: BundleCollectiveHandleV1) -> ());
-    forward!(run_custom_operation(context: BundleContextHandleV1, stream: BundleStreamHandleV1, completion: CustomCompletionV1, operation_id: &[u8], operands: &[CustomOperandV1], operation: &CustomOperationV1<'_>) -> i32);
+    fn run_custom_operation(
+        &self,
+        context: BundleContextHandleV1,
+        stream: BundleStreamHandleV1,
+        completion: CustomCompletionV1,
+        operation_id: &[u8],
+        operands: &[CustomOperandV1],
+        operation: &CustomOperationV1<'_>,
+    ) -> HostServiceResultV1<i32> {
+        self.touch(
+            "custom operation",
+            stream,
+            operands.iter().map(|operand| operand.span),
+        );
+        self.host.run_custom_operation(
+            context,
+            stream,
+            completion,
+            operation_id,
+            operands,
+            operation,
+        )
+    }
     forward!(begin_graph_capture(stream: BundleStreamHandleV1) -> ());
-    forward!(end_graph_capture(stream: BundleStreamHandleV1) -> BundleGraphHandleV1);
-    forward!(launch_graph(stream: BundleStreamHandleV1, graph: BundleGraphHandleV1) -> ());
-    forward!(release_graph(graph: BundleGraphHandleV1) -> ());
+    fn end_graph_capture(
+        &self,
+        stream: BundleStreamHandleV1,
+    ) -> HostServiceResultV1<BundleGraphHandleV1> {
+        let captured = self
+            .spans
+            .borrow_mut()
+            .capturing
+            .remove(&stream.slot())
+            .unwrap_or_default();
+        let graph = self.host.end_graph_capture(stream)?;
+        self.spans.borrow_mut().graphs.insert(graph.raw, captured);
+        Ok(graph)
+    }
+    fn launch_graph(
+        &self,
+        stream: BundleStreamHandleV1,
+        graph: BundleGraphHandleV1,
+    ) -> HostServiceResultV1<()> {
+        let spans = self
+            .spans
+            .borrow()
+            .graphs
+            .get(&graph.raw)
+            .cloned()
+            .unwrap_or_default();
+        self.touch("graph replay", stream, spans);
+        self.host.launch_graph(stream, graph)
+    }
+    fn release_graph(&self, graph: BundleGraphHandleV1) -> HostServiceResultV1<()> {
+        self.spans.borrow_mut().graphs.remove(&graph.raw);
+        self.host.release_graph(graph)
+    }
     forward!(set_memory_pool_peer_access(pool: BundleMemoryPoolHandleV1, peer_context: BundleContextHandleV1, enabled: bool) -> ());
     forward!(upload_rank_arenas(uploads: &[RankArenaUploadV1]) -> Vec<BundleRankArenaHandleV1>);
     fn create_mapped_gather(

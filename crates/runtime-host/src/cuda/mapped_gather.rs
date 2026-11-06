@@ -2,7 +2,43 @@
 use super::*;
 use crate::device::mapped_gather::{MappedGatherPlanV1, gather_planes_v1, plane_outputs};
 use runtime_bundle_abi::MappedGatherStatsV1;
-use runtime_cuda::{HostTransform, HostTransformTarget};
+use runtime_cuda::{HostTransform, HostTransformInit, HostTransformTarget};
+
+const INIT_ENV: &str = "CHOPINFER_MAPPED_GATHER_INIT";
+
+/// `CHOPINFER_MAPPED_GATHER_INIT`: when a prepared gather's callback zeroes
+/// its pinned outputs for the uploads, which copy each plane's live rows.
+/// Unset or `extents` (the default) zeroes each stream's output before the
+/// gather up to its last plane's live end, the unused capacity of the planes
+/// before that included; `failure` zeroes the live rows only after a gather
+/// that fails, since one that succeeds has written every byte of them
+/// ([`gather_planes_v1`]). Anything else keeps the default. The uploaded
+/// bytes are the same either way.
+fn configured_init(value: Option<std::ffi::OsString>) -> HostTransformInit {
+    match value.as_ref().and_then(|value| value.to_str()) {
+        Some("failure") => HostTransformInit::OnFailure,
+        _ => HostTransformInit::Extents,
+    }
+}
+
+/// The configured mode, read at the first gather, which logs a mode other
+/// than the default once so a served run shows it engaged.
+fn init() -> HostTransformInit {
+    static INIT: std::sync::OnceLock<HostTransformInit> = std::sync::OnceLock::new();
+    *INIT.get_or_init(|| {
+        let init = configured_init(std::env::var_os(INIT_ENV));
+        if init == HostTransformInit::OnFailure {
+            runtime_engine::logging::line(
+                serde_json::json!({
+                    "schema":"chopinfer.mapped-row-fetch.v1","phase":"gather-initialization",
+                    "mode":"failure",
+                })
+                .to_string(),
+            );
+        }
+        init
+    })
+}
 
 pub(super) struct Gather {
     transform: HostTransform,
@@ -56,9 +92,10 @@ impl Gather {
             .zip(&capacities)
             .map(|((_, stream), &bytes)| (stream, bytes))
             .collect::<Vec<_>>();
-        let transform =
+        let mut transform =
             HostTransform::new(&producer.context(), plan.indices.length as usize, &outputs)
                 .map_err(driver_status)?;
+        transform.set_init(init());
         Ok(Self {
             transform,
             plan,
@@ -143,5 +180,24 @@ impl Gather {
 
     pub(super) fn pinned_bytes(&self) -> u64 {
         self.transform.pinned_bytes() as u64
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn gather_initialization_reads_its_two_modes_and_defaults_otherwise() {
+        for (value, init) in [
+            (None, HostTransformInit::Extents),
+            (Some("extents"), HostTransformInit::Extents),
+            (Some("failure"), HostTransformInit::OnFailure),
+            (Some("targets"), HostTransformInit::Extents),
+            (Some("Failure"), HostTransformInit::Extents),
+            (Some(""), HostTransformInit::Extents),
+        ] {
+            assert_eq!(configured_init(value.map(Into::into)), init, "{value:?}");
+        }
     }
 }

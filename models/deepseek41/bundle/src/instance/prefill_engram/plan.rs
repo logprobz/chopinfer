@@ -4,7 +4,7 @@ use crate::instance::Instance;
 use crate::instance::execute::Executor;
 use crate::program::Stage;
 use bundle_runtime::dispatch::DispatchError;
-use bundle_runtime::pipeline::{PreparedLaunch, check_collectives};
+use bundle_runtime::pipeline::{PreparedLaunch, Unit, check_collectives};
 use std::ops::Range;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -28,48 +28,12 @@ impl Plan {
         flags: &[Vec<bool>],
         stages: &[Vec<Stage>],
     ) -> Result<Self, String> {
-        if !gathers.idle()
-            || programs.is_empty()
-            || programs.len() != flags.len()
-            || programs.len() != stages.len()
-        {
+        if !gathers.plannable() {
             return Err("prefill Engram program extent or lifecycle".into());
         }
-        let mut ranges = Vec::new();
-        for (rank, program) in programs.iter().enumerate() {
-            if program.len() != flags[rank].len() || program.len() != stages[rank].len() {
-                return Err("prefill Engram stage extent".into());
-            }
-            let mut start = 0;
-            let mut sections = Vec::new();
-            for (index, layer) in gathers.layers.iter().enumerate() {
-                let mut matches = stages[rank].iter().enumerate().filter_map(|(at, stage)| {
-                    (*stage == Stage::EngramRows(layer.layer)).then_some(at)
-                });
-                let end = matches.next().ok_or("prefill Engram consumer absent")?;
-                if end < start || matches.next().is_some() {
-                    return Err("prefill Engram consumer repeated or reordered".into());
-                }
-                let pending: Vec<_> = gathers.layers[index..]
-                    .iter()
-                    .flat_map(|l| std::iter::once(l.indices).chain(l.destinations.iter().copied()))
-                    .collect();
-                crate::shared_overlap::disjoint_copy_spans(&pending, &program[..end])?;
-                sections.push(start..end);
-                start = end;
-            }
-            if !gathers.verify.is_empty() {
-                crate::shared_overlap::disjoint_copy_spans(&gathers.verify, &program[start..])?;
-            }
-            sections.push(start..program.len());
-            ranges.push(sections);
-        }
-        let plan = Self {
-            ranges,
-            dma: Vec::new(),
-        };
-        plan.check_sections(programs, flags)?;
-        Ok(plan)
+        let mut builder = Builder::new(gathers, programs.len());
+        builder.advance(gathers, programs, flags, stages)?;
+        builder.finish(programs, flags)
     }
 
     /// Each section's collectives match across the ranks.
@@ -117,7 +81,7 @@ impl Plan {
                             && sections.last().map(|last| last.end) == Some(program.len())
                     },
                 );
-        if !gathers.idle() || !extent {
+        if !gathers.plannable() || !extent {
             return Err("prefill Engram program extent or lifecycle".into());
         }
         for (rank, range) in changed {
@@ -167,45 +131,13 @@ impl Plan {
         spans: &[Range<usize>],
         joined: &mut usize,
     ) -> Result<Vec<DmaPiece>, String> {
-        if spans.len() != self.ranges.len() || spans.is_empty() {
-            return Err("DMA Engram rank extent".into());
-        }
-        let mut cursor = spans.iter().map(|s| s.start).collect::<Vec<_>>();
-        let mut pieces = Vec::new();
-        let mut join = None;
-        while *joined + 1 < self.ranges[0].len() {
-            let boundaries = self
-                .ranges
-                .iter()
-                .map(|r| r[*joined].end)
-                .collect::<Vec<_>>();
-            if boundaries.iter().zip(spans).all(|(&b, s)| b >= s.end) {
-                break;
-            }
-            if boundaries
-                .iter()
-                .zip(spans)
-                .any(|(&b, s)| b < s.start || b >= s.end)
-            {
-                return Err("DMA moved or reordered an Engram join boundary".into());
-            }
-            pieces.push(DmaPiece {
-                spans: cursor
-                    .iter()
-                    .zip(&boundaries)
-                    .map(|(&a, &b)| a..b)
-                    .collect(),
-                join,
-            });
-            cursor = boundaries;
-            join = Some(*joined);
-            *joined += 1;
-        }
-        pieces.push(DmaPiece {
-            spans: cursor.iter().zip(spans).map(|(&a, s)| a..s.end).collect(),
-            join,
-        });
-        Ok(pieces)
+        let layers = self.ranges.first().map_or(0, |r| r.len().saturating_sub(1));
+        let ends = self
+            .ranges
+            .iter()
+            .map(|sections| sections[..layers].iter().map(|s| s.end).collect())
+            .collect::<Vec<Vec<_>>>();
+        split_dma(&ends, layers, spans, joined)
     }
 
     pub(in crate::instance) fn check_dma_collectives(
@@ -248,9 +180,12 @@ impl Plan {
         self.ranges[0].len() - 1
     }
 
+    /// Issues `programs` between this plan's joins as part of `unit`, the
+    /// prefill's one unit (`Instance::launch_layered_pieces_in`).
     pub(in crate::instance) fn execute(
         &self,
         instance: &Instance,
+        unit: &mut Unit,
         programs: &[Vec<PreparedLaunch>],
         flags: &[Vec<bool>],
     ) -> Result<(), DispatchError> {
@@ -263,10 +198,205 @@ impl Plan {
         }
         let executor = Executor::new(instance, &streams);
         executor.run(|| {
-            instance.launch_layered_pieces(&streams, &self.ranges, programs, flags, |layer| {
-                instance.join_prefill_engram(&streams, layer)
-            })
+            instance.launch_layered_pieces_in(
+                unit,
+                &streams,
+                &self.ranges,
+                programs,
+                flags,
+                |layer| instance.join_prefill_engram(&streams, layer),
+            )
         })
+    }
+}
+
+/// `spans`, one rank's each, split at the joins they cross: `ends[rank]`
+/// holds each rank's consumers found so far, of `layers` in all; a layer
+/// whose consumer was not found yet lies past every span.
+fn split_dma(
+    ends: &[Vec<usize>],
+    layers: usize,
+    spans: &[Range<usize>],
+    joined: &mut usize,
+) -> Result<Vec<DmaPiece>, String> {
+    if spans.len() != ends.len() || spans.is_empty() {
+        return Err("DMA Engram rank extent".into());
+    }
+    let mut cursor = spans.iter().map(|s| s.start).collect::<Vec<_>>();
+    let mut pieces = Vec::new();
+    let mut join = None;
+    while *joined < layers {
+        let boundaries = ends
+            .iter()
+            .map(|ends| ends.get(*joined).copied().unwrap_or(usize::MAX))
+            .collect::<Vec<_>>();
+        if boundaries.iter().zip(spans).all(|(&b, s)| b >= s.end) {
+            break;
+        }
+        if boundaries
+            .iter()
+            .zip(spans)
+            .any(|(&b, s)| b < s.start || b >= s.end)
+        {
+            return Err("DMA moved or reordered an Engram join boundary".into());
+        }
+        pieces.push(DmaPiece {
+            spans: cursor
+                .iter()
+                .zip(&boundaries)
+                .map(|(&a, &b)| a..b)
+                .collect(),
+            join,
+        });
+        cursor = boundaries;
+        join = Some(*joined);
+        *joined += 1;
+    }
+    pieces.push(DmaPiece {
+        spans: cursor.iter().zip(spans).map(|(&a, s)| a..s.end).collect(),
+        join,
+    });
+    Ok(pieces)
+}
+
+/// A prefill Engram plan made as its programs are lowered: each launch is
+/// audited once against the spans still pending where it runs, each
+/// layer's section ends at its consumer once found, and DMA blocks split
+/// at the joins as they are prepared. `Plan::new` makes its plan from the
+/// whole programs in one `advance`.
+pub(in crate::instance) struct Builder {
+    layers: usize,
+    /// Each rank's consumers found so far, one per layer in order.
+    ends: Vec<Vec<usize>>,
+    /// Each rank's launches audited so far.
+    audited: Vec<usize>,
+    /// The DMA pieces split so far, and the joins they cross.
+    dma: Vec<Vec<DmaPiece>>,
+    joined: usize,
+}
+
+impl Builder {
+    pub(in crate::instance) fn new(gathers: &Gathers, ranks: usize) -> Self {
+        Self {
+            layers: gathers.layers.len(),
+            ends: vec![Vec::new(); ranks],
+            audited: vec![0; ranks],
+            dma: Vec::new(),
+            joined: 0,
+        }
+    }
+
+    /// Finds the consumers among the launches lowered since the last call,
+    /// and audits each of those launches: one before a layer's consumer
+    /// touches none of the spans that layer and the later layers still
+    /// have pending, and one after the last consumer none of a mixed
+    /// step's verify-row gathers'.
+    pub(in crate::instance) fn advance(
+        &mut self,
+        gathers: &Gathers,
+        programs: &[Vec<PreparedLaunch>],
+        flags: &[Vec<bool>],
+        stages: &[Vec<Stage>],
+    ) -> Result<(), String> {
+        if programs.is_empty()
+            || programs.len() != self.ends.len()
+            || programs.len() != flags.len()
+            || programs.len() != stages.len()
+        {
+            return Err("prefill Engram program extent or lifecycle".into());
+        }
+        for (rank, program) in programs.iter().enumerate() {
+            if program.len() != flags[rank].len() || program.len() != stages[rank].len() {
+                return Err("prefill Engram stage extent".into());
+            }
+            let ends = &mut self.ends[rank];
+            for (at, launch) in program.iter().enumerate().skip(self.audited[rank]) {
+                if let Stage::EngramRows(layer) = stages[rank][at] {
+                    match gathers.layers.iter().position(|l| l.layer == layer) {
+                        Some(index) if index == ends.len() => ends.push(at),
+                        Some(_) => {
+                            return Err("prefill Engram consumer repeated or reordered".into());
+                        }
+                        None => {}
+                    }
+                }
+                if ends.len() == self.layers && gathers.verify.is_empty() {
+                    continue;
+                }
+                crate::shared_overlap::disjoint_copy_spans(
+                    &gathers.pending_spans(ends.len()),
+                    std::slice::from_ref(launch),
+                )?;
+            }
+            self.audited[rank] = program.len();
+        }
+        Ok(())
+    }
+
+    /// How many layers the gathers join.
+    pub(in crate::instance) fn layers(&self) -> usize {
+        self.layers
+    }
+
+    /// Each rank's consumer of layer `at`, once every rank lowered its own.
+    pub(in crate::instance) fn consumer(&self, at: usize) -> Option<Vec<usize>> {
+        self.ends.iter().map(|ends| ends.get(at).copied()).collect()
+    }
+
+    /// The joins the DMA pieces split so far cross.
+    pub(in crate::instance) fn joined(&self) -> usize {
+        self.joined
+    }
+
+    /// Splits a DMA block's compute `spans` at the joins they cross, as
+    /// `Plan::split_dma` does, and keeps the pieces for `finish`.
+    pub(in crate::instance) fn split_dma(
+        &mut self,
+        spans: &[Range<usize>],
+    ) -> Result<&[DmaPiece], String> {
+        let pieces = split_dma(&self.ends, self.layers, spans, &mut self.joined)?;
+        self.dma.push(pieces);
+        Ok(self.dma.last().expect("pieces"))
+    }
+
+    /// The plan of the complete `programs`: every layer's consumer found on
+    /// every rank, each section's collectives matching across the ranks,
+    /// and the DMA pieces split, when there are any, crossing every join.
+    pub(in crate::instance) fn finish(
+        self,
+        programs: &[Vec<PreparedLaunch>],
+        flags: &[Vec<bool>],
+    ) -> Result<Plan, String> {
+        if self.ends.iter().any(|ends| ends.len() != self.layers) {
+            return Err("prefill Engram consumer absent".into());
+        }
+        if !self.dma.is_empty() && self.joined != self.layers {
+            return Err("DMA omitted an Engram join boundary".into());
+        }
+        let ranges = self
+            .ends
+            .iter()
+            .zip(programs)
+            .map(|(ends, program)| {
+                let mut start = 0;
+                let mut sections: Vec<_> = ends
+                    .iter()
+                    .map(|&end| {
+                        let section = start..end;
+                        start = end;
+                        section
+                    })
+                    .collect();
+                sections.push(start..program.len());
+                sections
+            })
+            .collect();
+        let plan = Plan {
+            ranges,
+            dma: self.dma,
+        };
+        plan.check_sections(programs, flags)?;
+        Ok(plan)
     }
 }
 
@@ -316,6 +446,7 @@ mod tests {
             verify: Vec::new(),
             columns: 24,
             pending: Cell::new(false),
+            early: Cell::new(false),
             failed: Cell::new(false),
             joined: Cell::new(0),
             sequence: Cell::new(0),

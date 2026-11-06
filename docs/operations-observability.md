@@ -762,6 +762,29 @@ Step and request logs are not replay inputs; they omit token contents.
   cause, and it is invalid for a change that alters Engram timing itself;
   judge those on raw time.
 
+In DeepSeek's DSpark phase timings in `chopinfer.step.v1`, legacy prefill
+planning is charged to `upload`, since it runs inside the staging upload
+timer. With `dspark_early_prefill_engram`, the prefill rows' Engram hashing
+and the begin of their prepared gathers run before catch-up and count in
+`gather` instead of `target_upload`; a step refused after that begin settles
+its gathers before it returns. With `dspark_early_prefill_plan`, a prefill
+planned while the drafter runs counts in `prefill_plan`, outside `target`.
+With `prefill_streamed_lowering`, an upper-skip prefill lowered while it
+issues, and the keeping of its plan, count in `target_submit`.
+`target_lower` keeps the target's own planning and the freeing of the
+templates the step's planning dropped, which runs after the prefill's
+launch; a step after a failed one frees that step's held templates at its
+entry, outside every field. The phase fields stay disjoint and the target's
+four fields stay within `target`. The DSpark step-shape record's
+`early_prefill_begin`, `early_prefill_plan` and `streamed_lowering` say
+whether the step's prefill began its gathers before catch-up, planned while
+the drafter ran and was lowered while it issued; all are false with the
+options off. Its `prefill_templates` holds the instance's prefill plan
+templates after the step: `templates` kept of at most `limit`, and the
+growing counts of `hits`, `misses`, `busy`, `refused`, `kept` and
+`dropped`, so two consecutive records give the later step's template reuse,
+miss and drop.
+
 The served A/B tuner (`tools/tune`) records per-window clocks, per-visit
 major faults and job and visit enforced power limits; a changing limit voids
 the whole job. A/B jobs can decide on the Engram-adjusted step time above.

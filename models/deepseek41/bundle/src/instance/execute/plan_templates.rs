@@ -28,6 +28,12 @@
 //! makes every reused Engram plan again, and refuses the step if either
 //! fresh plan differs. The kept plan stores no request data: anchor slot
 //! seeds and ledger request/boundary pairs are rebuilt for each step.
+//!
+//! Freeing a dropped template's launches takes about 4 ms at the served
+//! long-context shapes. With `dspark_early_prefill_plan` a dropped template
+//! waits until the step's prefill launched (`release`), so its freeing
+//! runs while the device works instead of before the launch; a step that
+//! fails before its launch leaves them to the next step's entry.
 
 use super::{PREFILL, Run, skip};
 use crate::instance::Instance;
@@ -37,6 +43,7 @@ use crate::program::Phase;
 use bundle_runtime::template::Counts;
 use bundle_runtime::template::Templates as Kept;
 use bundle_runtime::upload::InputLayout;
+use std::cell::RefCell;
 use std::rc::Rc;
 
 /// Everything but the positions a kept plan's launches were lowered from.
@@ -78,15 +85,75 @@ impl Key {
 /// (`fake_host_tests::prefill_plan_templates::template_memory`).
 pub(crate) const LIMIT: usize = 64;
 
+#[cfg(test)]
+thread_local! { static TEST_LIMIT: std::cell::Cell<usize> = const { std::cell::Cell::new(LIMIT) }; }
+
+/// Runs `run` with instances it creates keeping at most `limit` templates,
+/// so a test can drop templates in a few steps.
+#[cfg(test)]
+pub(crate) fn with_limit<T>(limit: usize, run: impl FnOnce() -> T) -> T {
+    struct Reset(usize);
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            TEST_LIMIT.set(self.0);
+        }
+    }
+    let _reset = Reset(TEST_LIMIT.replace(limit));
+    run()
+}
+
+/// A run's upper-skip plan: its key's template or a fresh lowering, or a
+/// miss to lower while it issues (`prefill_streamed_lowering`).
+pub(super) enum Planned {
+    Ready(Rc<skip::Plan>),
+    Miss(Box<Miss>),
+}
+
+/// A run no template serves: its layout, its key when it has one, and
+/// whether that key's templates refused the run.
+pub(super) struct Miss {
+    pub(super) layout: skip::Layout,
+    pub(super) key: Option<Key>,
+    pub(super) refused: bool,
+}
+
 pub(super) struct Templates {
     kept: Kept<Key, skip::Plan>,
+    /// Templates dropped to stay within the limit and held until the
+    /// step's prefill launched (`release`); empty unless `late`.
+    retired: RefCell<Vec<Rc<skip::Plan>>>,
+    late: bool,
 }
 
 impl Templates {
-    pub(super) fn new() -> Self {
+    /// Templates that free the ones they drop only once the step's prefill
+    /// launched when `late`.
+    pub(super) fn new(late: bool) -> Self {
+        #[cfg(test)]
+        let limit = TEST_LIMIT.get();
+        #[cfg(not(test))]
+        let limit = LIMIT;
         Self {
-            kept: Kept::new(LIMIT),
+            kept: Kept::new(limit),
+            retired: RefCell::new(Vec::new()),
+            late,
         }
+    }
+
+    /// Frees the templates this step dropped: after its prefill launched,
+    /// or at the next step's entry. The vector keeps its room, so holding
+    /// a step's drops allocates nothing once the cache is full.
+    pub(super) fn release(&self) {
+        let mut retired = self.retired.borrow_mut();
+        if !retired.is_empty() {
+            retired.clear();
+        }
+    }
+
+    /// The dropped templates held for the step's launch.
+    #[cfg(test)]
+    pub(super) fn retired(&self) -> usize {
+        self.retired.borrow().len()
     }
 
     #[cfg(test)]
@@ -94,34 +161,109 @@ impl Templates {
         self.kept.counts()
     }
 
+    /// The templates kept now, the most kept at once and the counts so far.
+    pub(super) fn state(&self) -> crate::dspark::staging::PrefillTemplates {
+        crate::dspark::staging::PrefillTemplates {
+            templates: self.kept.len(),
+            limit: self.kept.limit(),
+            counts: self.kept.counts(),
+        }
+    }
+
     /// `run`'s upper-skip plan: its key's template with the index
-    /// selections lowered again, or a fresh plan, kept when it can be.
+    /// selections lowered again, or a fresh plan, kept when it can be; a
+    /// miss when `streamed`.
     pub(super) fn plan(
         &self,
         instance: &Instance,
         run: &Run,
         verify: bool,
-    ) -> Result<Rc<skip::Plan>, String> {
+        streamed: bool,
+    ) -> Result<Planned, String> {
         let layout = skip::Layout::of(instance, run)?;
         let Some(key) = Key::of(instance, run, &layout) else {
-            return skip::Plan::lower(instance, run, &layout).map(Rc::new);
+            if streamed {
+                let (key, refused) = (None, false);
+                return Ok(Planned::Miss(Box::new(Miss {
+                    layout,
+                    key,
+                    refused,
+                })));
+            }
+            return skip::Plan::lower(instance, run, &layout)
+                .map(|plan| Planned::Ready(Rc::new(plan)));
         };
         let refused = self.kept.counts().refused;
         if let Some(plan) = self.kept.reuse(&key, |plan| plan.patch(instance, run))? {
             if verify && !plan.same(&skip::Plan::lower(instance, run, &layout)?)? {
                 return Err("a reused prefill plan template differs from a fresh lowering".into());
             }
-            return Ok(plan);
+            return Ok(Planned::Ready(plan));
         }
-        let mut plan = skip::Plan::lower(instance, run, &layout)?;
+        let refused = self.kept.counts().refused > refused;
+        if streamed {
+            let key = Some(key);
+            return Ok(Planned::Miss(Box::new(Miss {
+                layout,
+                key,
+                refused,
+            })));
+        }
+        let plan = skip::Plan::lower(instance, run, &layout)?;
+        Ok(Planned::Ready(
+            self.keep(instance, run, key, refused, plan, None, self.late),
+        ))
+    }
+
+    /// Keeps `plan`, lowered while it issued and launched, as a template
+    /// of `key`, with the Engram plan `engram` it made; the plan to run. A
+    /// template the keep drops is freed once the launch returns
+    /// (`release`), as it already has.
+    pub(super) fn keep_streamed(
+        &self,
+        instance: &Instance,
+        run: &Run,
+        key: Key,
+        refused: bool,
+        plan: skip::Plan,
+        engram: Option<crate::instance::prefill_engram::Plan>,
+    ) -> Rc<skip::Plan> {
+        self.keep(instance, run, key, refused, plan, engram, true)
+    }
+
+    /// Keeps the fresh `plan` as a template of `key` when it can be, with
+    /// its Engram plan when it made one, holding a template it drops until
+    /// `release` when `hold`.
+    #[allow(clippy::too_many_arguments)]
+    fn keep(
+        &self,
+        instance: &Instance,
+        run: &Run,
+        key: Key,
+        refused: bool,
+        mut plan: skip::Plan,
+        engram: Option<crate::instance::prefill_engram::Plan>,
+        hold: bool,
+    ) -> Rc<skip::Plan> {
         if !plan.templatable() {
-            return Ok(Rc::new(plan));
+            return Rc::new(plan);
         }
-        plan.keep_engram();
+        match engram {
+            Some(engram) => plan.keep_engram_plan(engram),
+            None => plan.keep_engram(),
+        }
+        #[cfg(test)]
+        skip::record_kept(|| plan.describe_template());
         let plan = Rc::new(plan);
-        let dropped = self.kept.keep(key, Rc::clone(&plan));
+        let dropped = match self.kept.keep(key, Rc::clone(&plan)) {
+            Some(old) if hold => {
+                self.retired.borrow_mut().push(old);
+                true
+            }
+            dropped => dropped.is_some(),
+        };
         let counts = self.kept.counts();
-        let refused = if counts.refused > refused {
+        let refused = if refused {
             ", its key's templates refused"
         } else {
             ""
@@ -132,15 +274,30 @@ impl Templates {
              hits, {} misses, {} busy, {} refused, {} dropped",
             run.phase.rows(),
             self.kept.len(),
-            LIMIT,
+            self.kept.limit(),
             counts.hits,
             counts.misses,
             counts.busy,
             counts.refused,
             counts.evicted
         ));
-        Ok(plan)
+        plan
     }
+}
+
+/// The dropped templates the instance `handle` holds for its next
+/// prefill's launch.
+#[cfg(test)]
+pub(crate) fn retired(handle: runtime_bundle_abi::BundleHandleV1) -> usize {
+    use bundle_runtime::entry::Bundle;
+    Instance::instances().with(|table| {
+        table
+            .borrow_mut()
+            .get_mut(handle)
+            .expect("a live instance")
+            .plans
+            .retired_templates()
+    })
 }
 
 /// What the templates of the instance `handle` did; read from a poisoned

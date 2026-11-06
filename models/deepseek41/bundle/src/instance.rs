@@ -27,6 +27,8 @@ mod media;
 mod memory;
 pub(crate) mod prefill;
 mod prefill_cache;
+#[cfg(test)]
+pub(crate) use prefill_cache::with_refused;
 pub(crate) mod prefill_engram;
 mod prefill_reduce;
 mod prefix;
@@ -957,13 +959,16 @@ fn create(services: HostServicesV1, bytes: &[u8]) -> Result<Instance, Failed<Ins
         .shape
         .with_verify_rows(verify.rows_per_step)
         .with_wide_verify(config.execution.wide_verify)
+        .with_prefill_compact_dense_rows(config.execution.prefill_compact_dense_rows)
         .with_wide_draft(config.execution.wide_draft)
         .with_phased_decode_reduce(config.execution.phased_decode_reduce)
+        .with_prefill_norm_ceil_rows(config.execution.prefill_norm_ceil_rows)
         .with_dspark_markov_staged(config.execution.dspark_markov_staged)
         .with_dspark_hc_fusion(config.execution.dspark_hc_fusion)
         .with_dspark_confidence_staged(config.execution.dspark_confidence_staged)
         .with_dspark_moe_direct(config.execution.dspark_moe_direct)
-        .with_dspark_hc_draft_rows(config.execution.dspark_hc_draft_rows);
+        .with_dspark_hc_draft_rows(config.execution.dspark_hc_draft_rows)
+        .with_prefill_dma_producer_intervals(config.execution.prefill_dma_producer_intervals);
     if verify_rows > 0 && config.kv.storage == model_deepseek41_contract::state::KvStorage::Bf16 {
         log("BF16 KV supports autoregressive serving only; set --speculative-tokens 0");
         return Err(BundleStatusV1::Unsupported.into());
@@ -1045,7 +1050,7 @@ fn create(services: HostServicesV1, bytes: &[u8]) -> Result<Instance, Failed<Ins
         log(&error);
         BundleStatusV1::InternalError
     })?;
-    let plans = execute::plan_cache::Cache::new(&config.execution);
+    let plans = execute::plan_cache::Cache::new(&config.execution, has_drafter);
     let partial = partial();
     if !partial && let Some(missing) = ops.missing.first() {
         log(missing);

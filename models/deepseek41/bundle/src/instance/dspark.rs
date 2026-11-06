@@ -47,6 +47,8 @@ struct Work<'a> {
     target_times: Option<crate::dspark::timing::TargetTimes>,
     /// Retained IDs or the selected legacy plan, including its synchronous cause.
     prefill_engram: Option<super::execute::StagedPrefill>,
+    /// The prefill was planned while the drafter ran (`plan_prefill`).
+    planned_early: bool,
 }
 
 impl Program for Work<'_> {
@@ -173,14 +175,35 @@ impl Program for Work<'_> {
             .map_err(|e| format!("DSpark mixed target batch: {e:?}"))?
             .media()
             .is_empty();
+        // A prefill planned while the drafter ran holds its own inputs.
+        let prefill = self
+            .prefill_engram
+            .as_ref()
+            .and_then(super::execute::StagedPrefill::inputs)
+            .unwrap_or(&step.prefill);
         self.instance
-            .defer_mixed_dspark_engram(&step.prefill, &step.decode, media, hashed)
+            .defer_mixed_dspark_engram(prefill, &step.decode, media, hashed)
     }
 
     fn stage_prefill_engram(
         &mut self,
         hashed: &crate::engram_rows::Hashed,
     ) -> Result<bool, String> {
+        if self.planned_early {
+            // Planned from these ids while the drafter ran, with prepared
+            // gathers; a refused plan refuses the target.
+            let staged = self
+                .prefill_engram
+                .as_ref()
+                .ok_or("DSpark early prefill plan is absent")?;
+            if staged
+                .inputs()
+                .is_some_and(|inputs| inputs.token_ids.len() != hashed.rows() || !staged.prepared())
+            {
+                return Err("DSpark early prefill plan differs from its staged ids".into());
+            }
+            return Ok(true);
+        }
         if self.prefill_engram.is_some() {
             return Err("DSpark prefill already staged".into());
         }
@@ -198,6 +221,46 @@ impl Program for Work<'_> {
         }
         self.prefill_engram = Some(super::execute::StagedPrefill::Hashes(hashed.clone()));
         Ok(true)
+    }
+
+    fn begins_prefill_engram(&self) -> bool {
+        self.prefill_engram.is_none()
+            && self.step.as_ref().is_some_and(|step| {
+                self.instance
+                    .admits_early_prefill_engram(self.request, &step.prefill)
+            })
+    }
+
+    fn plans_prefill_early(&self) -> bool {
+        self.prefill_engram.is_none()
+            && self.step.as_ref().is_some_and(|step| {
+                self.instance
+                    .admits_early_prefill_plan(self.request, &step.prefill)
+            })
+    }
+
+    fn plan_prefill(&mut self, hashed: &crate::engram_rows::Hashed) -> Result<(), String> {
+        if !self.plans_prefill_early() {
+            return Ok(());
+        }
+        let step = self
+            .step
+            .as_mut()
+            .ok_or("DSpark prefill has no packed step")?;
+        // Timed as `prefill_plan`, outside the target (`Adapter`).
+        self.prefill_engram = Some(self.instance.stage_early_prefill(&mut step.prefill, hashed));
+        self.planned_early = true;
+        Ok(())
+    }
+
+    fn begin_prefill_engram(&mut self, hashed: &crate::engram_rows::Hashed) -> Result<(), String> {
+        let step = self
+            .step
+            .as_ref()
+            .ok_or("DSpark prefill has no packed step")?;
+        self.instance
+            .begin_early_prefill_engram(&step.prefill, hashed)
+            .map_err(|error| format!("DSpark early prefill Engram: {error}"))
     }
 
     fn sync_engram_reason(
@@ -381,6 +444,7 @@ impl Instance {
                 .as_ref()
                 .map(|_| crate::dspark::timing::TargetTimes::default()),
             prefill_engram: None,
+            planned_early: false,
         };
         let mut host = Adapter {
             program: &mut program,
@@ -516,6 +580,7 @@ impl Instance {
             .iter()
             .filter(|input| input.rows.kind.drafts() > 0)
             .count();
+        let streamed = self.plans.streamed_launches();
         let mut result = self.dspark_with(
             |runtime, host| {
                 runtime
@@ -529,6 +594,19 @@ impl Instance {
             text,
             &mut times,
         );
+        // A failed step settles the gathers it began early before it
+        // returns, fencing every destination, as an issue failure does: its
+        // poisoned runtime refuses the next execute before that entry's
+        // settle.
+        if result.is_err()
+            && self
+                .prefill_engram
+                .as_ref()
+                .is_some_and(|gathers| gathers.begun_early() && !gathers.idle())
+            && let Err(settle) = self.settle_prefill_engram()
+        {
+            self.log(&format!("prefill Engram cleanup failed: {settle}"));
+        }
         if result.is_ok()
             && let Err(error) = self.queue_dspark_prefetch()
         {
@@ -546,7 +624,9 @@ impl Instance {
             .expect("drafter retained")
             .results
             .metadata = None;
-        if let (Ok(()), Some(times)) = (&result, times) {
+        if let (Ok(()), Some(mut times)) = (&result, times) {
+            times.prefill_templates = Some(self.plans.template_state());
+            times.prefill_streamed = self.plans.streamed_launches() > streamed;
             let context = self.dspark.as_ref().expect("enabled drafter").diagnostic;
             let _ = self
                 .services

@@ -72,6 +72,7 @@ impl MediaHost {
             fail_upload: Default::default(),
             release_order: RefCell::new(Vec::new()),
             references: RefCell::new(Vec::new()),
+            races: RefCell::new(Vec::new()),
         };
         Rc::new(Backend::new(MediaHost {
             host,
@@ -279,6 +280,27 @@ fn create(host: &Rc<Backend<MediaHost>>, items: u32) -> BundleInstanceV1 {
 /// text row, scoring its last row; with each row's arena source (-1 for
 /// a text row).
 fn image_prompt(request: u64, slot: u64) -> (Vec<u8>, Vec<u32>, Vec<i64>) {
+    let (item, append, media, tokens, sources) = image_parts(request, slot);
+    let batch = BatchRequestV1::new(BatchWireVersionV1::V3, vec![item], vec![append])
+        .with_state_slots(vec![slot])
+        .with_media(media)
+        .encode()
+        .unwrap();
+    (batch, tokens, sources)
+}
+
+/// `image_prompt`'s item, append and media section, with its tokens and
+/// sources, for a batch that holds other items after it.
+fn image_parts(
+    request: u64,
+    slot: u64,
+) -> (
+    BatchItemV1,
+    BatchAppendV1,
+    BatchMediaSectionV3,
+    Vec<u32>,
+    Vec<i64>,
+) {
     let image_token = FLASH.shape.tokens.image;
     let media = image_section(0, 1);
     let rows = IMAGE_ROWS + 2;
@@ -289,22 +311,19 @@ fn image_prompt(request: u64, slot: u64) -> (Vec<u8>, Vec<u32>, Vec<i64>) {
     sources.extend((0..u64::from(IMAGE_ROWS)).map(|row| (ARENA_PAGE * PAGE_ROWS + row) as i64));
     sources.push(-1);
     let end = u64::from(rows);
-    let batch = BatchRequestV1::new(
-        BatchWireVersionV1::V3,
-        vec![BatchItemV1::new(request, false, rows, true, tokens.clone())],
-        vec![BatchAppendV1::new(
+    (
+        BatchItemV1::new(request, false, rows, true, tokens.clone()),
+        BatchAppendV1::new(
             0,
             end,
             end,
             (0..end.div_ceil(64)).map(|page| slot * 8 + page).collect(),
             None,
-        )],
+        ),
+        media,
+        tokens,
+        sources,
     )
-    .with_state_slots(vec![slot])
-    .with_media(media)
-    .encode()
-    .unwrap();
-    (batch, tokens, sources)
 }
 
 /// The FNV-1a an upload line ends with.
@@ -708,6 +727,174 @@ fn prefill_engram_keeps_media_reason() {
         instance.destroy().unwrap();
         assert_eq!(host.acquired.get(), host.released.get());
     });
+}
+
+/// With `dspark_early_prefill_engram`, `dspark_early_prefill_plan` or both
+/// on an instance serving images, an image prefill keeps its synchronous
+/// gather and begins and plans nothing early, as a prompt and beside a
+/// verify item: its journal is the default's. A text prefill on the same
+/// instance begins its prepared gathers before any device work with the
+/// begin option, and beside a verify item plans while its drafter runs with
+/// the plan option; every other line of its journal is the default's, and
+/// no device access touches a pending gather's ids or rows.
+#[test]
+fn early_prefill_engram_begins_only_prefills_without_image_rows() {
+    use crate::config::tests::with_option;
+    use model_deepseek41_contract::execution_options::{
+        DSPARK_EARLY_PREFILL_ENGRAM, DSPARK_EARLY_PREFILL_PLAN,
+    };
+    type Sink = bundle_runtime::fake_host::RecordingSink<super::conformance::Limits>;
+    // Verify item rows of request 9 in slot 2 from `start`.
+    let verify = |start: u64| {
+        let end = start + 4;
+        (
+            BatchItemV1::verify(9, 4, true, vec![7]),
+            BatchAppendV1::new(
+                start,
+                4,
+                end,
+                (0..end.div_ceil(64)).map(|page| 2 * 8 + page).collect(),
+                None,
+            ),
+        )
+    };
+    let mixed_image = {
+        let (item, append, media, _, _) = image_parts(10, 0);
+        let (verify, verified) = verify(5);
+        BatchRequestV1::new(
+            BatchWireVersionV1::V3,
+            vec![item, verify],
+            vec![append, verified],
+        )
+        .with_state_slots(vec![0, 2])
+        .with_media(media)
+        .encode()
+        .unwrap()
+    };
+    let mixed_text = {
+        let (verify, verified) = verify(9);
+        BatchRequestV1::new(
+            BatchWireVersionV1::V3,
+            vec![
+                BatchItemV1::new(11, false, 5, true, (0..5).collect()),
+                verify,
+            ],
+            vec![BatchAppendV1::new(0, 5, 5, vec![8], None), verified],
+        )
+        .with_state_slots(vec![1, 2])
+        .encode()
+        .unwrap()
+    };
+    let run = |early: bool, plan: bool| {
+        let host = MediaHost::new(Shape::new(&FLASH, Ranks::TP4).unwrap(), KV_LAYOUTS[0]);
+        host.drafter.set(true);
+        host.speculation.set(Some((3, 32)));
+        let record = with_option(
+            with_option(
+                crate::config::tests::media_record(&host.shape, host.kv, 4),
+                DSPARK_EARLY_PREFILL_ENGRAM,
+                early.into(),
+            ),
+            DSPARK_EARLY_PREFILL_PLAN,
+            plan.into(),
+        );
+        let mut instance = api()
+            .create(
+                HostServicesTableV1::new(Rc::new(dspark::host::MappedHost::new(Rc::clone(&host)))),
+                &record,
+            )
+            .unwrap_or_else(|error| panic!("{error:?}: {:?}", host.logs.borrow()));
+        let indices: Vec<_> = crate::instance::prefill_engram::indices(instance.handle())
+            .into_iter()
+            .map(|(_, span)| format!("buffer: {:?}, offset: {}, ", span.buffer, span.offset))
+            .collect();
+        let (image, _, _) = image_prompt(7, 0);
+        let mut steps = Vec::new();
+        // The image and text prompts, the verifier's prompt, then an image
+        // and a text prefill beside its verify rows.
+        for (prefill, batch, verifies) in [
+            (7, image, false),
+            (8, super::prompt(8, 1, 0, 5, true), false),
+            (9, super::prompt(9, 2, 0, 5, true), false),
+            (10, mixed_image.clone(), true),
+            (11, mixed_text.clone(), true),
+        ] {
+            let begin = host.journal.borrow().len();
+            let planned = crate::instance::execute::early_prefill_plans();
+            let mut sink = Sink::default();
+            instance
+                .execute(&batch, &mut sink)
+                .unwrap_or_else(|error| panic!("{error:?}: {:?}", host.logs.borrow()));
+            let planned = crate::instance::execute::early_prefill_plans() - planned;
+            if verifies {
+                instance.commit_accepted(&[super::kept(9, 4)]).unwrap();
+            } else {
+                instance.commit().unwrap();
+            }
+            if prefill != 9 {
+                instance.retire_request(prefill).unwrap();
+            }
+            // The prefill gathers' begin: their id uploads and enqueues.
+            let (begins, rest): (Vec<_>, Vec<_>) = host.journal.borrow()[begin..]
+                .iter()
+                .cloned()
+                .partition(|line| {
+                    line.starts_with("async mapped ids ")
+                        || (line.starts_with("upload ")
+                            && indices.iter().any(|span| line.contains(span)))
+                });
+            let device = host.journal.borrow()[begin..]
+                .iter()
+                .position(|line| line.starts_with("launch ") || line.starts_with("replay "));
+            let began = host.journal.borrow()[begin..]
+                .iter()
+                .rposition(|line| line.starts_with("async mapped ids "));
+            steps.push((
+                begins,
+                rest,
+                sink.drafts,
+                sink.views,
+                began < device,
+                planned,
+            ));
+        }
+        instance.retire_request(9).unwrap();
+        instance.destroy().unwrap();
+        assert_eq!(host.acquired.get(), host.released.get());
+        assert!(host.races.borrow().is_empty(), "{:#?}", host.races.borrow());
+        let logs: Vec<_> = host
+            .logs
+            .borrow()
+            .iter()
+            .map(|line| super::dspark::untimed(line))
+            .collect();
+        (steps, logs)
+    };
+    let (off, off_logs) = run(false, false);
+    for text in [1, 2, 4] {
+        assert_eq!(off[text].0.len(), 4, "step {text}");
+    }
+    for (early, plan) in [(true, false), (false, true), (true, true)] {
+        let (on, on_logs) = run(early, plan);
+        let arm = format!("early begin {early}, early plan {plan}");
+        assert_eq!(off_logs, on_logs, "{arm}");
+        for (step, (off, on)) in off.iter().zip(&on).enumerate() {
+            let context = format!("{arm}, step {step}");
+            assert_eq!(off.1, on.1, "{context}");
+            assert_eq!((&off.2, &off.3), (&on.2, &on.3), "{context}");
+            // Only the mixed text prefill plans early.
+            assert_eq!(on.5, u64::from(plan && step == 4), "{context}");
+            if step == 0 || step == 3 {
+                // An image prefill gathers synchronously.
+                assert!(off.0.is_empty() && on.0.is_empty(), "{context}");
+            } else {
+                // A text prefill's two layers begin before its first launch
+                // with the begin option.
+                assert_eq!(off.0, on.0, "{context}");
+                assert!(!early || on.4, "{context}");
+            }
+        }
+    }
 }
 
 /// A grid text prefill beside a prefill item without a boundary, on the

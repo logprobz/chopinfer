@@ -1,13 +1,14 @@
 //! Prepared, per-layer Engram uploads for eager text prefills.
 //! Enqueue before compute, then join each transfer at its first consumer.
 mod plan;
-pub(super) use plan::{DmaPiece, Plan};
+pub(super) use plan::{Builder, DmaPiece, Plan};
 
 use super::{
     Instance,
     layer_gather::{self, LayerGather},
 };
 use crate::engram_rows::{Destination, Hashed};
+use bundle_runtime::inputs::PhaseInputs;
 use bundle_runtime::resources::upload_bytes;
 use model_deepseek41_contract::serving::PREFILL_TOKENS;
 use runtime_bundle_abi::{
@@ -26,6 +27,9 @@ pub(super) struct Gathers {
     verify: Vec<Span>,
     columns: usize,
     pending: Cell<bool>,
+    /// The pending gathers began before their step's planning
+    /// (`dspark_early_prefill_engram`), and its target has not taken them.
+    early: Cell<bool>,
     failed: Cell<bool>,
     joined: Cell<usize>,
     sequence: Cell<u64>,
@@ -36,6 +40,58 @@ pub(super) struct Gathers {
 impl Gathers {
     pub(super) fn idle(&self) -> bool {
         !self.pending.get() && !self.failed.get()
+    }
+
+    /// Whether a step's Engram plan may be made: no gather is pending, or
+    /// only those this step began early, before any join.
+    pub(super) fn plannable(&self) -> bool {
+        self.idle() || (self.early.get() && !self.failed.get() && self.joined.get() == 0)
+    }
+
+    /// The begin the gathers hold, counted over the instance's life.
+    pub(super) fn sequence(&self) -> u64 {
+        self.sequence.get()
+    }
+
+    /// Whether the pending gathers are still those of begin `sequence`,
+    /// healthy and joined through `joined` layers: what an Engram plan made
+    /// after the begin, between its own joins, may rely on
+    /// (`prefill_streamed_lowering`), as `plannable` is before the begin.
+    pub(super) fn owned_by(&self, sequence: u64, joined: usize) -> bool {
+        self.pending.get()
+            && !self.failed.get()
+            && self.sequence.get() == sequence
+            && self.joined.get() == joined
+    }
+
+    /// Fails the gathers as a failed host callback does, for a test.
+    #[cfg(test)]
+    pub(in crate::instance) fn fail(&self) {
+        self.failed.set(true);
+    }
+
+    /// Whether the pending gathers began early.
+    pub(super) fn begun_early(&self) -> bool {
+        self.early.get()
+    }
+
+    /// Takes the gathers this step began early for its target, which
+    /// hashed the same `rows` from position `start`; false when none
+    /// began early.
+    pub(super) fn take_early(&self, rows: usize, start: i32) -> Result<bool, BundleAbiError> {
+        if !self.early.get() {
+            return Ok(false);
+        }
+        if !self.pending.get()
+            || self.failed.get()
+            || self.joined.get() != 0
+            || self.rows.get() as usize != rows
+            || self.start.get() != start
+        {
+            return Err(BundleAbiError::Status(BundleStatusV1::InvalidState));
+        }
+        self.early.set(false);
+        Ok(true)
     }
 
     /// Copy immutable per-layer IDs before any consumer work is submitted.
@@ -66,6 +122,7 @@ impl Gathers {
             })
             .collect();
         self.pending.set(true);
+        self.early.set(false);
         self.joined.set(0);
         self.rows.set(rows as u32);
         self.start.set(start);
@@ -172,6 +229,7 @@ impl Gathers {
         }
         result?;
         self.pending.set(false);
+        self.early.set(false);
         Ok(())
     }
 
@@ -246,6 +304,69 @@ impl Instance {
             let streams = self.ranks.iter().map(|rank| rank.2).collect::<Vec<_>>();
             gathers.settle(&self.services, &streams)?;
         }
+        Ok(())
+    }
+
+    /// Whether a DSpark step's prefill hashes its rows and begins its
+    /// prepared gathers before catch-up and drafting
+    /// (`dspark_early_prefill_engram`).
+    pub(super) fn admits_early_prefill_engram(
+        &self,
+        request: &[u8],
+        prefill: &PhaseInputs,
+    ) -> bool {
+        self.config.execution.dspark_early_prefill_engram
+            && self.takes_prepared_prefill(request, prefill)
+    }
+
+    /// Whether a DSpark step plans its prefill while its drafter runs
+    /// (`dspark_early_prefill_plan`).
+    pub(super) fn admits_early_prefill_plan(&self, request: &[u8], prefill: &PhaseInputs) -> bool {
+        self.config.execution.dspark_early_prefill_plan
+            && self.takes_prepared_prefill(request, prefill)
+    }
+
+    /// Whether a DSpark step's prefill takes the prepared gathers with ids
+    /// staged before its target, exactly where its target would
+    /// (`prefill_gather_reason`): a prefill reading no encoder rows on an
+    /// instance with prepared gathers and no text taps.
+    fn takes_prepared_prefill(&self, request: &[u8], prefill: &PhaseInputs) -> bool {
+        let reads_media = || {
+            let Ok(batch) = runtime_bundle_sdk::BatchCodecV1::decode(request) else {
+                return true;
+            };
+            crate::encoders::ARENA
+                .plan(batch.media(), prefill, batch.items().len())
+                .ok()
+                .is_none_or(|plan| plan.injects())
+        };
+        self.dspark.is_some()
+            && self.prefill_engram.is_some()
+            && !self.taps.text()
+            && !prefill.request_ids.is_empty()
+            && (self.media.is_none() || !reads_media())
+    }
+
+    /// Begins the prefill's prepared gathers of `hashed` ahead of its
+    /// step's planning, which takes them (`Gathers::take_early`). The
+    /// previous step's gathers settled at execute entry, and no work the
+    /// step issues before the prefill's joins touches their ids or rows.
+    pub(super) fn begin_early_prefill_engram(
+        &self,
+        prefill: &PhaseInputs,
+        hashed: &Hashed,
+    ) -> Result<(), BundleAbiError> {
+        let gathers = self
+            .prefill_engram
+            .as_ref()
+            .ok_or(BundleAbiError::Status(BundleStatusV1::InvalidState))?;
+        gathers.begin(
+            &self.services,
+            self.ranks[0].2,
+            hashed,
+            prefill.positions.first().copied().unwrap_or(0),
+        )?;
+        gathers.early.set(true);
         Ok(())
     }
 
@@ -376,6 +497,7 @@ impl Instance {
             verify,
             columns,
             pending: Cell::new(false),
+            early: Cell::new(false),
             failed: Cell::new(false),
             joined: Cell::new(0),
             sequence: Cell::new(0),

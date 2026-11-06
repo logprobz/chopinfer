@@ -11,6 +11,7 @@ use runtime_bundle_sdk::prefill::{Boundary, encode};
 use runtime_bundle_sdk::{BatchAppendV1, BatchItemV1, BatchRequestV1, BatchWireVersionV1};
 
 mod failures;
+mod groups;
 mod metadata;
 
 type Sink = RecordingSink<super::conformance::Limits>;

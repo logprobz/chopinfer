@@ -130,6 +130,68 @@ pub(crate) fn same(handle: BundleHandleV1, request: &[u8]) -> Result<[bool; 4], 
     })
 }
 
+/// One group of a lowering in groups (`lower_in_groups`).
+pub(crate) struct Group {
+    /// The group's layer, none for the embedding and the feature packs.
+    pub layer: Option<u32>,
+    /// Each rank's body launches once the group is lowered.
+    pub launches: Vec<usize>,
+    /// The median host time of the group's lowering on every rank.
+    pub elapsed: Duration,
+}
+
+/// A lowering in groups (`lower_in_groups`).
+pub(crate) struct InGroups {
+    pub groups: Vec<Group>,
+    /// Rank 0's body stages of the finished plan.
+    pub stages: Vec<crate::program::Stage>,
+    /// Each rank's body launches of the finished plan.
+    pub launches: Vec<usize>,
+}
+
+/// Lowers the upper-skip plan of the original batch `request` one group at
+/// a time, `repeats` times (`skip::Plan::lower_in_groups`).
+pub(crate) fn lower_in_groups(
+    handle: BundleHandleV1,
+    request: &[u8],
+    repeats: usize,
+) -> Result<InGroups, String> {
+    with(handle, |instance| {
+        instance.skip_prefill = true;
+        let step = instance.pack(request).map_err(|e| format!("pack: {e:?}"))?;
+        let hashed = match (&instance.dspark, &instance.engram) {
+            (Some(_), Some(engram)) => Some(engram.hash(&step.prefill)?),
+            _ => None,
+        };
+        let run = instance
+            .plan_run(step.prefill, None, hashed)
+            .map_err(|e| format!("plan: {e:?}"))?;
+        let (groups, plan) = skip::Plan::lower_in_groups(instance, &run, repeats)?;
+        let groups = groups
+            .into_iter()
+            .map(|(layer, launches, elapsed)| Group {
+                layer,
+                launches,
+                elapsed,
+            })
+            .collect();
+        let stages = plan
+            .symbols(0)
+            .0
+            .into_iter()
+            .map(|(_, stage)| stage)
+            .collect();
+        let launches = (0..plan.launches().len())
+            .map(|rank| plan.symbols(rank).0.len())
+            .collect();
+        Ok(InGroups {
+            groups,
+            stages,
+            launches,
+        })
+    })
+}
+
 /// The median host time of `repeats` plans of `request` (`plan`), and of
 /// the same upper-skip plans lowered in full each time.
 pub(crate) fn time(handle: BundleHandleV1, request: &[u8], repeats: usize) -> (Duration, Duration) {

@@ -105,6 +105,20 @@ impl Lowerer {
         Ok(true)
     }
 
+    /// Each rank's body launches lowered so far, and the layer of the group
+    /// lowered last: none for the embedding and the feature packs.
+    #[cfg(test)]
+    pub(super) fn lowered(&self, layout: &Layout) -> (Vec<usize>, Option<u32>) {
+        let launches = self.ranks.iter().map(|body| body.program.0.len()).collect();
+        let layer = match self.next.checked_sub(1).map(|at| &self.groups[at]) {
+            Some(Group::Full(range)) => self.stages[range.start].layer(),
+            Some(Group::LastSource) => Some(layout.cone.last_source),
+            Some(Group::Cone(index)) => Some(layout.cone.layers[*index].id),
+            Some(Group::Packs) | None => None,
+        };
+        (launches, layer)
+    }
+
     fn lower_group(
         &mut self,
         instance: &Instance,

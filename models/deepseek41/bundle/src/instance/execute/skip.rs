@@ -97,6 +97,11 @@ pub(super) struct Plan {
 #[cfg(test)]
 struct Freed;
 
+/// A group of a lowering in groups (`Plan::lower_in_groups`): its layer,
+/// every rank's body launches after it, and its median host time.
+#[cfg(test)]
+pub(super) type LoweredGroup = (Option<u32>, Vec<usize>, std::time::Duration);
+
 #[cfg(test)]
 impl Drop for Freed {
     fn drop(&mut self) {
@@ -417,6 +422,50 @@ impl Plan {
             .zip(&self.head.0)
             .map(|(body, head)| body.len() + head.len())
             .collect()
+    }
+
+    /// Lowers the plan of `run` one group at a time, `repeats` times: each
+    /// group's layer (`Lowerer::lowered`), every rank's body launches after
+    /// it and its median host time, then the finished plan.
+    #[cfg(test)]
+    pub(super) fn lower_in_groups(
+        instance: &Instance,
+        run: &Run,
+        repeats: usize,
+    ) -> Result<(Vec<LoweredGroup>, Self), String> {
+        let layout = Layout::of(instance, run)?;
+        let mut groups = Vec::new();
+        let mut times: Vec<Vec<std::time::Duration>> = Vec::new();
+        let mut lowerer = None;
+        for _ in 0..repeats.max(1) {
+            let mut lowering = Lowerer::new(instance, run, &layout)?;
+            groups.clear();
+            for at in 0.. {
+                let started = std::time::Instant::now();
+                if !lowering.lower_next(instance, run, &layout)? {
+                    break;
+                }
+                let elapsed = started.elapsed();
+                if times.len() == at {
+                    times.push(Vec::new());
+                }
+                times[at].push(elapsed);
+                groups.push(lowering.lowered(&layout));
+            }
+            lowerer = Some(lowering);
+        }
+        let plan = lowerer
+            .expect("one lowering")
+            .finish(instance, run, &layout)?;
+        let groups = groups
+            .into_iter()
+            .zip(times)
+            .map(|((launches, layer), mut times)| {
+                times.sort_unstable();
+                (layer, launches, times[times.len() / 2])
+            })
+            .collect();
+        Ok((groups, plan))
     }
 
     /// Rank `rank`'s body launches as (symbol, stage), then its head's

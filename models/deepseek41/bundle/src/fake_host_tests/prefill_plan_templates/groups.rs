@@ -95,3 +95,29 @@ fn dma_blocks_are_prepared_as_their_groups_are_lowered() {
         instance.destroy().unwrap();
     }
 }
+
+/// The Engram plan made as the body is lowered in groups, with each DMA
+/// block split as it is prepared, is the plan made from the whole plan,
+/// AR and DSpark, with DMA on and off.
+#[test]
+fn engram_plans_are_made_as_their_groups_are_lowered() {
+    for dspark in [false, true] {
+        let host = host(dspark);
+        host.drafter.set(true);
+        let mut instance = create(&host, false);
+        let ids: Vec<_> = (0..100_032).map(|p| token(0, p)).collect();
+        plan_timing::restore_without_snapshot(instance.handle(), 1, 0, &ids).unwrap();
+        for rows in [64, 512, 1500, 8192] {
+            for dma in [true, false] {
+                let what = format!("dspark={dspark} rows={rows} dma={dma}");
+                let request = batch(&[chunk(1, 0, 100_032, rows)], &[], false).0;
+                let same = skip::with_dma(dma, || {
+                    plan_timing::engram_in_groups(instance.handle(), &request)
+                })
+                .unwrap_or_else(|e| panic!("{what}: {e}"));
+                assert!(same, "{what}");
+            }
+        }
+        instance.destroy().unwrap();
+    }
+}

@@ -513,6 +513,49 @@ impl Plan {
         Ok((ready, streamed.same(&whole)?))
     }
 
+    /// Makes `run`'s Engram plan as its body is lowered one group at a time
+    /// (`prefill_engram::Builder`), splitting each DMA block as it is
+    /// prepared, and whether it equals the plan made from the whole plan
+    /// (`engram`).
+    #[cfg(test)]
+    pub(super) fn engram_in_groups(
+        instance: &Instance,
+        run: &Run,
+        gathers: &Gathers,
+    ) -> Result<bool, String> {
+        let layout = Layout::of(instance, run)?;
+        let mut lowerer = Lowerer::new(instance, run, &layout)?;
+        let mut builder = dma::Builder::new(instance, run);
+        let mut engram =
+            crate::instance::prefill_engram::Builder::new(gathers, instance.buffers.len());
+        let mut split = 0;
+        loop {
+            let more = lowerer.lower_next(instance, run, &layout)?;
+            let body = lowerer.body();
+            engram.advance(gathers, &body.0, &body.1, &body.2)?;
+            if let Some(dma) = &mut builder {
+                dma.advance(instance, body, !more)?;
+                while split < dma.blocks() {
+                    dma.split_engram(split, &mut engram, gathers)?;
+                    split += 1;
+                }
+            }
+            if !more {
+                break;
+            }
+        }
+        let plan = lowerer.finish(instance, run, &layout)?;
+        let dma = builder.and_then(|builder| builder.finish(&plan.body));
+        if let Some(dma) = &dma {
+            engram.split_dma(dma.tail())?;
+        }
+        let streamed = engram.finish(&plan.body.0, &plan.body.1)?;
+        if dma.is_some() {
+            streamed.check_dma_collectives(&plan.body.0, &plan.body.1)?;
+        }
+        Ok(streamed == plan.engram(gathers, false)?)
+    }
+
     /// Rank `rank`'s body launches as (symbol, stage), then its head's
     /// symbols.
     #[cfg(test)]

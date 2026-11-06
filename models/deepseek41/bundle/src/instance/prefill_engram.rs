@@ -1,6 +1,8 @@
 //! Prepared, per-layer Engram uploads for eager text prefills.
 //! Enqueue before compute, then join each transfer at its first consumer.
 mod plan;
+#[cfg(test)]
+pub(super) use plan::Builder;
 pub(super) use plan::{DmaPiece, Plan};
 
 use super::{

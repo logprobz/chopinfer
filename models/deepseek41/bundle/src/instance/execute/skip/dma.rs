@@ -189,6 +189,12 @@ impl Plan {
         lines.push(format!("reads {:?}", self.reads));
     }
 
+    /// Each rank's launches after the last block.
+    #[cfg(test)]
+    pub(super) fn tail(&self) -> &[Range<usize>] {
+        &self.tail
+    }
+
     /// Rank `rank`'s body launches this plan read (`reads`).
     pub(super) fn reads(&self, rank: usize) -> &[Range<usize>] {
         self.reads.get(rank).map_or(&[], Vec::as_slice)
@@ -319,6 +325,25 @@ impl Builder {
     #[cfg(test)]
     pub(super) fn blocks(&self) -> usize {
         self.blocks.len()
+    }
+
+    /// Splits block `index`'s compute spans at the Engram joins they cross
+    /// and audits its call against the spans pending there, as
+    /// `Plan::prepare_engram` does for each block.
+    #[cfg(test)]
+    pub(super) fn split_engram(
+        &self,
+        index: usize,
+        engram: &mut crate::instance::prefill_engram::Builder,
+        gathers: &crate::instance::prefill_engram::Gathers,
+    ) -> Result<(), String> {
+        let block = &self.blocks[index];
+        engram.split_dma(&block.compute)?;
+        block.reduce.audit_pending(
+            &gathers.pending_spans(engram.joined()),
+            block.consume.as_ref(),
+            block.produce.as_ref(),
+        )
     }
 
     /// Prepares the blocks `body`, lowered so far, holds: each whose call

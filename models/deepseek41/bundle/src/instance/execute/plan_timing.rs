@@ -250,6 +250,28 @@ pub(crate) fn dma_in_groups(
     })
 }
 
+/// Whether the Engram plan of the original batch `request`, made as its
+/// upper-skip body is lowered in groups, equals the one made from the
+/// whole plan (`skip::Plan::engram_in_groups`).
+pub(crate) fn engram_in_groups(handle: BundleHandleV1, request: &[u8]) -> Result<bool, String> {
+    with(handle, |instance| {
+        instance.skip_prefill = true;
+        let step = instance.pack(request).map_err(|e| format!("pack: {e:?}"))?;
+        let hashed = match (&instance.dspark, &instance.engram) {
+            (Some(_), Some(engram)) => Some(engram.hash(&step.prefill)?),
+            _ => None,
+        };
+        let run = instance
+            .plan_run(step.prefill, None, hashed)
+            .map_err(|e| format!("plan: {e:?}"))?;
+        let gathers = instance
+            .prefill_engram
+            .as_ref()
+            .ok_or("the instance has no prepared gathers")?;
+        skip::Plan::engram_in_groups(instance, &run, gathers)
+    })
+}
+
 /// The median host time of `repeats` plans of `request` (`plan`), and of
 /// the same upper-skip plans lowered in full each time.
 pub(crate) fn time(handle: BundleHandleV1, request: &[u8], repeats: usize) -> (Duration, Duration) {

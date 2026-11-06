@@ -274,4 +274,4 @@ Kernel-lab coverage is `tests/qwen38_rows.rs` (`hyper_connection_g1`,
 `ple_g1`, `ngram_g1`): f64 bounds, exact hashes and state copies, graph
 replay, PDL, determinism and inactive rows. The ignored `rows_g4`
 performance test needs an otherwise idle GPU (see
-[kernel-lab](../../../kernel-lab/README.md)).
+[pair-lab kernel timing](../../../../docs/contributing.md#pair-lab-kernel-timing)).

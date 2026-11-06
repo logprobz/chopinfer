@@ -679,5 +679,5 @@ Kernel-lab MoE switches (`tests/ops/moe.rs`, `tests/ops/moe_prefill.rs`):
 
 `tools/profile/moe_smalle.py` and `tools/profile/moe_smalle_tp4.py` run
 few-expert kernel and TP4 server comparisons under a deadline; see their
-`--help`. GPU access rules and the receipts directory are in
-[kernel-lab](../../../kernel-lab/README.md).
+`--help`. Keep their receipts under `$CHOPINFER_DATA`; GPU timing rules
+are in [pair-lab kernel timing](../../../../docs/contributing.md#pair-lab-kernel-timing).

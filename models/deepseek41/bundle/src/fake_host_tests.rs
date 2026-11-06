@@ -1496,38 +1496,43 @@ fn journal_steps_with(host: &Rc<Host>, options: &[(&str, serde_json::Value)]) {
 /// resolves per rank become the two BF16-partial modules' three, and the
 /// prefill protocol buffers take their BF16-partial sizes. The native
 /// journals are byte-identical.
+/// The fused prefill norm-ceil, admitted from 33 rows, replaces each of the
+/// 70-row prefill's 80 unfused input norms per rank (the row norm, the
+/// widening after it where one runs and the serial quantizer) with one
+/// fused launch on the same stream and grid, at every topology and KV
+/// layout; every other line is identical.
 const FLASH_JOURNALS: [(&str, KvStorage, (usize, u64)); 6] = [
     (
         "deepseek41-flash-tp1",
         KvStorage::Native,
-        (15653, 0x80188a196027acbd),
+        (15525, 0x915e96bdf4ac68bf),
     ),
     (
         "deepseek41-flash-tp1",
         KvStorage::Bf16,
-        (15507, 0x292b254434ee7fe4),
+        (15379, 0x31cbb383a5b39f2c),
     ),
     (
         "deepseek41-flash-tp2",
         KvStorage::Native,
-        (31231, 0x98cbef869cd72c0e),
+        (30975, 0xf2252b296bdfa0a4),
     ),
     (
         "deepseek41-flash-tp2",
         KvStorage::Bf16,
-        (30939, 0xb30076be6a958d66),
+        (30683, 0x717a7f4e1971913a),
     ),
     (
         "deepseek41-flash-tp4",
         KvStorage::Native,
         // One dedicated data arena and table per rank, reserved before KV.
         // The full journal audit retains every other operation exactly.
-        (77313, 0x2c8deaefe83293b0),
+        (76801, 0xaf19855a27819330),
     ),
     (
         "deepseek41-flash-tp4",
         KvStorage::Bf16,
-        (75693, 0xe8ef0472dcb0c911),
+        (75181, 0xc4a2b893dc76f099),
     ),
 ];
 

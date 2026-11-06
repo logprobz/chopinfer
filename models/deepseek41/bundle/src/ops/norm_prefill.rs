@@ -103,15 +103,12 @@ impl NormPrefillOps {
 mod tests {
     use super::*;
     #[test]
-    fn admit_only_measured_prefill_rows() {
+    fn admit_prefill_rows_from_33() {
         use bundle_runtime::geometry::Ranks;
         let shape = crate::shape::Shape::new(&FLASH, Ranks::TP4).unwrap();
         let candidate = shape.with_prefill_norm_ceil_rows(true);
         for rows in 1..=8192 {
-            assert_eq!(
-                qualified(&shape, Phase::Prefill { rows }),
-                rows == 8192 || (0..21).any(|i| rows == 64 + 128 * i)
-            );
+            assert_eq!(qualified(&shape, Phase::Prefill { rows }), rows > 32);
             assert_eq!(qualified(&candidate, Phase::Prefill { rows }), rows > 32);
             assert!(!qualified(&shape, Phase::Decode(rows)));
             assert!(!qualified(&candidate, Phase::Decode(rows)));

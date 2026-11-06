@@ -1,17 +1,11 @@
-//! The `prefill_norm_ceil_rows` candidate: a prefill step of 33 to 8192
-//! rows runs each sublayer input norm as the fused prefill norm-ceil, in
-//! place of the row norm, the widening of its rows and the serial input
-//! quantizer; every other launch, and every decode step, is unchanged.
+//! The `prefill_norm_ceil_rows` option, adopted: the default admits the
+//! fused prefill norm-ceil at the option's rows, 33 to 8192, so the
+//! option changes no launch (`norm_prefill` pins the route).
 use super::*;
 use model_deepseek41_contract::execution_options::PREFILL_NORM_CEIL_ROWS;
 
-const FUSED: &str = "chop_prefill_norm_ceil_deepseek41_cached_v1";
-const NORM: &str = "chop_row_rmsnorm_deepseek41_w5120_v1";
-const WIDEN: &str = "chop_row_rounding_widen_deepseek41_w5120_v1";
-const QUANTIZER: &str = "chop_deepseek41_moe_ceil_w5120_v1";
-
 /// The launches of a prompt of `rows` rows and of one decode step after
-/// it, with the candidate `enabled`.
+/// it, with the option `enabled`.
 fn launches(rows: u64, enabled: bool) -> [Vec<String>; 2] {
     let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
     let host = FakeHost::new(shape, KV_LAYOUTS[0]);
@@ -43,46 +37,13 @@ fn launches(rows: u64, enabled: bool) -> [Vec<String>; 2] {
     [prefill, decode]
 }
 
-fn stream(line: &str) -> &str {
-    line.strip_prefix("launch ")
-        .and_then(|rest| rest.split_once(' '))
-        .expect("a launch line")
-        .0
-}
-
-/// `lines` without the unfused input norms: each row norm, the widening
-/// that follows it on its stream, and each serial input quantizer.
-fn without_chain(lines: &[String]) -> Vec<String> {
-    let mut after_norm = std::collections::BTreeSet::<String>::new();
-    let mut out = Vec::new();
-    for line in lines {
-        let stream = stream(line).to_owned();
-        let norm = line.contains(&format!("{NORM} "));
-        let widen = line.contains(&format!("{WIDEN} ")) && after_norm.contains(&stream);
-        if norm {
-            after_norm.insert(stream);
-        } else {
-            after_norm.remove(&stream);
-        }
-        if !(norm || widen || line.contains(&format!("{QUANTIZER} "))) {
-            out.push(line.clone());
-        }
-    }
-    out
-}
-
 /// `lines` with each launch stream and host handle renumbered by its first
-/// use, and the `skip` symbols' launches dropped.
-fn canonical(lines: &[String], skip: &[&str]) -> Vec<String> {
+/// use.
+fn canonical(lines: &[String]) -> Vec<String> {
     let mut streams = std::collections::BTreeMap::<String, usize>::new();
     let mut handles = std::collections::BTreeMap::<String, usize>::new();
     lines
         .iter()
-        .filter(|line| {
-            !skip
-                .iter()
-                .any(|symbol| line.contains(&format!("{symbol} ")))
-        })
         .map(|line| {
             let (stream, mut rest) = line
                 .strip_prefix("launch ")
@@ -108,67 +69,35 @@ fn canonical(lines: &[String], skip: &[&str]) -> Vec<String> {
         .collect()
 }
 
-/// Fails at the first launch where `candidate` and `default` differ.
-fn same(what: &str, candidate: &[String], default: &[String]) {
+/// Fails at the first launch where `option` and `default` differ.
+fn same(what: &str, option: &[String], default: &[String]) {
     if let Some(at) =
-        (0..candidate.len().max(default.len())).find(|&at| candidate.get(at) != default.get(at))
+        (0..option.len().max(default.len())).find(|&at| option.get(at) != default.get(at))
     {
         panic!(
-            "{what}: launch {at} differs\ncandidate: {:?}\ndefault: {:?}",
-            candidate.get(at),
+            "{what}: launch {at} differs\noption: {:?}\ndefault: {:?}",
+            option.get(at),
             default.get(at)
         );
     }
 }
 
-fn count(lines: &[String], symbol: &str) -> usize {
-    lines
-        .iter()
-        .filter(|line| line.contains(&format!("{symbol} ")))
-        .count()
-}
-
-/// Below 33 rows and at the measured rows the candidate changes nothing. At
-/// every other count the norm and quantizer of each sublayer input become
-/// one fused launch of one CTA per row, and the journal without them is the
-/// default's without the chain: the row norm, the widening after it and
-/// the serial quantizer.
+/// The option's prefill and decode journals are the default's at every
+/// row count.
 #[test]
-fn the_candidate_fuses_every_input_norm_from_33_rows() {
-    let calls = 2 * FLASH.layers() as usize * 4;
-    let mut fused_rows = 0;
-    for rows in [1, 32, 33, 64, 65, 128, 1500, 2305, 4096, 8191] {
-        let [base_prefill, base_decode] = launches(rows, false);
-        let [prefill, decode] = launches(rows, true);
-        let measured = count(&base_prefill, FUSED) > 0;
-        if rows <= 32 || measured {
-            same(
-                &format!("prefill of {rows} rows"),
-                &canonical(&prefill, &[]),
-                &canonical(&base_prefill, &[]),
-            );
-        } else {
-            assert_eq!(count(&prefill, FUSED), calls, "rows={rows}");
-            assert_eq!(count(&prefill, NORM), 0, "rows={rows}");
-            assert_eq!(count(&prefill, QUANTIZER), 0, "rows={rows}");
-            assert_eq!(count(&base_prefill, NORM), calls, "rows={rows}");
-            assert_eq!(count(&base_prefill, QUANTIZER), calls, "rows={rows}");
-            for launch in prefill.iter().filter(|l| l.contains(&format!("{FUSED} "))) {
-                assert!(launch.contains(&format!("grid_x: {rows},")), "{launch}");
-                assert!(launch.contains("block_x: 256,"), "{launch}");
-            }
-            same(
-                &format!("prefill of {rows} rows without the norms"),
-                &canonical(&prefill, &[FUSED]),
-                &canonical(&without_chain(&base_prefill), &[]),
-            );
-            fused_rows += 1;
-        }
+fn the_option_changes_nothing() {
+    for rows in [1, 32, 33, 64, 65, 128, 1500, 2305, 2624, 4096, 8191, 8192] {
+        let [prefill, decode] = launches(rows, false);
+        let [option_prefill, option_decode] = launches(rows, true);
+        same(
+            &format!("prefill of {rows} rows"),
+            &canonical(&option_prefill),
+            &canonical(&prefill),
+        );
         same(
             &format!("decode after {rows} rows"),
-            &canonical(&decode, &[]),
-            &canonical(&base_decode, &[]),
+            &canonical(&option_decode),
+            &canonical(&decode),
         );
     }
-    assert_eq!(fused_rows, 7);
 }

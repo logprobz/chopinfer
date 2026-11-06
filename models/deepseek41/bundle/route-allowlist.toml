@@ -443,7 +443,7 @@ family = "prefill_norm"
 entry = "prefill_norm/unfused/chop_row_rmsnorm_deepseek41_w5120_v1"
 symbol = "chop_row_rmsnorm_deepseek41_w5120_v1"
 rows = [[1, 8191]]
-reason = "The fused prefill norm is qualified at 8192 and at 64 plus multiples of 128 through 2624"
+reason = "The fused prefill norm is qualified at 33 to 8192 rows; parts of up to 32 rows keep the unfused chain, including the short exact intervals of a larger step's upper layers"
 task = "NORM-prefill-range"
 
 [[allow]]

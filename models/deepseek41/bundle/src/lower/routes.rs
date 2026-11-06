@@ -121,15 +121,11 @@ mod tests {
     use model_deepseek41_contract::geometry::FLASH;
 
     #[test]
-    fn prefill_norm_route_rows_keep_ordered_singletons() {
+    fn prefill_norm_route_rows_admit_33_to_8192() {
         let shape = crate::shape::Shape::new(&FLASH, Ranks::TP4).unwrap();
         assert_eq!(
             crate::Kernels::prefill_norm_route_rows(&shape),
-            (64..=2624)
-                .step_by(128)
-                .chain([8192])
-                .map(|rows| rows..=rows)
-                .collect::<Vec<_>>()
+            vec![33..=8192]
         );
     }
 

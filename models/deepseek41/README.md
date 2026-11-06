@@ -595,3 +595,15 @@ top-5 logprobs, bit for bit.
 B against C: 1.6% at both live cells (313.6 to 308.6 ms and 415.2 to
 408.7 ms), 2.1% at 1,024 rows, 0.4% beside C16 and 0.3% for the chunks;
 decode steps were unchanged within noise.
+
+K against A: 6.7% at live 1.5K (349.0 to 327.1 ms), 6.4% at live 2.9K
+(453.9 to 426.7 ms), 4.6% at 1,024 rows, 3.7% beside C16 and 0.5% for the
+chunks, with decode steps unchanged within noise; K is the fused prefill
+norm-ceil from 33 rows, the MoE producer's owner intervals at every row
+count and the compact dense prefill ranges, adopted in that order. A
+separate probe with route counters on saw each new route launch in every
+cell's row range. The routes change host memory only through the size of
+a kept prefill plan template: about 3.75 MiB smaller inside the compact
+ranges, 0.45 MiB smaller with the fused norm and 0.76 MiB larger with the
+producer intervals, so a full cache of 64 templates holds at most about
+20 MiB more than before, below the compact ranges.

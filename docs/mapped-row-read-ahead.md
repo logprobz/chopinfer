@@ -158,6 +158,25 @@ the runtime leaves no callback pending. The ids, the gathered rows, every
 launch and every result are unchanged; CPU evidence only, as for the
 candidates above.
 
+Two default-off host knobs shorten a prepared gather's callback.
+`CHOPINFER_MAPPED_GATHER_INIT` chooses what the callback zeroes in its
+pinned outputs, whose uploads copy each plane's live rows: unset or
+`extents`, the default, zeroes each stream's output up to its last plane's
+live end, which for a DeepSeek layer includes its codes plane's whole
+8192-row capacity, about 48 MiB a rank; `targets` zeroes only the live
+rows; `failure` zeroes them only after a gather that fails, since one that
+succeeds writes every byte of them. `CHOPINFER_MAPPED_FANOUT_COPIERS`, 1
+(the default) to 16, copies the other ranks' planes of a large leader's
+rows on that many threads, which only copy host bytes and finish before
+the callback returns; the fetch snapshot's `parallel_fanouts` counts the
+gathers that used them. Routes, reads and bytes stay the same. On
+2026-11-06, a CPU benchmark of a four-rank DeepSeek layer gather (24 ids
+a row, a warm page cache, a shared build host) spent 7.8, 14.5 and 20.1 ms
+on the leading rank's reads at 1536, 2890 and 4096 prefill rows, 2.3 ms
+zeroing by default (0.6, 1.2 and 1.7 ms for the live rows alone), and
+0.7, 1.7 and 2.5 ms copying the fanout on one thread (0.4, 1.3 and 2.1 ms
+on eight). CPU evidence only; served step time decides adoption.
+
 Cold-row experiments must keep async read-ahead enabled. The shared defaults
 already enable it; `CHOPINFER_MAPPED_ASYNC_READ_AHEAD=1` makes the setting
 explicit even when another read-ahead control was inherited. The bundle

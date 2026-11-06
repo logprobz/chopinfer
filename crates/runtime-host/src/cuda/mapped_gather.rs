@@ -6,17 +6,16 @@ use runtime_cuda::{HostTransform, HostTransformInit, HostTransformTarget};
 
 const INIT_ENV: &str = "CHOPINFER_MAPPED_GATHER_INIT";
 
-/// `CHOPINFER_MAPPED_GATHER_INIT`: what a prepared gather's callback zeroes
-/// in its pinned outputs for the uploads, which copy each plane's live rows.
+/// `CHOPINFER_MAPPED_GATHER_INIT`: when a prepared gather's callback zeroes
+/// its pinned outputs for the uploads, which copy each plane's live rows.
 /// Unset or `extents` (the default) zeroes each stream's output before the
 /// gather up to its last plane's live end, the unused capacity of the planes
-/// before that included; `targets` zeroes only the live rows; `failure`
-/// zeroes the live rows only after a gather that fails, since one that
-/// succeeds has written every byte of them ([`gather_planes_v1`]). Anything
-/// else keeps the default. The uploaded bytes are the same in every mode.
+/// before that included; `failure` zeroes the live rows only after a gather
+/// that fails, since one that succeeds has written every byte of them
+/// ([`gather_planes_v1`]). Anything else keeps the default. The uploaded
+/// bytes are the same either way.
 fn configured_init(value: Option<std::ffi::OsString>) -> HostTransformInit {
     match value.as_ref().and_then(|value| value.to_str()) {
-        Some("targets") => HostTransformInit::Targets,
         Some("failure") => HostTransformInit::OnFailure,
         _ => HostTransformInit::Extents,
     }
@@ -175,13 +174,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn gather_initialization_reads_its_three_modes_and_defaults_otherwise() {
+    fn gather_initialization_reads_its_two_modes_and_defaults_otherwise() {
         for (value, init) in [
             (None, HostTransformInit::Extents),
             (Some("extents"), HostTransformInit::Extents),
-            (Some("targets"), HostTransformInit::Targets),
             (Some("failure"), HostTransformInit::OnFailure),
-            (Some("Targets"), HostTransformInit::Extents),
+            (Some("targets"), HostTransformInit::Extents),
+            (Some("Failure"), HostTransformInit::Extents),
             (Some(""), HostTransformInit::Extents),
         ] {
             assert_eq!(configured_init(value.map(Into::into)), init, "{value:?}");

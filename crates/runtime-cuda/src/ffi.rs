@@ -16,38 +16,22 @@ pub(crate) mod host_work {
         Box<dyn FnOnce(&[u8], &mut [&mut [u8]]) -> Result<(), String> + Send>;
     pub(crate) type HostResult = Arc<Mutex<Option<(u64, Result<(), String>)>>>;
 
-    /// What the work's outputs hold for their uploads (`HostTransformInit`).
-    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    /// When the work's outputs are zeroed for their uploads
+    /// (`HostTransformInit`).
+    #[derive(Clone, Debug, Eq, PartialEq)]
     pub(crate) enum Init {
         /// Every output zeroed before the work.
         Extents,
-        /// Only the uploaded ranges zeroed before the work.
-        Targets,
-        /// The uploaded ranges zeroed only after work that fails.
-        OnFailure,
+        /// Each output's uploaded `ranges` zeroed only after work that fails.
+        OnFailure { ranges: Vec<Vec<(usize, usize)>> },
     }
 
     struct Work {
         input: (usize, usize),
         outputs: Vec<(usize, usize)>,
-        /// Each output's uploaded ranges, (start, length).
-        ranges: Vec<Vec<(usize, usize)>>,
         init: Init,
         call: HostWork,
         result: HostResult,
-    }
-
-    /// Zeroes each output whole, or only its uploaded `ranges`.
-    fn zero(outputs: &mut [&mut [u8]], ranges: &[Vec<(usize, usize)>], whole: bool) {
-        for (output, ranges) in outputs.iter_mut().zip(ranges) {
-            if whole {
-                output.fill(0);
-                continue;
-            }
-            for &(start, length) in ranges {
-                output[start..start + length].fill(0);
-            }
-        }
     }
 
     // SAFETY-REVIEWED: this declaration matches cuda.h's CUhostFn signature.
@@ -65,7 +49,6 @@ pub(crate) mod host_work {
         let Work {
             input,
             outputs,
-            ranges,
             init,
             call,
             result,
@@ -86,17 +69,23 @@ pub(crate) mod host_work {
             // to the caller until completion; the preceding D2H has finished.
             let input = unsafe { std::slice::from_raw_parts(input.0 as *const u8, input.1) };
             let mut outputs = slices();
-            if init != Init::OnFailure {
-                zero(&mut outputs, &ranges, init == Init::Extents);
+            if init == Init::Extents {
+                for output in &mut outputs {
+                    output.fill(0);
+                }
             }
             call(input, &mut outputs)
         }))
         .unwrap_or_else(|_| Err("host transform panicked".into()));
         // Failed work's uploads still copy, so its ranges are zeroed now.
         if outcome.is_err()
-            && init == Init::OnFailure
+            && let Init::OnFailure { ranges } = &init
             && std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                zero(&mut slices(), &ranges, false)
+                for (output, ranges) in slices().iter_mut().zip(ranges) {
+                    for &(start, length) in ranges {
+                        output[start..start + length].fill(0);
+                    }
+                }
             }))
             .is_err()
         {
@@ -108,13 +97,12 @@ pub(crate) mod host_work {
 
     /// The owner must keep every allocation alive and inaccessible until the
     /// enqueued work completes, including when a later enqueue fails. Each
-    /// output's `ranges` lie within its bytes.
+    /// output's `OnFailure` ranges lie within its bytes.
     pub(crate) fn enqueue(
         stream: StreamHandle,
         input: &PinnedAllocation,
         input_bytes: usize,
         outputs: &[(&PinnedAllocation, usize)],
-        ranges: Vec<Vec<(usize, usize)>>,
         init: Init,
         call: HostWork,
     ) -> (c_int, HostResult) {
@@ -125,7 +113,6 @@ pub(crate) mod host_work {
                 .iter()
                 .map(|(buffer, bytes)| (buffer.pointer as usize, *bytes))
                 .collect(),
-            ranges,
             init,
             call,
             result: Arc::clone(&result),
@@ -150,14 +137,12 @@ pub(crate) mod host_work {
             outputs: &mut [&mut [u8]],
             call: HostWork,
         ) -> (u64, Result<(), String>) {
-            let ranges = outputs.iter().map(|bytes| vec![(0, bytes.len())]).collect();
-            invoke_with(input, outputs, ranges, Init::Extents, call)
+            invoke_with(input, outputs, Init::Extents, call)
         }
 
         fn invoke_with(
             input: &[u8],
             outputs: &mut [&mut [u8]],
-            ranges: Vec<Vec<(usize, usize)>>,
             init: Init,
             call: HostWork,
         ) -> (u64, Result<(), String>) {
@@ -168,7 +153,6 @@ pub(crate) mod host_work {
                     .iter_mut()
                     .map(|bytes| (bytes.as_mut_ptr() as usize, bytes.len()))
                     .collect(),
-                ranges,
                 init,
                 call,
                 result: Arc::clone(&result),
@@ -222,25 +206,10 @@ pub(crate) mod host_work {
         }
 
         /// Two uploaded ranges of a six-byte output, a gap between them.
-        fn ranges() -> Vec<Vec<(usize, usize)>> {
-            vec![vec![(0, 2), (4, 2)]]
-        }
-
-        #[test]
-        fn target_initialization_zeroes_only_the_uploaded_ranges() {
-            let mut output = [0xff; 6];
-            let (_, result) = invoke_with(
-                &[9],
-                &mut [&mut output],
-                ranges(),
-                Init::Targets,
-                Box::new(|input, output| {
-                    output[0][1] = input[0];
-                    Ok(())
-                }),
-            );
-            assert_eq!(result, Ok(()));
-            assert_eq!(output, [0, 9, 0xff, 0xff, 0, 0]);
+        fn on_failure() -> Init {
+            Init::OnFailure {
+                ranges: vec![vec![(0, 2), (4, 2)]],
+            }
         }
 
         #[test]
@@ -250,8 +219,7 @@ pub(crate) mod host_work {
             let (_, result) = invoke_with(
                 &[9],
                 &mut [&mut output],
-                ranges(),
-                Init::OnFailure,
+                on_failure(),
                 Box::new(|input, output| {
                     output[0][..2].fill(input[0]);
                     output[0][4..].fill(input[0]);
@@ -266,8 +234,7 @@ pub(crate) mod host_work {
                 let (_, result) = invoke_with(
                     &[9],
                     &mut [&mut output],
-                    ranges(),
-                    Init::OnFailure,
+                    on_failure(),
                     Box::new(move |input, output| {
                         output[0][0] = input[0];
                         if panic {

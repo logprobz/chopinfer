@@ -190,11 +190,7 @@ fn host_transform_refuses_an_unordered_source_producer() {
 /// to `OnFailure`.
 #[test]
 fn host_transform_uploads_initialized_bytes_in_every_mode() {
-    for init in [
-        HostTransformInit::Extents,
-        HostTransformInit::Targets,
-        HostTransformInit::OnFailure,
-    ] {
+    for init in [HostTransformInit::Extents, HostTransformInit::OnFailure] {
         for fail in [false, true] {
             let mut f = fixture();
             f.transform.set_init(init);

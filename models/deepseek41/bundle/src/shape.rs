@@ -52,6 +52,10 @@ pub struct Shape {
     /// route through the drafter table (the `dspark_hc_draft_rows`
     /// candidate option, which takes effect with `dspark_hc_fusion`).
     pub dspark_hc_draft_rows: bool,
+    /// Whether TP4 DMA prefill reductions of any row count split their MoE
+    /// producer over the transport's owner intervals at every layer (the
+    /// `prefill_dma_producer_intervals` candidate option).
+    pub prefill_dma_producer_intervals: bool,
 }
 
 impl Shape {
@@ -71,6 +75,7 @@ impl Shape {
             dspark_confidence_staged: false,
             dspark_hc_fusion: false,
             dspark_markov_staged: false,
+            prefill_dma_producer_intervals: false,
         })
     }
 
@@ -145,6 +150,14 @@ impl Shape {
     /// (`model_deepseek41_contract::execution_options::DSPARK_HC_DRAFT_ROWS`).
     pub fn with_dspark_hc_draft_rows(mut self, enabled: bool) -> Shape {
         self.dspark_hc_draft_rows = enabled;
+        self
+    }
+
+    /// This shape with the MoE producer split over every DMA call's owner
+    /// intervals on or off
+    /// (`model_deepseek41_contract::execution_options::PREFILL_DMA_PRODUCER_INTERVALS`).
+    pub fn with_prefill_dma_producer_intervals(mut self, enabled: bool) -> Shape {
+        self.prefill_dma_producer_intervals = enabled;
         self
     }
 

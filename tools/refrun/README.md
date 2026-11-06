@@ -145,7 +145,7 @@ budget and scope. The diagnostic path keeps serving's prefill schedule and
 runs decode and verify graph kernels stage by stage; it adds
 synchronizations and copies, so it cannot clear graph-only failures or
 measure performance. For gates, bind the capture to its process and request
-([tap captures](../qual/README.md#tap-captures)).
+([tap captures](../../docs/check-kinds.md#tap-captures)).
 
 Compare on CPU with the runner Python (numpy):
 
@@ -183,7 +183,7 @@ diagnostic evidence, not a substitute for the serving gates.
 
 `python3 -m tools.refrun.encoder --help` describes execution of the model's
 encoder declarations. Capture exact, policy and reference-BF16 modes against
-the same media. [Encoder parity](../qual/README.md#encoder-parity) defines
+the same media. [Encoder parity](../../docs/check-kinds.md#encoder-parity) defines
 coverage and thresholds, and distinguishes serving-bound taps from lab runs.
 
 ## Frontend preprocessing
@@ -329,10 +329,8 @@ bitwise, cover every stored tensor, verify cache replay without loading, and
 include negative controls for layout corrections. These CPU tests prove
 adapter mechanics, not full-model GPU parity.
 
-The runner places a whole model on the selected GPUs; it has no layer-major
-streaming for models that do not fit.
-
 Reference adapter source bytes participate in cache identity, including
 comments. Historical guide citations in pinned adapters retain their original
-spelling; use this guide and numerics for the current contracts. A prose
+spelling; use this guide, [the qualification contract](../../docs/check-kinds.md)
+and [numerics](../../docs/numerics.md) for the current contracts. A prose
 cleanup must not silently invalidate the reference producer.

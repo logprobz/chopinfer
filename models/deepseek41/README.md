@@ -103,6 +103,13 @@ and hosts without the needed service. Every host gather has an
 `engram_gather` route tag; remaining fallbacks are recorded in the bundle's
 route allowlist.
 
+A prepared gather's callback copies the other ranks' planes of a leader's
+rows on its own thread. Copying that fanout on up to 16 threads
+(`CHOPINFER_MAPPED_FANOUT_COPIERS`) was tried and removed on 2026-11-06
+without a served measurement: in a CPU benchmark of a four-rank layer
+gather at 1,536 to 4,096 prefill rows it saved 0.3 to 0.4 ms of the 0.7 to
+2.5 ms fanout, under 1% of a live mixed step.
+
 The Engram codes and scales are about 203 GB of checkpoint tables, mapped
 from the file and read through the host page cache. The weight plan keeps
 `prewarm: false`; evicted tables cause major faults and multi-millisecond

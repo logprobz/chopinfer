@@ -18,7 +18,6 @@ const READERS_ENV: &str = "CHOPINFER_MAPPED_MISS_READERS";
 const START_ENV: &str = "CHOPINFER_MAPPED_MISS_START";
 const JOINT_ENV: &str = "CHOPINFER_MAPPED_MISS_JOINT_PLANES";
 const LARGE_ENV: &str = "CHOPINFER_MAPPED_LARGE_GATHER_FETCH";
-const COPIERS_ENV: &str = "CHOPINFER_MAPPED_FANOUT_COPIERS";
 /// Reader threads one batch's rows are split across. A drafted DSpark step
 /// gathers its first Engram layer after the drafter, and at 32 rows on rows
 /// no request read before about 450 of each plane's 768 rows miss; with 16
@@ -44,8 +43,6 @@ static JOINT: AtomicU64 = AtomicU64::new(0);
 static LARGE_GATHERS: AtomicU64 = AtomicU64::new(0);
 static LARGE_ROWS: AtomicU64 = AtomicU64::new(0);
 static FANOUT_COPIES: AtomicU64 = AtomicU64::new(0);
-static PARALLEL_FANOUTS: AtomicU64 = AtomicU64::new(0);
-static PARALLEL_FANOUT_CHUNKS: AtomicU64 = AtomicU64::new(0);
 
 fn configured(value: Option<std::ffi::OsString>) -> bool {
     value.is_none_or(|value| value == "1")
@@ -128,120 +125,6 @@ pub(crate) fn large_reads() -> bool {
     enabled() && start_reads() && *LARGE.get_or_init(|| configured(std::env::var_os(LARGE_ENV)))
 }
 
-/// The most threads one gather's fanout copies on ([`copy_fanout`]).
-const MAX_COPIERS: usize = 16;
-/// Fanout bytes one copier takes at a time.
-const FANOUT_CHUNK: usize = 1 << 20;
-/// A smaller fanout copies on the gather's own thread.
-const PARALLEL_FANOUT_BYTES: usize = 8 << 20;
-
-/// `CHOPINFER_MAPPED_FANOUT_COPIERS`: how many threads, 1 (the default) to
-/// 16, copy a prepared gather's fanout, the other ranks' copies of a large
-/// leader's rows ([`copy_fanout`]); anything else keeps the default.
-fn configured_copiers(value: Option<std::ffi::OsString>) -> usize {
-    value
-        .and_then(|value| value.to_str()?.parse::<usize>().ok())
-        .filter(|copiers| (1..=MAX_COPIERS).contains(copiers))
-        .unwrap_or(1)
-}
-
-pub(crate) fn fanout_copiers() -> usize {
-    static COPIERS: OnceLock<usize> = OnceLock::new();
-    *COPIERS.get_or_init(|| configured_copiers(std::env::var_os(COPIERS_ENV)))
-}
-
-/// The threads this process may run on (its affinity and quota), read
-/// once: more copiers than that would only wait for one another.
-pub(crate) fn available_threads() -> usize {
-    static THREADS: OnceLock<usize> = OnceLock::new();
-    *THREADS.get_or_init(|| std::thread::available_parallelism().map_or(1, usize::from))
-}
-
-/// Copies each `(to, from)` pair, of equal lengths: a prepared gather's
-/// fanout. With [`fanout_copiers`] above one and at least 8 MiB to copy, up
-/// to that many threads, and no more than the process may run on, copy it
-/// in 1 MiB chunks, the calling thread among them; a copier that cannot
-/// start leaves its chunks to the others. The copiers only copy host bytes,
-/// and every one has finished before this returns. The bytes are the same
-/// either way.
-pub(crate) fn copy_fanout(copies: Vec<(&mut [u8], &[u8])>) {
-    copy_fanout_on(copies, fanout_copiers().min(available_threads()));
-}
-
-/// [`copy_fanout`] on up to `copiers` threads. Returns the chunks other
-/// threads copied. A fanout that started another copier counts as a
-/// parallel fanout once every copier finished.
-fn copy_fanout_on(copies: Vec<(&mut [u8], &[u8])>, copiers: usize) -> usize {
-    let bytes = copies.iter().map(|(to, _)| to.len()).sum::<usize>();
-    if copiers < 2 || bytes < PARALLEL_FANOUT_BYTES {
-        for (to, from) in copies {
-            to.copy_from_slice(from);
-        }
-        return 0;
-    }
-    let chunks = std::sync::Mutex::new(
-        copies
-            .into_iter()
-            .flat_map(|(to, from)| to.chunks_mut(FANOUT_CHUNK).zip(from.chunks(FANOUT_CHUNK))),
-    );
-    let copy = || {
-        let mut copied = 0;
-        loop {
-            let next = chunks
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .next();
-            let Some((to, from)) = next else {
-                return copied;
-            };
-            to.copy_from_slice(from);
-            copied += 1;
-        }
-    };
-    let (started, copied) = std::thread::scope(|scope| {
-        let others = (1..copiers)
-            .filter_map(|_| {
-                std::thread::Builder::new()
-                    .name("mapped-fanout".into())
-                    .spawn_scoped(scope, copy)
-                    .ok()
-            })
-            .collect::<Vec<_>>();
-        copy();
-        let started = others.len();
-        let copied = others
-            .into_iter()
-            .map(|other| {
-                other
-                    .join()
-                    .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
-            })
-            .sum::<usize>();
-        (started, copied)
-    });
-    if started > 0 {
-        PARALLEL_FANOUTS.fetch_add(1, Ordering::Relaxed);
-        PARALLEL_FANOUT_CHUNKS.fetch_add(copied as u64, Ordering::Relaxed);
-        report_parallel(started + 1, bytes, copied);
-    }
-    copied
-}
-
-/// Logs the process's first parallel fanout, once every copier finished,
-/// so a served run shows the copiers engaged.
-fn report_parallel(copiers: usize, bytes: usize, chunks: usize) {
-    static REPORTED: AtomicBool = AtomicBool::new(false);
-    if !REPORTED.swap(true, Ordering::Relaxed) {
-        runtime_engine::logging::line(
-            serde_json::json!({
-                "schema":"chopinfer.mapped-row-fetch.v1","phase":"parallel-fanout",
-                "copiers":copiers,"bytes":bytes,"other_copier_chunks":chunks,
-            })
-            .to_string(),
-        );
-    }
-}
-
 /// Whether [`copy_large`] reads `bytes` output bytes of `mapping`: large
 /// reads are on, the mapping kept its descriptor, and the output fits one
 /// fetch's bound.
@@ -269,8 +152,6 @@ pub(crate) fn snapshot() -> serde_json::Value {
         "large_reads":large_reads(), "large_gathers":LARGE_GATHERS.load(Ordering::Relaxed),
         "large_rows":LARGE_ROWS.load(Ordering::Relaxed),
         "large_fanout_copies":FANOUT_COPIES.load(Ordering::Relaxed),
-        "fanout_copiers":fanout_copiers(), "parallel_fanouts":PARALLEL_FANOUTS.load(Ordering::Relaxed),
-        "parallel_fanout_chunks":PARALLEL_FANOUT_CHUNKS.load(Ordering::Relaxed),
         "mapped_fallback_rows":MAPPED.load(Ordering::Relaxed),
         "legacy_async_gathers":legacy_gathers, "legacy_async_misses":legacy_misses,
     })

@@ -259,6 +259,10 @@ pub struct Sm120 {
     mxfp8_folds: Vec<crate::gemm::mxfp8_fold::Entry>,
     mxfp8_prefills: Vec<crate::gemm::mxfp8_fold::Entry>,
     mxfp8_prefill_compacts: Vec<(crate::gemm::mxfp8_prefill_tiles::Entry<false>, u32)>,
+    mxfp8_prefill_compact_ranges: Vec<(
+        crate::gemm::mxfp8_prefill_tiles::Entry<false>,
+        std::ops::RangeInclusive<u32>,
+    )>,
     mxfp8_prefill_matrices: Vec<(crate::gemm::mxfp8_prefill_tiles::Entry<true>, u32)>,
     mxfp8_prefill_tma_scales: Vec<(crate::gemm::mxfp8_prefill_tma_scales::Entry, u32)>,
     mxfp8_prefill_splits: Vec<(
@@ -298,6 +302,19 @@ impl Sm120 {
         rows: u32,
     ) -> Self {
         self.mxfp8_prefill_compacts.push((entry, rows));
+        self
+    }
+
+    /// Opt a contiguous range of host row counts into compact tiles, each
+    /// count planned when it launches, so the range keeps no plan per count.
+    /// Exact registrations take precedence inside it; all other rows keep
+    /// the separately registered prefill implementation. No scratch is added.
+    pub fn with_mxfp8_prefill_compact_range(
+        mut self,
+        entry: crate::gemm::mxfp8_prefill_tiles::Entry<false>,
+        rows: std::ops::RangeInclusive<u32>,
+    ) -> Self {
+        self.mxfp8_prefill_compact_ranges.push((entry, rows));
         self
     }
 
@@ -1531,6 +1548,12 @@ impl Backend for Sm120 {
             }
             let entries: Vec<_> = candidates.iter().map(|(e, _)| e.clone()).collect();
             let fallback = mxfp8_prefill::prepare_with_tail(&entries, op, need, Some(*policy))?;
+            let fallback = mxfp8_prefill_compact::prepare_range(
+                fallback,
+                &self.mxfp8_prefill_compact_ranges,
+                op,
+                need,
+            )?;
             let fallback =
                 mxfp8_prefill_compact::prepare(fallback, &self.mxfp8_prefill_compacts, op, need)?;
             let fallback =
@@ -1543,6 +1566,12 @@ impl Backend for Sm120 {
             )?);
         }
         let fallback = mxfp8_prefill::prepare(&self.mxfp8_prefills, op, need)?;
+        let fallback = mxfp8_prefill_compact::prepare_range(
+            fallback,
+            &self.mxfp8_prefill_compact_ranges,
+            op,
+            need,
+        )?;
         let fallback =
             mxfp8_prefill_compact::prepare(fallback, &self.mxfp8_prefill_compacts, op, need)?;
         let fallback =

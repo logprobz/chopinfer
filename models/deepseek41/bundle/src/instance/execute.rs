@@ -107,8 +107,21 @@ pub(super) const VERIFY: usize = 2;
 /// after its prefill (`Instance::admits_mixed_engram`).
 const MIXED_VERIFY_ROWS: u32 = 64;
 
+/// What a run takes, fixed when it is planned. Uploads, gather begins,
+/// admission checks and completions read these, never whether a plan is
+/// complete yet.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct Route {
+    /// An upper-skip prefill: its logits rows upload compacted, its index
+    /// status is cleared, and its DSpark pack counts are the plan's.
+    skip: bool,
+    /// A prefill whose Engram rows arrive through the prepared gathers.
+    prepared_gathers: bool,
+}
+
 /// One phase of a step, planned before the step opens.
 pub(super) struct Run {
+    route: Route,
     execution: Execution,
     /// The selected synchronous cause, absent when a prepared gather serves the phase.
     pub(super) sync_engram: Option<crate::engram_rows::SyncReason>,
@@ -277,9 +290,7 @@ impl StagedPrefill {
     /// Whether the planned prefill takes prepared gathers with its staged ids.
     pub(super) fn prepared(&self) -> bool {
         match self {
-            Self::Planned { run: Ok(run), .. } => {
-                run.sync_engram.is_none() && run.execution.prefill_engram().is_some()
-            }
+            Self::Planned { run: Ok(run), .. } => run.route.prepared_gathers,
             _ => false,
         }
     }
@@ -803,6 +814,10 @@ impl Instance {
         };
         advance_step();
         let mut run = Run {
+            route: Route {
+                skip: skipping,
+                prepared_gathers: false,
+            },
             execution: Execution::Standard,
             sync_engram: None,
             ar_engram,
@@ -842,10 +857,12 @@ impl Instance {
             } else {
                 Some(crate::engram_rows::SyncReason::HostTarget)
             };
+            run.route.prepared_gathers =
+                run.phase.prefill() && run.sync_engram.is_none() && self.prefill_engram.is_some();
             if let Some(gathers) = self
                 .prefill_engram
                 .as_ref()
-                .filter(|_| run.phase.prefill() && run.sync_engram.is_none())
+                .filter(|_| run.route.prepared_gathers)
             {
                 let plan = if let Some(skip) = run.execution.skip() {
                     skip.engram(gathers, self.plans.verifies())
@@ -866,6 +883,12 @@ impl Instance {
                     _ => run.execution = Execution::PrefillEngram(plan),
                 }
             }
+            // The route says what the complete plans would.
+            debug_assert_eq!(run.route.skip, run.execution.skip().is_some());
+            debug_assert_eq!(
+                run.route.prepared_gathers,
+                run.execution.prefill_engram().is_some()
+            );
             Ok(())
         })();
         if let Err(error) = planned {
@@ -1025,7 +1048,7 @@ impl Instance {
             },
         );
         // Only a prefill gathers its logits rows; decode rows are its items.
-        let rows = if run.execution.skip().is_some() {
+        let rows = if run.route.skip {
             (0..run.head_rows).collect()
         } else if run.arena == PREFILL {
             run.inputs.logit_rows()
@@ -1067,7 +1090,7 @@ impl Instance {
                     .zero_device_buffer(stream, scratch.row_status)?;
                 self.services
                     .zero_device_buffer(stream, scratch.shared_row_status)?;
-                if run.execution.skip().is_some() {
+                if run.route.skip {
                     self.services
                         .zero_device_buffer(stream, scratch.index_status)?;
                 }
@@ -1110,7 +1133,7 @@ impl Instance {
                     &self.engram,
                     run.engram
                         .as_ref()
-                        .filter(|_| run.execution.prefill_engram().is_none() && !run.ar_engram),
+                        .filter(|_| !run.route.prepared_gathers && !run.ar_engram),
                     self.image,
                 ) {
                     let reason = run
@@ -1745,7 +1768,7 @@ impl Instance {
             .is_some_and(|gathers| gathers.begun_early())
             && !runs
                 .first()
-                .is_some_and(|run| run.phase.prefill() && run.execution.prefill_engram().is_some())
+                .is_some_and(|run| run.phase.prefill() && run.route.prepared_gathers)
         {
             self.log("DSpark prefill Engram began early for a step without prepared gathers");
             return BundleStatusV1::InternalError;
@@ -1755,7 +1778,7 @@ impl Instance {
         if self.mixed_engram_deferred()
             && !runs
                 .first()
-                .is_some_and(|run| run.phase.prefill() && run.execution.prefill_engram().is_some())
+                .is_some_and(|run| run.phase.prefill() && run.route.prepared_gathers)
         {
             self.log("DSpark mixed Engram rows have no prepared prefill gathers");
             return BundleStatusV1::InternalError;
@@ -1846,7 +1869,7 @@ impl Instance {
                                 .ok_or(BundleAbiError::InvalidRange("AR Engram hashes"))?,
                         )?;
                     }
-                    if run.execution.prefill_engram().is_some() {
+                    if run.route.prepared_gathers {
                         let gathers = self
                             .prefill_engram
                             .as_ref()
@@ -1863,7 +1886,7 @@ impl Instance {
                             self.log(&error);
                             BundleAbiError::Status(BundleStatusV1::BundleError)
                         })?;
-                    if run.execution.skip().is_none() {
+                    if !run.route.skip {
                         let live = if self.allocated_step().is_some() && run.inputs.verify {
                             run.phase.rows()
                         } else {
@@ -1906,7 +1929,7 @@ impl Instance {
                 if run.ar_engram {
                     self.finish_ar_engram()?;
                 }
-                if run.execution.prefill_engram().is_some() && self.dspark.is_none() {
+                if run.route.prepared_gathers && self.dspark.is_none() {
                     self.prefill_engram
                         .as_ref()
                         .expect("prepared prefill gather")
@@ -1971,11 +1994,7 @@ impl Instance {
         })?;
         // DSpark's per-phase status checks only save device rows. The
         // consolidated boundary above completes every consumer stream.
-        if self.dspark.is_some()
-            && runs
-                .iter()
-                .any(|run| run.execution.prefill_engram().is_some())
-        {
+        if self.dspark.is_some() && runs.iter().any(|run| run.route.prepared_gathers) {
             self.prefill_engram
                 .as_ref()
                 .expect("prepared prefill gather")
@@ -1997,7 +2016,7 @@ impl Instance {
                     if run.ar_engram {
                         self.finish_ar_engram()?;
                     }
-                    if run.execution.prefill_engram().is_some() {
+                    if run.route.prepared_gathers {
                         self.prefill_engram
                             .as_ref()
                             .expect("prepared prefill gather")

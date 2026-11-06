@@ -1540,6 +1540,9 @@ impl Instance {
         if self.ledger.step().is_some() {
             return BundleStatusV1::InvalidState;
         }
+        // A step that failed before its prefill launched left the templates
+        // its planning dropped.
+        self.plans.release_dropped();
         if let Err(error) = self.settle_prefill_engram() {
             self.log(&format!("prefill Engram: a failed step's uploads: {error}"));
             return status(error);
@@ -1824,6 +1827,10 @@ impl Instance {
             measure(times.as_deref_mut().map(|t| &mut t.submit_us), || {
                 self.launch(run)
             })?;
+            // The templates its planning dropped are freed while it runs.
+            if run.phase.prefill() {
+                self.plans.release_dropped();
+            }
             #[cfg(feature = "diagnostic-taps")]
             self.kv_taps(run, true)?;
             if run.media.is_some() {

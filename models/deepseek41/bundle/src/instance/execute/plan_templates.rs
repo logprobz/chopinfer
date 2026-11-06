@@ -28,6 +28,12 @@
 //! makes every reused Engram plan again, and refuses the step if either
 //! fresh plan differs. The kept plan stores no request data: anchor slot
 //! seeds and ledger request/boundary pairs are rebuilt for each step.
+//!
+//! Freeing a dropped template's launches takes about 4 ms at the served
+//! long-context shapes. With `dspark_early_prefill_plan` a dropped template
+//! waits until the step's prefill launched (`release`), so its freeing
+//! runs while the device works instead of before the launch; a step that
+//! fails before its launch leaves them to the next step's entry.
 
 use super::{PREFILL, Run, skip};
 use crate::instance::Instance;
@@ -37,6 +43,7 @@ use crate::program::Phase;
 use bundle_runtime::template::Counts;
 use bundle_runtime::template::Templates as Kept;
 use bundle_runtime::upload::InputLayout;
+use std::cell::RefCell;
 use std::rc::Rc;
 
 /// Everything but the positions a kept plan's launches were lowered from.
@@ -78,15 +85,56 @@ impl Key {
 /// (`fake_host_tests::prefill_plan_templates::template_memory`).
 pub(crate) const LIMIT: usize = 64;
 
+#[cfg(test)]
+thread_local! { static TEST_LIMIT: std::cell::Cell<usize> = const { std::cell::Cell::new(LIMIT) }; }
+
+/// Runs `run` with instances it creates keeping at most `limit` templates,
+/// so a test can drop templates in a few steps.
+#[cfg(test)]
+pub(crate) fn with_limit<T>(limit: usize, run: impl FnOnce() -> T) -> T {
+    struct Reset(usize);
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            TEST_LIMIT.set(self.0);
+        }
+    }
+    let _reset = Reset(TEST_LIMIT.replace(limit));
+    run()
+}
+
 pub(super) struct Templates {
     kept: Kept<Key, skip::Plan>,
+    /// Templates dropped to stay within the limit and held until the
+    /// step's prefill launched (`release`); empty unless `late`.
+    retired: RefCell<Vec<Rc<skip::Plan>>>,
+    late: bool,
 }
 
 impl Templates {
-    pub(super) fn new() -> Self {
+    /// Templates that free the ones they drop only once the step's prefill
+    /// launched when `late`.
+    pub(super) fn new(late: bool) -> Self {
+        #[cfg(test)]
+        let limit = TEST_LIMIT.get();
+        #[cfg(not(test))]
+        let limit = LIMIT;
         Self {
-            kept: Kept::new(LIMIT),
+            kept: Kept::new(limit),
+            retired: RefCell::new(Vec::new()),
+            late,
         }
+    }
+
+    /// Frees the templates this step dropped: after its prefill launched,
+    /// or at the next step's entry.
+    pub(super) fn release(&self) {
+        drop(self.retired.take());
+    }
+
+    /// The dropped templates held for the step's launch.
+    #[cfg(test)]
+    pub(super) fn retired(&self) -> usize {
+        self.retired.borrow().len()
     }
 
     #[cfg(test)]
@@ -119,7 +167,13 @@ impl Templates {
         }
         plan.keep_engram();
         let plan = Rc::new(plan);
-        let dropped = self.kept.keep(key, Rc::clone(&plan)).is_some();
+        let dropped = match self.kept.keep(key, Rc::clone(&plan)) {
+            Some(old) if self.late => {
+                self.retired.borrow_mut().push(old);
+                true
+            }
+            dropped => dropped.is_some(),
+        };
         let counts = self.kept.counts();
         let refused = if counts.refused > refused {
             ", its key's templates refused"
@@ -132,7 +186,7 @@ impl Templates {
              hits, {} misses, {} busy, {} refused, {} dropped",
             run.phase.rows(),
             self.kept.len(),
-            LIMIT,
+            self.kept.limit(),
             counts.hits,
             counts.misses,
             counts.busy,
@@ -141,6 +195,21 @@ impl Templates {
         ));
         Ok(plan)
     }
+}
+
+/// The dropped templates the instance `handle` holds for its next
+/// prefill's launch.
+#[cfg(test)]
+pub(crate) fn retired(handle: runtime_bundle_abi::BundleHandleV1) -> usize {
+    use bundle_runtime::entry::Bundle;
+    Instance::instances().with(|table| {
+        table
+            .borrow_mut()
+            .get_mut(handle)
+            .expect("a live instance")
+            .plans
+            .retired_templates()
+    })
 }
 
 /// What the templates of the instance `handle` did; read from a poisoned

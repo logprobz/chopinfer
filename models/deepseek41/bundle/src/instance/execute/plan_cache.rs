@@ -72,7 +72,12 @@ pub(crate) struct Cache {
 }
 
 impl Cache {
-    pub(crate) fn new(options: &model_deepseek41_contract::execution_options::Options) -> Self {
+    /// The cache of an instance with `options`, with the DSpark drafter
+    /// when `dspark`.
+    pub(crate) fn new(
+        options: &model_deepseek41_contract::execution_options::Options,
+        dspark: bool,
+    ) -> Self {
         let mode = if options.prefill_plan_cache_verify {
             Mode::Verify
         } else {
@@ -87,7 +92,7 @@ impl Cache {
             hits: Cell::new(0),
             misses: Cell::new(0),
             evictions: Cell::new(0),
-            templates: plan_templates::Templates::new(),
+            templates: plan_templates::Templates::new(dspark && options.dspark_early_prefill_plan),
         }
     }
 
@@ -100,6 +105,17 @@ impl Cache {
     #[cfg(test)]
     pub(super) fn template_counts(&self) -> bundle_runtime::template::Counts {
         self.templates.counts()
+    }
+
+    /// Frees the templates this step dropped (`plan_templates::Templates::release`).
+    pub(super) fn release_dropped(&self) {
+        self.templates.release();
+    }
+
+    /// The dropped templates held for the step's launch.
+    #[cfg(test)]
+    pub(super) fn retired_templates(&self) -> usize {
+        self.templates.retired()
     }
 
     /// Plans served from the cache and plans lowered for it.

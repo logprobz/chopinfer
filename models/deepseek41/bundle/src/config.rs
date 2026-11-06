@@ -426,6 +426,7 @@ pub(crate) mod tests {
             (DSPARK_MIXED_PREPARED_ENGRAM, true.into()),
             (DSPARK_EARLY_PREFILL_ENGRAM, true.into()),
             (DSPARK_EARLY_PREFILL_PLAN, true.into()),
+            (PREFILL_STREAMED_LOWERING, true.into()),
         ] {
             changed = with_option(changed, name, value);
         }
@@ -448,6 +449,7 @@ pub(crate) mod tests {
                 dspark_mixed_prepared_engram: true,
                 dspark_early_prefill_engram: true,
                 dspark_early_prefill_plan: true,
+                prefill_streamed_lowering: true,
             }
         );
         for (name, value) in [

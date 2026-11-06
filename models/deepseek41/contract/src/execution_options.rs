@@ -58,6 +58,10 @@ pub const DSPARK_EARLY_PREFILL_ENGRAM: &str = "dspark_early_prefill_engram";
 /// before the draft readback, and frees the plan templates that planning
 /// drops once the prefill launched.
 pub const DSPARK_EARLY_PREFILL_PLAN: &str = "dspark_early_prefill_plan";
+/// Candidate: an upper-skip prefill whose plan has no template lowers its
+/// body one layer at a time while it issues the units already lowered,
+/// instead of lowering the whole plan before its first launch.
+pub const PREFILL_STREAMED_LOWERING: &str = "prefill_streamed_lowering";
 /// Maximum prompt-ending items whose interior grid anchor one step retains.
 pub const MAX_ANCHOR_ITEMS: u32 = 8;
 pub const DEFAULT_PLANS: usize = 16;
@@ -83,9 +87,10 @@ pub struct Options {
     pub dspark_mixed_prepared_engram: bool,
     pub dspark_early_prefill_engram: bool,
     pub dspark_early_prefill_plan: bool,
+    pub prefill_streamed_lowering: bool,
 }
 
-pub fn declarations() -> [ModelOptionV1; 16] {
+pub fn declarations() -> [ModelOptionV1; 17] {
     [
         (
             DIAGNOSTIC_STEP_LOGS,
@@ -145,6 +150,10 @@ pub fn declarations() -> [ModelOptionV1; 16] {
         ),
         (
             PREFILL_PLAN_CACHE_VERIFY,
+            OptionDefinitionV1::Boolean { default: false },
+        ),
+        (
+            PREFILL_STREAMED_LOWERING,
             OptionDefinitionV1::Boolean { default: false },
         ),
         (
@@ -216,6 +225,7 @@ impl Options {
             dspark_mixed_prepared_engram: flag(DSPARK_MIXED_PREPARED_ENGRAM),
             dspark_early_prefill_engram: flag(DSPARK_EARLY_PREFILL_ENGRAM),
             dspark_early_prefill_plan: flag(DSPARK_EARLY_PREFILL_PLAN),
+            prefill_streamed_lowering: flag(PREFILL_STREAMED_LOWERING),
         })
     }
 }
@@ -338,6 +348,7 @@ mod tests {
             dspark_mixed_prepared_engram: false,
             dspark_early_prefill_engram: false,
             dspark_early_prefill_plan: false,
+            prefill_streamed_lowering: false,
         };
         assert_eq!(Options::read(&defaults).unwrap(), expected);
         assert_eq!(Options::read(&BTreeMap::new()).unwrap(), expected);
@@ -364,6 +375,7 @@ mod tests {
             (DSPARK_MIXED_PREPARED_ENGRAM.into(), "true".into()),
             (DSPARK_EARLY_PREFILL_ENGRAM.into(), "true".into()),
             (DSPARK_EARLY_PREFILL_PLAN.into(), "true".into()),
+            (PREFILL_STREAMED_LOWERING.into(), "true".into()),
         ]);
         let resolved = declaration.resolve(&overrides).unwrap();
         assert_eq!(
@@ -385,6 +397,7 @@ mod tests {
                 dspark_mixed_prepared_engram: true,
                 dspark_early_prefill_engram: true,
                 dspark_early_prefill_plan: true,
+                prefill_streamed_lowering: true,
             }
         );
         assert!(!declaration.is_qualified(&resolved));
@@ -412,6 +425,7 @@ mod tests {
             (DSPARK_MIXED_PREPARED_ENGRAM, "1"),
             (DSPARK_EARLY_PREFILL_ENGRAM, "1"),
             (DSPARK_EARLY_PREFILL_PLAN, "1"),
+            (PREFILL_STREAMED_LOWERING, "1"),
             (DSPARK_GRAPH_HANDLES_PER_RANK, "-1"),
             (DSPARK_GRAPH_HANDLES_PER_RANK, "9223372036854775808"),
         ] {

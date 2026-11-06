@@ -8,7 +8,13 @@ struct Fixture {
 }
 
 fn fixture() -> Fixture {
+    fixture_with(|| {})
+}
+
+/// [`fixture`], after `driver` set the fake driver up.
+fn fixture_with(driver: impl FnOnce()) -> Fixture {
     ffi::fake_driver_reset();
+    driver();
     let driver = Driver::initialize().unwrap();
     let contexts = [
         driver.retain_primary_context(0).unwrap(),
@@ -228,4 +234,35 @@ fn host_transform_uploads_initialized_bytes_in_every_mode() {
             }
         }
     }
+}
+
+/// Work that leaves its outputs to `OnFailure` sees them initialized
+/// (zeroed at allocation), though the driver left the pinned bytes holding
+/// whatever they held.
+#[test]
+fn host_transform_outputs_are_initialized_before_any_work_writes_them() {
+    let mut f = fixture_with(|| ffi::fake_driver_fill_host_allocations(0xa5));
+    f.transform.set_init(HostTransformInit::OnFailure);
+    f.transform
+        .enqueue(
+            &f.source,
+            0,
+            8,
+            &f.owners[0],
+            &f.targets,
+            |input, output| {
+                if output
+                    .iter()
+                    .any(|output| output.iter().any(|&byte| byte != 0))
+                {
+                    return Err("uninitialized pinned output".into());
+                }
+                for output in output.iter_mut() {
+                    output.copy_from_slice(input);
+                }
+                Ok(())
+            },
+        )
+        .unwrap();
+    assert_eq!(finish(&mut f).failure, None);
 }

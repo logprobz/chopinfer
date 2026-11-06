@@ -505,6 +505,8 @@ unsafe extern "C" {
     fn runtime_cuda_fake_call_count(operation: c_int) -> usize;
     fn runtime_cuda_fake_ordering_violations() -> usize;
     fn runtime_cuda_fake_set_api_call_copies(enabled: c_int);
+    #[cfg(test)]
+    fn runtime_cuda_fake_fill_host_allocations(byte: c_int);
     fn runtime_cuda_fake_set_visible_devices(count: c_int);
     #[cfg(test)]
     fn runtime_cuda_fake_encoded_tensor_map(
@@ -595,6 +597,15 @@ pub fn fake_driver_ordering_violations() -> usize {
 pub fn fake_driver_set_api_call_copies(enabled: bool) {
     // SAFETY-REVIEWED: the no-device test stub stores one integer flag.
     unsafe { runtime_cuda_fake_set_api_call_copies(c_int::from(enabled)) }
+}
+
+/// Makes the no-device stub's new host allocations on this thread hold
+/// `byte`, as the real driver's hold whatever they held, instead of zeros,
+/// until the next reset.
+#[cfg(all(test, feature = "fake-driver-tests"))]
+pub fn fake_driver_fill_host_allocations(byte: u8) {
+    // SAFETY-REVIEWED: the no-device test stub stores one thread-local integer.
+    unsafe { runtime_cuda_fake_fill_host_allocations(c_int::from(byte)) }
 }
 
 /// Makes the no-device stub show this thread `count` synthetic devices
@@ -964,8 +975,13 @@ impl PinnedAllocation {
         let mut pointer = ptr::null_mut();
         // SAFETY-REVIEWED: the shim validates byte length and initializes one pointer.
         let code = result_code(unsafe { runtime_cuda_host_alloc(&mut pointer, bytes) });
-        let allocation =
-            (code == CUDA_SUCCESS && !pointer.is_null()).then_some(Self { pointer, bytes });
+        let allocation = (code == CUDA_SUCCESS && !pointer.is_null()).then(|| {
+            // SAFETY-REVIEWED: the driver returned `bytes` writable bytes that
+            // nothing references yet and that it does not initialize. They are
+            // zeroed once here, before any slice of them is formed.
+            unsafe { ptr::write_bytes(pointer.cast::<u8>(), 0, bytes) };
+            Self { pointer, bytes }
+        });
         (code, allocation)
     }
 
@@ -1006,13 +1022,18 @@ impl MappedHostAllocation {
         let code = result_code(unsafe {
             runtime_cuda_host_alloc_mapped(&mut pointer, &mut device, bytes)
         });
-        let allocation =
-            (code == CUDA_SUCCESS && !pointer.is_null() && device != 0).then_some(Self {
+        let allocation = (code == CUDA_SUCCESS && !pointer.is_null() && device != 0).then(|| {
+            // SAFETY-REVIEWED: the driver returned `bytes` writable host bytes
+            // that nothing references yet and that it does not initialize. They
+            // are zeroed once here, before any slice of them is formed.
+            unsafe { ptr::write_bytes(pointer.cast::<u8>(), 0, bytes) };
+            Self {
                 pointer,
                 device,
                 bytes,
                 freed: std::cell::Cell::new(false),
-            });
+            }
+        });
         (code, allocation)
     }
 

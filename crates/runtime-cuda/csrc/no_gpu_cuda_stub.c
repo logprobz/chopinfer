@@ -48,6 +48,9 @@ static _Thread_local size_t ordering_violations;
    copy that reads its source during the call may. Such a write is unordered
    against every stream, its own included. */
 static _Thread_local int api_call_copies;
+/* The byte new host allocations hold, or -1 for zeros: the real driver
+   leaves them uninitialized. */
+static _Thread_local int host_fill = -1;
 /* When not negative, this thread sees synthetic GPUs 0..count-1 whatever
    CUDA_VISIBLE_DEVICES says, so a test does not depend on its caller's
    environment. Negative reads the variable, as the real driver does. */
@@ -180,6 +183,7 @@ void runtime_cuda_fake_reset(void) {
   loaded_modules = 0;
   ordering_violations = 0;
   api_call_copies = 0;
+  host_fill = -1;
   visible_override = -1;
   host_copy_polls = 0;
   host_copy_sequence = 0;
@@ -212,6 +216,17 @@ size_t runtime_cuda_fake_ordering_violations(void) {
 
 void runtime_cuda_fake_set_api_call_copies(int enabled) {
   api_call_copies = enabled != 0;
+}
+
+void runtime_cuda_fake_fill_host_allocations(int byte) {
+  host_fill = byte < 0 ? -1 : byte & 0xff;
+}
+
+static void* host_bytes(size_t bytes) {
+  if (host_fill < 0) return calloc(1, bytes);
+  void* address = malloc(bytes);
+  if (address) memset(address, host_fill, bytes);
+  return address;
 }
 
 void runtime_cuda_fake_set_visible_devices(int count) {
@@ -601,14 +616,14 @@ int runtime_cuda_host_alloc(void** address, size_t bytes) {
   if (!address || !bytes) return 1;
   int result = result_for(16);
   if (result) return result;
-  *address = calloc(1, bytes);
+  *address = host_bytes(bytes);
   return *address ? 0 : 2;
 }
 int runtime_cuda_host_alloc_mapped(void** address, uint64_t* device, size_t bytes) {
   if (!address || !device || !bytes) return 1;
   int result = result_for(16);
   if (result) return result;
-  *address = calloc(1, bytes);
+  *address = host_bytes(bytes);
   *device = (uint64_t)(uintptr_t)*address;
   return *address ? 0 : 2;
 }

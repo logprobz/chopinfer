@@ -53,7 +53,7 @@ pub(crate) struct Deferred {
     pub mixed: Option<Mixed>,
 }
 
-/// A mixed step's verify-row gathers (`dspark_mixed_prepared_engram`),
+/// A mixed step's verify-row gathers (`Instance::admits_mixed_engram`),
 /// which its prefill begins after its last Engram join: the layers begun,
 /// and the joins the verify launch made, layer by layer and each layer
 /// rank by rank, so a failed step's settlement makes only the rest.

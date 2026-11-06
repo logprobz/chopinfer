@@ -63,11 +63,6 @@ pub const DSPARK_MOE_DIRECT: &str = "dspark_moe_direct";
 /// the drafter table (`hc.draft_admit.verify`), so their stage boundaries
 /// fuse as the measured rows' do.
 pub const DSPARK_HC_DRAFT_ROWS: &str = "dspark_hc_draft_rows";
-/// Candidate: a mixed DSpark step whose prefill takes the prepared-gather
-/// DMA route gathers its graphed verify rows' Engram through the cycle's
-/// prepared layer gathers, begun after the prefill's last Engram join,
-/// instead of synchronously before the step.
-pub const DSPARK_MIXED_PREPARED_ENGRAM: &str = "dspark_mixed_prepared_engram";
 /// Candidate: a DSpark step's prefill hashes its rows' Engram ids and
 /// begins its prepared gathers before catch-up and drafting, instead of
 /// after the draft readback and the prefill's lowering.
@@ -105,13 +100,12 @@ pub struct Options {
     pub dspark_confidence_staged: bool,
     pub dspark_moe_direct: bool,
     pub dspark_hc_draft_rows: bool,
-    pub dspark_mixed_prepared_engram: bool,
     pub dspark_early_prefill_engram: bool,
     pub dspark_early_prefill_plan: bool,
     pub prefill_streamed_lowering: bool,
 }
 
-pub fn declarations() -> [ModelOptionV1; 20] {
+pub fn declarations() -> [ModelOptionV1; 19] {
     [
         (
             DIAGNOSTIC_STEP_LOGS,
@@ -148,10 +142,6 @@ pub fn declarations() -> [ModelOptionV1; 20] {
         (
             DSPARK_MARKOV_STAGED,
             OptionDefinitionV1::Boolean { default: false },
-        ),
-        (
-            DSPARK_MIXED_PREPARED_ENGRAM,
-            OptionDefinitionV1::Boolean { default: true },
         ),
         (
             DSPARK_MOE_DIRECT,
@@ -258,7 +248,6 @@ impl Options {
             dspark_confidence_staged: flag(DSPARK_CONFIDENCE_STAGED),
             dspark_hc_fusion: flag(DSPARK_HC_FUSION),
             dspark_markov_staged: flag(DSPARK_MARKOV_STAGED),
-            dspark_mixed_prepared_engram: flag(DSPARK_MIXED_PREPARED_ENGRAM),
             dspark_early_prefill_engram: flag(DSPARK_EARLY_PREFILL_ENGRAM),
             dspark_early_prefill_plan: flag(DSPARK_EARLY_PREFILL_PLAN),
             prefill_streamed_lowering: flag(PREFILL_STREAMED_LOWERING),
@@ -364,6 +353,14 @@ mod tests {
     }
 
     #[test]
+    fn removed_mixed_prepared_engram_option_is_rejected() {
+        for value in ["false", "true"] {
+            let options = BTreeMap::from([("dspark_mixed_prepared_engram".into(), value.into())]);
+            assert!(declaration().resolve(&options).is_err());
+        }
+    }
+
+    #[test]
     fn declared_and_legacy_defaults_keep_the_served_bounds_and_quiet_logs() {
         let declaration = declaration();
         let defaults = declaration.resolve(&BTreeMap::new()).unwrap();
@@ -384,7 +381,6 @@ mod tests {
             dspark_confidence_staged: false,
             dspark_hc_fusion: false,
             dspark_markov_staged: false,
-            dspark_mixed_prepared_engram: true,
             dspark_early_prefill_engram: true,
             dspark_early_prefill_plan: true,
             prefill_streamed_lowering: true,
@@ -414,7 +410,6 @@ mod tests {
             (DSPARK_CONFIDENCE_STAGED.into(), "true".into()),
             (DSPARK_HC_FUSION.into(), "true".into()),
             (DSPARK_MARKOV_STAGED.into(), "true".into()),
-            (DSPARK_MIXED_PREPARED_ENGRAM.into(), "false".into()),
             (DSPARK_EARLY_PREFILL_ENGRAM.into(), "false".into()),
             (DSPARK_EARLY_PREFILL_PLAN.into(), "false".into()),
             (PREFILL_STREAMED_LOWERING.into(), "false".into()),
@@ -439,7 +434,6 @@ mod tests {
                 dspark_confidence_staged: true,
                 dspark_hc_fusion: true,
                 dspark_markov_staged: true,
-                dspark_mixed_prepared_engram: false,
                 dspark_early_prefill_engram: false,
                 dspark_early_prefill_plan: false,
                 prefill_streamed_lowering: false,
@@ -470,7 +464,6 @@ mod tests {
             (DSPARK_CONFIDENCE_STAGED, "1"),
             (DSPARK_HC_FUSION, "1"),
             (DSPARK_MARKOV_STAGED, "1"),
-            (DSPARK_MIXED_PREPARED_ENGRAM, "1"),
             (DSPARK_EARLY_PREFILL_ENGRAM, "1"),
             (DSPARK_EARLY_PREFILL_PLAN, "1"),
             (PREFILL_STREAMED_LOWERING, "1"),

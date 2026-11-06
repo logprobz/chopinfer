@@ -16,7 +16,7 @@ use crate::fake_host_tests::prefill_engram::{
 use crate::instance::execute::plan_timing::restore_without_snapshot;
 use model_deepseek41_contract::execution_options::{
     DSPARK_EARLY_PREFILL_ENGRAM, DSPARK_EARLY_PREFILL_PLAN, DSPARK_GRAPH_HANDLES_PER_RANK,
-    DSPARK_MIXED_PREPARED_ENGRAM, PREFILL_PLAN_CACHE_VERIFY, PREFILL_STREAMED_LOWERING,
+    PREFILL_PLAN_CACHE_VERIFY, PREFILL_STREAMED_LOWERING,
 };
 use runtime_bundle_sdk::prefill::{Boundary, encode};
 
@@ -435,7 +435,6 @@ fn mixed_began_after_device_work(run: &Run) -> Vec<bool> {
 /// runs the default each comparison was written against.
 fn opted_out<'a>(options: &[(&'a str, serde_json::Value)]) -> Vec<(&'a str, serde_json::Value)> {
     [
-        (DSPARK_MIXED_PREPARED_ENGRAM, false.into()),
         (DSPARK_EARLY_PREFILL_ENGRAM, false.into()),
         (DSPARK_EARLY_PREFILL_PLAN, false.into()),
         (PREFILL_STREAMED_LOWERING, false.into()),
@@ -457,8 +456,8 @@ fn with(
 /// template (and cancelled and run again), the 511 rows below upper-skip
 /// DMA, a 2048-row miss, the 4097 rows past a 4096-row part, an 8000-row
 /// prefill near the chunk, two prefill items in one step, and a prefill
-/// step without verify items; graphed, eager (no graph handles), with
-/// every reused plan lowered again, and beside the mixed verify-row
+/// step without verify items; graphed, eager (no graph handles) and with
+/// every reused plan lowered again, each beside the mixed verify-row
 /// gathers. Every prompt and mixed step begins early, after nothing.
 #[test]
 fn early_begins_move_only_the_prefill_gather_begin() {
@@ -488,7 +487,6 @@ fn early_begins_move_only_the_prefill_gather_begin() {
         ("graphed", vec![]),
         ("eager", vec![(DSPARK_GRAPH_HANDLES_PER_RANK, 0.into())]),
         ("verified", vec![(PREFILL_PLAN_CACHE_VERIFY, true.into())]),
-        ("mixed", vec![(DSPARK_MIXED_PREPARED_ENGRAM, true.into())]),
     ] {
         let off = schedule.run(&options);
         let early = schedule.run(&with(&options, &on));

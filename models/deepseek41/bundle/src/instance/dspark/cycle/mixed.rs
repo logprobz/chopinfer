@@ -1,4 +1,4 @@
-//! A mixed step's verify-row Engram (`dspark_mixed_prepared_engram`). The
+//! A mixed step's verify-row Engram (`Instance::admits_mixed_engram`). The
 //! host hashes the verify rows as for the synchronous gather; the cycle's
 //! prepared layer gathers copy them once the step's prefill joined its
 //! last Engram layer, so the host gathers them while the rest of the

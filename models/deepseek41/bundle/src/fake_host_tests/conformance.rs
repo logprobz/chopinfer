@@ -969,19 +969,9 @@ pub(super) fn assert_sync_engram(
 }
 
 fn dspark_instance(host: &Rc<Host>) -> BundleInstanceV1 {
-    dspark_instance_with(host, &[])
-}
-
-fn dspark_instance_with(
-    host: &Rc<Host>,
-    options: &[(&str, serde_json::Value)],
-) -> BundleInstanceV1 {
     host.drafter.set(true);
     host.speculation.set(Some((3, 32)));
-    let mut record = crate::config::tests::record(&host.shape, host.kv, 4, false);
-    for (name, value) in options {
-        record = crate::config::tests::with_option(record, name, value.clone());
-    }
+    let record = crate::config::tests::record(&host.shape, host.kv, 4, false);
     api()
         .create(
             HostServicesTableV1::new(Rc::new(dspark::host::MappedHost::new(Rc::clone(host)))),
@@ -1050,48 +1040,34 @@ fn prefill_engram_keeps_taps_reason() {
     });
 }
 
-/// With the `dspark_mixed_prepared_engram` candidate too: a three-row
-/// prefill is outside its admitted range, so the mixed step's verify rows
-/// keep the synchronous gather (`fake_host_tests::dspark::mixed_engram`).
+/// A three-row prefill is outside the prepared verify-row gathers'
+/// admitted range, so the mixed step's verify rows keep the synchronous
+/// gather (`fake_host_tests::dspark::mixed_engram`).
 #[test]
 fn engram_reasons_distinguish_mixed_and_host_targets() {
-    for candidate in [false, true] {
-        bundle_runtime::routes::with_logging(|| {
-            let host = FakeHost::new(Shape::new(&FLASH, Ranks::TP4).unwrap(), KV_LAYOUTS[0]);
-            let mut instance = if candidate {
-                dspark_instance_with(
-                    &host,
-                    &[(
-                        model_deepseek41_contract::execution_options::DSPARK_MIXED_PREPARED_ENGRAM,
-                        true.into(),
-                    )],
-                )
-            } else {
-                dspark_instance(&host)
-            };
-            let first =
-                step_with_stride(&[(701, 0, 0, &[1, 2, 3], Phase::Prefill)], false, 8, None);
-            assert_sync_engram(&host, &mut instance, &first, &[]);
-            let mixed = step_with_stride(
-                &[
-                    (702, 1, 0, &[1, 2, 3], Phase::Prefill),
-                    (701, 0, 3, &[4], Phase::Decode),
-                ],
-                false,
-                8,
-                None,
-            );
-            assert_sync_engram(&host, &mut instance, &mixed, &["mixed_target"]);
-            let verify =
-                step_with_stride(&[(701, 0, 4, &[5, 6, 7, 8], Phase::Verify)], false, 8, None);
-            assert_sync_engram(&host, &mut instance, &verify, &["host_target"]);
-            for request in [701, 702] {
-                instance.retire_request(request).unwrap();
-            }
-            instance.destroy().unwrap();
-            assert_eq!(host.acquired.get(), host.released.get());
-        });
-    }
+    bundle_runtime::routes::with_logging(|| {
+        let host = FakeHost::new(Shape::new(&FLASH, Ranks::TP4).unwrap(), KV_LAYOUTS[0]);
+        let mut instance = dspark_instance(&host);
+        let first = step_with_stride(&[(701, 0, 0, &[1, 2, 3], Phase::Prefill)], false, 8, None);
+        assert_sync_engram(&host, &mut instance, &first, &[]);
+        let mixed = step_with_stride(
+            &[
+                (702, 1, 0, &[1, 2, 3], Phase::Prefill),
+                (701, 0, 3, &[4], Phase::Decode),
+            ],
+            false,
+            8,
+            None,
+        );
+        assert_sync_engram(&host, &mut instance, &mixed, &["mixed_target"]);
+        let verify = step_with_stride(&[(701, 0, 4, &[5, 6, 7, 8], Phase::Verify)], false, 8, None);
+        assert_sync_engram(&host, &mut instance, &verify, &["host_target"]);
+        for request in [701, 702] {
+            instance.retire_request(request).unwrap();
+        }
+        instance.destroy().unwrap();
+        assert_eq!(host.acquired.get(), host.released.get());
+    });
 }
 
 impl Served {

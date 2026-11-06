@@ -1,6 +1,6 @@
-//! A mixed step's verify rows beside an upper-skip DMA prefill, with the
-//! `dspark_mixed_prepared_engram` candidate: the cycle's prepared gathers
-//! land the bytes the synchronous gather lands, begin once the prefill
+//! A mixed step's verify rows beside an upper-skip DMA prefill: the
+//! cycle's prepared gathers land the bytes the synchronous gather (the
+//! route without upper-skip DMA) lands, begin once the prefill
 //! joined its last Engram layer, and join each layer before its verify
 //! consumer, in captured and replayed verify graphs and in eager pieces.
 //! Steps outside the admitted range keep the synchronous gather, and a
@@ -13,9 +13,7 @@ use crate::fake_host_tests::media;
 use crate::fake_host_tests::prefill_engram::{
     create_backend_with_options, create_media_backend_with_options,
 };
-use model_deepseek41_contract::execution_options::{
-    DSPARK_GRAPH_HANDLES_PER_RANK, DSPARK_MIXED_PREPARED_ENGRAM,
-};
+use model_deepseek41_contract::execution_options::DSPARK_GRAPH_HANDLES_PER_RANK;
 use runtime_bundle_sdk::prefill::{Boundary, encode};
 
 /// The request of the verify item in slot `slot`.
@@ -237,11 +235,10 @@ fn mixed_verify_rows_land_the_synchronous_bytes_after_the_last_prefill_join() {
                 })
             };
             let on = run(&options);
-            options.push((DSPARK_MIXED_PREPARED_ENGRAM, false.into()));
-            let off = run(&options);
+            let off = crate::instance::execute::skip::with_dma(false, || run(&options));
             // Each step's verify rows take one route per Engram layer: the
-            // prepared gather with the candidate, the synchronous one per
-            // rank and plane without it.
+            // prepared gather beside an upper-skip DMA prefill, the
+            // synchronous one per rank and plane without upper-skip DMA.
             let layers = u64::from(FLASH.engram_layers());
             assert_eq!(
                 launches(&off, "engram/sync/mixed_target"),
@@ -347,7 +344,6 @@ fn mixed_verify_rows_land_the_synchronous_bytes_after_the_last_prefill_join() {
 /// prefill without upper-skip DMA keep the synchronous gather.
 #[test]
 fn mixed_steps_outside_the_admitted_range_keep_the_synchronous_gather() {
-    let on = [(DSPARK_MIXED_PREPARED_ENGRAM, true.into())];
     for (verify_rows, widths, prefill, dma) in [
         (32, vec![4; 8], 511, true),
         (192, vec![6; 11], 512, true),
@@ -358,7 +354,7 @@ fn mixed_steps_outside_the_admitted_range_keep_the_synchronous_gather() {
                 verify_rows,
                 &widths,
                 &[prefill],
-                &on,
+                &[],
                 MappedHost::with_row_ids,
             )
         };
@@ -378,12 +374,11 @@ fn mixed_steps_outside_the_admitted_range_keep_the_synchronous_gather() {
 /// gathers and leaves no handle behind.
 #[test]
 fn a_failed_verify_join_settles_the_mixed_gathers() {
-    let options = [(DSPARK_MIXED_PREPARED_ENGRAM, true.into())];
     // Eight three-token prompts on `backend`, and the waits they made.
     let prompted = |backend: fn(Rc<Host>) -> MappedHost| {
         let host = host(32);
         let mut instance =
-            create_backend_with_options(&host, true, backend(Rc::clone(&host)), &options).unwrap();
+            create_backend_with_options(&host, true, backend(Rc::clone(&host)), &[]).unwrap();
         for slot in 0..8 {
             execute(&mut instance, &host, &prompt(verifier(slot), slot));
             instance.commit().unwrap();
@@ -466,7 +461,7 @@ fn an_instance_serving_images_admits_text_only_mixed_steps() {
         let mut instance = create_media_backend_with_options(
             &host,
             MappedHost::with_row_ids(Rc::clone(&host)),
-            &[(DSPARK_MIXED_PREPARED_ENGRAM, true.into())],
+            &[],
         )
         .unwrap_or_else(|e| panic!("{e:?}: {:?}", host.logs.borrow()));
         for slot in 0..8 {

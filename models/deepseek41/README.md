@@ -155,7 +155,6 @@ them. A non-default value is unqualified.
 | `dspark_hc_draft_rows` | `false` | Candidate, with `dspark_hc_fusion`: drafter forwards of one to six items (5 to 30 block rows) admit the HC finish route through the drafter's own table, so their stage boundaries fuse too. Bitwise equal to the default; not adopted. |
 | `dspark_hc_fusion` | `false` | Candidate: the drafter's stage boundaries fuse their all-reduce round, expansion, next mixer and input norm where the finish route admits the forward's rows (7 to 12 items), as the backbone's do. Bitwise equal to the default; not adopted. |
 | `dspark_markov_staged` | `false` | Candidate: drafter Markov steps of two or more items load each thread's weight chain into registers before the dependency wait and read each position's logits in place, with no row copy. Bitwise equal to the default; not adopted. |
-| `dspark_mixed_prepared_engram` | `true` | Candidate: a text-only mixed DSpark step whose prefill of 512 to 8192 rows takes the prepared-gather DMA route gathers its graphed verify rows (at most 64) through the cycle's prepared layer gathers, begun after the prefill's last Engram join, instead of synchronously before the step (`engram/sync/mixed_target`). Not yet measured. |
 | `dspark_moe_direct` | `false` | Candidate: drafter forwards whose block rows the drafter table admits (`moe.direct_drafter.verify`) run the routed experts through the direct path instead of the expert chains. Bitwise equal to the default; not adopted. |
 | `phased_decode_reduce` | `false` | Candidate: Flash TP4 decode and verify all-reduces whose round no HC boundary takes launch the phased F32 rounding entries, over comm state of their own, instead of the F32 reduce-scatter, all-gather and round row. They give the same bits; the deferred pairs and prefill are unchanged. Not adopted. |
 | `prefill_chunk_tokens` | `8192` | Guaranteed chunk ends: 0, 2048 or 8192 tokens. |
@@ -220,6 +219,14 @@ For untimed transition diagnostics, `state-capture` and
 `CHOPINFER_DSPARK_STATE_DIR` record selected before-draft/after-commit
 boundaries. `diagnostic_step_logs` defaults to false and controls step and
 confidence JSON, without changing confidence computation.
+
+A text-only mixed DSpark step whose prefill takes the prepared-gather DMA
+route (one request of 512 to 8192 rows at TP4, beside a graphed verify
+phase of at most 64 rows) gathers its verify rows' Engram through the
+cycle's prepared layer gathers, begun once the prefill joined its last
+Engram layer, instead of synchronously before the step. Every other mixed
+step keeps the synchronous gather. Adopted on 2026-11-06 with the other
+DSpark prefill steps ([served timing](#served-timing)).
 
 ## Reference
 

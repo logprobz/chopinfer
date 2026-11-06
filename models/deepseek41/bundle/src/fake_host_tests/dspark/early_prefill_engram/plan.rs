@@ -41,8 +41,8 @@ fn mixed_steps(run: &Run) -> u64 {
 
 /// The early Engram begin's schedules (template reuse and misses, 511 to
 /// 8000 rows, two prefill items, a prefill step without verify rows, a
-/// cancel and its retry; graphed, eager, every reused plan lowered again
-/// and beside the mixed verify-row gathers), with and without the early
+/// cancel and its retry; graphed, eager and every reused plan lowered
+/// again, each beside the mixed verify-row gathers), with and without the early
 /// begin in both arms: every mixed step plans early, and nothing else.
 #[test]
 fn early_plans_issue_the_default_journal() {
@@ -73,7 +73,6 @@ fn early_plans_issue_the_default_journal() {
         ("graphed", vec![]),
         ("eager", vec![(DSPARK_GRAPH_HANDLES_PER_RANK, 0.into())]),
         ("verified", vec![(PREFILL_PLAN_CACHE_VERIFY, true.into())]),
-        ("mixed", vec![(DSPARK_MIXED_PREPARED_ENGRAM, true.into())]),
         ("early begin", early.to_vec()),
         (
             "early begin, verified",
@@ -263,7 +262,7 @@ fn step_shape_records_count_each_steps_template_reuse() {
 
 /// On an instance that also serves images, as every served instance does,
 /// text-only mixed steps take the prepared verify-row gathers
-/// (`dspark_mixed_prepared_engram` admits them per step). Beside those
+/// (`admits_mixed_engram` admits them per step). Beside those
 /// gathers the early begin moves only the prefill gathers' begin, the
 /// early plan plans every mixed step while its drafter runs and issues the
 /// default's journal, and both together issue the early begin's journal.
@@ -281,7 +280,7 @@ fn early_candidates_beside_mixed_gathers_on_an_instance_serving_images() {
         restored: &[],
         steps: &steps,
     };
-    let mixed = [(DSPARK_MIXED_PREPARED_ENGRAM, true.into())];
+    let mixed: [(&str, serde_json::Value); 0] = [];
     let begin = with(&mixed, &[(DSPARK_EARLY_PREFILL_ENGRAM, true.into())]);
     let plan = [(DSPARK_EARLY_PREFILL_PLAN, true.into())];
     // The prepared verify-row gathers each step launched, as the route

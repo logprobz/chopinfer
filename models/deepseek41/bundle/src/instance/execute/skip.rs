@@ -104,6 +104,17 @@ struct Freed;
 #[cfg(test)]
 pub(super) type LoweredGroup = (Option<u32>, Vec<usize>, std::time::Duration);
 
+/// A lowering in groups (`Plan::lower_in_groups`): its groups, and the
+/// median host times of its layout and of its finish (the head, copies,
+/// collective checks and DMA plan).
+#[cfg(test)]
+pub(super) struct InGroups {
+    pub groups: Vec<LoweredGroup>,
+    pub layout: std::time::Duration,
+    pub finish: std::time::Duration,
+    pub plan: Plan,
+}
+
 #[cfg(test)]
 impl Drop for Freed {
     fn drop(&mut self) {
@@ -426,24 +437,32 @@ impl Plan {
             .collect()
     }
 
-    /// Lowers the plan of `run` one group at a time, `repeats` times: each
-    /// group's layer (`Lowerer::lowered`), every rank's body launches after
-    /// it and its median host time, then the finished plan.
+    /// Lowers the plan of `run` one group at a time, `repeats` times
+    /// (`InGroups`): each group's layer (`Lowerer::lowered`), every rank's
+    /// body launches after it and its median host time.
     #[cfg(test)]
     pub(super) fn lower_in_groups(
         instance: &Instance,
         run: &Run,
         repeats: usize,
-    ) -> Result<(Vec<LoweredGroup>, Self), String> {
-        let layout = Layout::of(instance, run)?;
+    ) -> Result<InGroups, String> {
+        use std::time::{Duration, Instant};
+        let median = |times: &mut Vec<Duration>| {
+            times.sort_unstable();
+            times[times.len() / 2]
+        };
         let mut groups = Vec::new();
-        let mut times: Vec<Vec<std::time::Duration>> = Vec::new();
-        let mut lowerer = None;
+        let mut times: Vec<Vec<Duration>> = Vec::new();
+        let (mut layouts, mut finishes) = (Vec::new(), Vec::new());
+        let mut plan = None;
         for _ in 0..repeats.max(1) {
+            let started = Instant::now();
+            let layout = Layout::of(instance, run)?;
+            layouts.push(started.elapsed());
             let mut lowering = Lowerer::new(instance, run, &layout)?;
             groups.clear();
             for at in 0.. {
-                let started = std::time::Instant::now();
+                let started = Instant::now();
                 if !lowering.lower_next(instance, run, &layout)? {
                     break;
                 }
@@ -454,20 +473,21 @@ impl Plan {
                 times[at].push(elapsed);
                 groups.push(lowering.lowered(&layout));
             }
-            lowerer = Some(lowering);
+            let started = Instant::now();
+            plan = Some(lowering.finish(instance, run, &layout)?);
+            finishes.push(started.elapsed());
         }
-        let plan = lowerer
-            .expect("one lowering")
-            .finish(instance, run, &layout)?;
         let groups = groups
             .into_iter()
-            .zip(times)
-            .map(|((launches, layer), mut times)| {
-                times.sort_unstable();
-                (layer, launches, times[times.len() / 2])
-            })
+            .zip(&mut times)
+            .map(|((launches, layer), times)| (layer, launches, median(times)))
             .collect();
-        Ok((groups, plan))
+        Ok(InGroups {
+            groups,
+            layout: median(&mut layouts),
+            finish: median(&mut finishes),
+            plan: plan.expect("one lowering"),
+        })
     }
 
     /// Rank `rank`'s body launches as (symbol, stage), then its head's

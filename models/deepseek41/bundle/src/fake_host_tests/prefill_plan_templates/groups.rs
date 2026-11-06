@@ -19,6 +19,8 @@ fn each_group_lowers_whole_layers_on_every_rank() {
             let request = batch(&[chunk(1, 0, 100_032, rows)], &[], false).0;
             let plan_timing::InGroups {
                 groups,
+                layout,
+                finish,
                 stages,
                 launches,
             } = plan_timing::lower_in_groups(instance.handle(), &request, repeats)
@@ -51,9 +53,11 @@ fn each_group_lowers_whole_layers_on_every_rank() {
                     .collect::<Vec<_>>()
                     .join(" ");
                 println!(
-                    "{what}: {:.3} ms in {} groups: {row}",
+                    "{what}: layout {:.3} ms, {:.3} ms in {} groups, finish {:.3} ms: {row}",
+                    ms(layout),
                     ms(total),
-                    groups.len()
+                    groups.len(),
+                    ms(finish)
                 );
             }
         }

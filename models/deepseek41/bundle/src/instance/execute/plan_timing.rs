@@ -143,6 +143,11 @@ pub(crate) struct Group {
 /// A lowering in groups (`lower_in_groups`).
 pub(crate) struct InGroups {
     pub groups: Vec<Group>,
+    /// The median host time of the layout.
+    pub layout: Duration,
+    /// The median host time of the head, copies, collective checks and
+    /// DMA plan after the last group.
+    pub finish: Duration,
     /// Rank 0's body stages of the finished plan.
     pub stages: Vec<crate::program::Stage>,
     /// Each rank's body launches of the finished plan.
@@ -166,7 +171,12 @@ pub(crate) fn lower_in_groups(
         let run = instance
             .plan_run(step.prefill, None, hashed)
             .map_err(|e| format!("plan: {e:?}"))?;
-        let (groups, plan) = skip::Plan::lower_in_groups(instance, &run, repeats)?;
+        let skip::InGroups {
+            groups,
+            layout,
+            finish,
+            plan,
+        } = skip::Plan::lower_in_groups(instance, &run, repeats)?;
         let groups = groups
             .into_iter()
             .map(|(layer, launches, elapsed)| Group {
@@ -186,6 +196,8 @@ pub(crate) fn lower_in_groups(
             .collect();
         Ok(InGroups {
             groups,
+            layout,
+            finish,
             stages,
             launches,
         })

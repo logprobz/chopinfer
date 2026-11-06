@@ -167,9 +167,7 @@ pub fn sealed() -> LabResult<(Value, Banks)> {
 fn sealed_from(ready: Option<PathBuf>, banks: Option<PathBuf>) -> LabResult<(Value, Banks)> {
     let named = |var: &str, path: Option<PathBuf>, what: &str| -> LabResult<PathBuf> {
         let path = path.ok_or_else(|| {
-            format!(
-                "{var} is unset; it must name {what} (see `captured::sealed`)"
-            )
+            format!("{var} is unset; it must name {what} (see `captured::sealed`)")
         })?;
         if !path.exists() {
             return Err(format!(

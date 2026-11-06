@@ -33,9 +33,8 @@
       "graph_memory_reserve_mib": 832,
       "status": "qualified",
       "evidence": [
-        "docs/serving-profiles.md#final-gate-2026-10-11",
-        "docs/serving-profiles.md#glm-evidence",
-        "models/glm5next/README.md#serving-profiles"
+        "models/glm5next/README.md#serving-profiles",
+        "models/glm5next/README.md#qualification-checks"
       ]
     },
     "tp4-mtp-k5": {
@@ -68,9 +67,8 @@
       "graph_memory_reserve_mib": 832,
       "status": "experimental",
       "evidence": [
-        "docs/serving-profiles.md#final-gate-2026-10-11",
-        "docs/serving-profiles.md#glm-evidence",
-        "models/glm5next/README.md#serving-profiles"
+        "models/glm5next/README.md#serving-profiles",
+        "models/glm5next/README.md#qualification-checks"
       ]
     },
     "tp4-ar": {
@@ -103,9 +101,8 @@
       "graph_memory_reserve_mib": 704,
       "status": "qualified",
       "evidence": [
-        "docs/serving-profiles.md#final-gate-2026-10-11",
-        "docs/serving-profiles.md#glm-evidence",
-        "models/glm5next/README.md#serving-profiles"
+        "models/glm5next/README.md#serving-profiles",
+        "models/glm5next/README.md#qualification-checks"
       ]
     },
     "tp4-mtp-dcp2": {
@@ -139,9 +136,8 @@
       "graph_memory_reserve_mib": 832,
       "status": "qualified",
       "evidence": [
-        "docs/serving-profiles.md#final-gate-2026-10-11",
-        "docs/serving-profiles.md#glm-evidence",
-        "models/glm5next/README.md#serving-profiles"
+        "models/glm5next/README.md#serving-profiles",
+        "models/glm5next/README.md#qualification-checks"
       ]
     },
     "tp4-mtp-dcp4": {
@@ -175,9 +171,8 @@
       "graph_memory_reserve_mib": 832,
       "status": "qualified",
       "evidence": [
-        "docs/serving-profiles.md#final-gate-2026-10-11",
-        "docs/serving-profiles.md#glm-evidence",
-        "models/glm5next/README.md#serving-profiles"
+        "models/glm5next/README.md#serving-profiles",
+        "models/glm5next/README.md#qualification-checks"
       ]
     }
   }

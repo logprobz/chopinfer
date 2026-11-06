@@ -158,6 +158,21 @@ nonzero is `fail` whatever its receipt holds, whether the row links the
 receipt or the receipt was left in the run; the receipt's own verdict is
 reported as `receipt_status`.
 
+A stored `checks.py check` run (its `check.json`, `chopinfer-check-run/v1`)
+is judged as the one row of a gate run, under the policy it recorded beside
+it with `--limits recorded`. Its receipt is the file the row names, the log
+for a check whose module prints its receipt (`stdout_json`), and must keep
+the row's digest; each input its input rules read must keep the digest the
+run recorded. A receipt or input that is missing or changed is
+`insufficient`. A run refused before its judge (`"row": null`, such as by an
+input rule) is judged from its recorded inputs when its receipt
+(`json_file`) and reference record (`reference_file`) are inputs: every
+input its arguments name must be recorded, every file it reads must keep
+its recorded digest (else `insufficient`), its recorded server must report
+qualified model options, and the row is then judged as the gate writes it,
+the module not having run. Its report names the refusal as `unjudged`. A
+refused run whose receipt its module writes stays `fail`.
+
 A single stored receipt is judged as the check its `check` field names
 (after a declared rename), else as the check whose `records/<ID>.json` it
 is, else as the one check whose receipt pattern its file name matches.
@@ -250,8 +265,10 @@ reads the references at the gate run's recorded source revision.
 receipt, and a missing prerequisite, an unreachable server or a worker that
 exits nonzero is a failure (1) recorded in `check.json`. Usage and
 validation errors (2) are an undeclared check ID, an unreadable or invalid
-declaration, a malformed `--inputs` file or `--with` value, and a PATH that
-is neither a gate run nor a check receipt. With `--require-recorded`,
+declaration, a malformed `--inputs` file or `--with` value, a PATH that is
+neither a gate run, a check run nor a check receipt, and a check run of
+another model, variant or check than `--model` and `--check` name, or whose
+recorded `policy.json` is missing or changed. With `--require-recorded`,
 `rescore` exits 1 unless every verdict, metric and gate result equals the
 recorded one.
 

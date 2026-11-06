@@ -29,8 +29,11 @@ does not prove which binary originally produced it.
 does not replace the full runner. `python3 -m tools.qual check ID` runs one
 declared check; `rescore` uses current or recorded policy without mutating
 the original run. A missing input is insufficient and a failed worker stays
-failed even if its partial receipt can be scored. Exit meanings are in
-[the qualification contract](../../docs/check-kinds.md#exit-statuses).
+failed even if its partial receipt can be scored. A PATH may be a gate run,
+a check run's `check.json` or a receipt; a check run refused before its
+judge is judged from its recorded inputs when they hold its receipt
+([verdict procedure](../../docs/check-kinds.md#verdict-procedure)). Exit
+meanings are in [the qualification contract](../../docs/check-kinds.md#exit-statuses).
 
 ### Model declarations
 

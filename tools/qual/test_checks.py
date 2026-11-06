@@ -506,6 +506,249 @@ class RecordedInputMapTests(unittest.TestCase):
                 self.assertEqual(self.verdict(check=check, value=changed, named=changed)["status"], "fail")
 
 
+def printed_receipt(kind):
+    """A complete receipt of a check whose module prints it (stdout_json)."""
+    common = {"passed": True, "errors": [], "skipped": [], "mechanics_only": False}
+    drafted = {"draft_tokens": 12, "verify_items": 6}
+    if kind == "prefix_exact":
+        return {**common, "scores": {"all": {"positions": 8, "texts": 2}},
+                "checks": {key: True for key in ("cache", "hit_equals_cold", "chunked_equals_cold", "hit_vs_cold")}}
+    if kind == "spec_verify":
+        return {**common, "arms": {"ar": "chopinfer-ar", "spec": "chopinfer-spec"},
+                "ar_speculation": {"draft_tokens": 0, "verify_items": 0},
+                "sets": {"copy": {"requests": 16, "scored_positions": 64, "speculation": drafted,
+                                  "mean_abs_dlogprob": 0.01, "top1_disagreement": 0.0}}}
+    return {**common, "ar_k": 0, "ar_arm": "ar", "ar_speculation": {"draft_tokens": 0, "verify_items": 0},
+            "records": {"k3": {"k": 3, "arm": "k3", "speculation": drafted,
+                               "coverage": {"rule": "host-drafted", "minimum": 1, "positions": 8, "passed": True},
+                               "exact": {"all": {"gate_against_ar": {"passed": True}}}}}}
+
+
+class CheckRunRescoreTests(unittest.TestCase):
+    """`rescore` of a `check` run (its check.json): a check whose module
+    prints its receipt (stdout_json, its log the receipt) is judged as one
+    gate row, and a run refused before its judge is judged from the inputs
+    it recorded."""
+
+    SERVER = {"model": "fixture/tp4"}
+    RULE = {"path": ["passed"], "op": "eq", "value": True, "source": "docs/check-kinds.md#predicates"}
+
+    def config(self, *checks):
+        config = declaration.load(declaration.MECHANICS)
+        config["qualification"] = {**config["qualification"], "mechanics_only": False}
+        config["checks"] += checks
+        config["profiles"]["full"]["checks"] = [check["id"] for check in checks]
+        return config
+
+    def printing(self, kind, rules=None):
+        """A declared stdout_json check of `kind` reading the input record
+        `record`, which its input `rules` judge."""
+        return {"id": kind, "module": kind, "args": ["report", "--record", "{record}"], "stdout_json": True,
+                "timeout_seconds": 60, "files": ["record"], "rules": [self.RULE],
+                "input_rules": {"record": rules or [dict(self.RULE, path=["arm"], value="ram")]}}
+
+    def check_run(self, root, config, name, inputs, printed=None, server=None):
+        """`checks.py check` of `name` under `config` against a faked server
+        (`server`, or an exception it raises), its worker printing
+        `printed`: the run's check.json."""
+        path = root / "declaration.json"
+        path.write_text(json.dumps(config))
+        (root / "inputs.json").write_text(json.dumps(inputs))
+
+        def worker(command, **kwargs):
+            if printed is not None:
+                kwargs["stdout"].write(json.dumps(printed, indent=1) + "\n")
+            return subprocess.CompletedProcess(command, 0)
+
+        def identity(*args, **kwargs):
+            if isinstance(server, Exception):
+                raise server
+            return copy.deepcopy(server or self.SERVER)
+
+        args = SimpleNamespace(model="mechanics", id=name, inputs=root / "inputs.json", with_receipt=[],
+                               receipts=root / "checks", cohort="full", url="http://unused", served_model=None)
+        with patch.object(checks, "load", return_value=(config, path)), \
+                patch.object(checks, "Client", lambda *a, **k: SimpleNamespace(identity=identity)), \
+                patch.object(gate.subprocess, "check_output", return_value="revision\n"), \
+                patch.object(gate.subprocess, "run", side_effect=worker), contextlib.redirect_stdout(io.StringIO()):
+            checks.check_command(args)
+        return next((root / "checks").glob("*/check.json"))
+
+    def rescore(self, config, *paths, limits="current", selected=None):
+        """rescore's exit status and rows under the current `config`."""
+        with tempfile.TemporaryDirectory() as scratch, \
+                patch.object(checks, "load", return_value=(config, Path(scratch) / "declaration.json")):
+            (Path(scratch) / "declaration.json").write_text(json.dumps(config))
+            report = Path(scratch) / "report.json"
+            status, _ = command("rescore", "--model", "mechanics", "--limits", limits, "--json", report,
+                                *(["--check", selected] if selected else []), *paths)
+            return status, json.loads(report.read_text())["checks"] if report.is_file() else None
+
+    @staticmethod
+    def record(root, name, **fields):
+        path = root / f"{name}.json"
+        path.write_text(json.dumps({"passed": True, "errors": [], "mechanics_only": False, **fields}))
+        return path
+
+    def test_a_printed_receipt_rescores_as_its_gate_row(self):
+        for kind in ("prefix_exact", "spec_verify", "verify_exact"):
+            with self.subTest(kind=kind), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                config = self.config(self.printing(kind))
+                record = self.record(root, "record", arm="ram")
+                run = self.check_run(root, config, kind, {"record": str(record)}, printed_receipt(kind))
+                recorded = json.loads(run.read_text())
+                self.assertEqual((recorded["status"], Path(recorded["row"]["receipt"]).name), ("pass", f"{kind}.log"))
+                for path in (run, run.parent):
+                    status, rows = self.rescore(config, path)
+                    self.assertEqual(status, 0, rows)
+                    self.assertEqual([(row["id"], row["kind"], row["recorded"], row["status"], row["receipt"],
+                                       row["differing_metrics"]) for row in rows],
+                                     [(kind, kind, "pass", "pass", recorded["row"]["receipt"], [])])
+                self.assertEqual(self.rescore(config, run, selected=kind)[0], 0)
+                # The run's recorded policy judges it as the current one does.
+                self.assertEqual(self.rescore(config, run, limits="recorded")[0], 0)
+                # The current input rules judge the recorded input.
+                refusing = self.config(self.printing(kind, [dict(self.RULE, path=["arm"], value="gpu")]))
+                status, rows = self.rescore(refusing, run)
+                self.assertEqual((status, rows[0]["status"]), (1, "fail"))
+                self.assertIn("record: input predicate failed", rows[0]["error"])
+
+    def test_a_printed_receipt_or_input_changed_or_missing_is_insufficient(self):
+        for kind in ("prefix_exact", "spec_verify", "verify_exact"):
+            for case in ("tampered receipt", "missing receipt", "changed input", "missing input"):
+                with self.subTest(kind=kind, case=case), tempfile.TemporaryDirectory() as temporary:
+                    root = Path(temporary)
+                    config = self.config(self.printing(kind))
+                    record = self.record(root, "record", arm="ram")
+                    run = self.check_run(root, config, kind, {"record": str(record)}, printed_receipt(kind))
+                    log = Path(json.loads(run.read_text())["row"]["receipt"])
+                    if case == "tampered receipt":
+                        value = json.loads(log.read_text())
+                        log.write_text(json.dumps({**value, "passed": True, "extra": 1}, indent=1) + "\n")
+                    elif case == "missing receipt":
+                        log.unlink()
+                    elif case == "changed input":
+                        record.write_text(record.read_text() + " ")
+                    else:
+                        record.unlink()
+                    status, rows = self.rescore(config, run)
+                    self.assertEqual((status, rows[0]["status"]), (3, "insufficient"), rows)
+                    expected = "receipt missing or changed" if "receipt" in case else \
+                        "record: the input the gate judged is missing, unrecorded or changed"
+                    self.assertIn(expected, rows[0]["error"])
+
+    def test_a_check_run_is_rescored_only_under_its_own_policy_and_check(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            config = self.config(self.printing("prefix_exact"))
+            record = self.record(root, "record", arm="ram")
+            run = self.check_run(root, config, "prefix_exact", {"record": str(record)},
+                                 printed_receipt("prefix_exact"))
+            # Another check, another variant, or a policy that is not the recorded one.
+            self.assertEqual(self.rescore(config, run, selected="api")[0], 2)
+            self.assertEqual(self.rescore({**config, "variant": "demo"}, run)[0], 2)
+            (run.parent / "policy.json").write_text((run.parent / "policy.json").read_text() + " ")
+            self.assertEqual(self.rescore(config, run)[0], 2)
+
+    def determinism(self, rule, files=("ar", "spec", "approval"), receipt="{spec}"):
+        """A determinism check of the spec record against the ar record, the
+        ar record's server model held to `rule`'s value."""
+        return {"id": "determinism", "module": "determinism", "args": ["compare", "{ar}", "{spec}"],
+                "timeout_seconds": 60, "json_file": receipt, "reference_file": "{ar}", "files": list(files),
+                "input_rules": {"ar": [dict(self.RULE, path=["server", "model"], value=rule)],
+                                "approval": [dict(self.RULE, path=["approved"])]},
+                "rules": [dict(self.RULE, source="docs/check-kinds.md#determinism-determinismv1")]}
+
+    def refused(self, root, check=None, server=None):
+        """A determinism check run its preflight refused (the ar record's
+        server is not the one its rule names): the run, its current
+        declaration that accepts the records, and the inputs."""
+        import test_determinism
+        inputs = {}
+        for arm in ("ar", "spec"):
+            inputs[arm] = str(root / f"{arm}.json")
+            Path(inputs[arm]).write_text(json.dumps(test_determinism.recorded(arm=arm)))
+        inputs["approval"] = str(self.record(root, "approval", approved=True))
+        run = self.check_run(root, self.config(check or self.determinism("{model}")), "determinism", inputs,
+                             server=server)
+        return run, self.config(self.determinism("served")), {key: Path(value) for key, value in inputs.items()}
+
+    def test_a_run_refused_before_its_judge_is_judged_from_its_recorded_inputs(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            run, current, inputs = self.refused(Path(temporary))
+            recorded = json.loads(run.read_text())
+            self.assertEqual((recorded["status"], recorded["row"]), ("fail", None))
+            self.assertIn("ar: input predicate failed", recorded["error"])
+            status, rows = self.rescore(current, run)
+            self.assertEqual(status, 0, rows)
+            row, = rows
+            self.assertEqual((row["id"], row["recorded"], row["status"], row["receipt"], row["unjudged"]),
+                             ("determinism", "fail", "pass", str(inputs["spec"]), recorded["error"]))
+            self.assertEqual((row["recorded_metrics"], row["differing_metrics"]), (None, []))
+            # The rules it was refused under still refuse it.
+            status, rows = self.rescore(current, run, limits="recorded")
+            self.assertEqual((status, rows[0]["status"]), (1, "fail"))
+            self.assertIn("ar: input predicate failed", rows[0]["error"])
+            # A differing record fails the judge itself.
+            value = json.loads(inputs["spec"].read_text())
+            next(row for row in value["requests"] if row["name"] == "capital")["logprobs"][0] -= 1e-6
+            inputs["spec"].write_text(json.dumps(value))
+            recorded["input_sha256"]["spec"] = gate.digest(inputs["spec"])
+            run.write_text(json.dumps(recorded))
+            status, rows = self.rescore(current, run)
+            self.assertEqual((status, rows[0]["status"]), (1, "fail"), rows)
+
+    def test_a_refused_run_with_a_changed_or_missing_input_is_insufficient(self):
+        cases = {"tampered receipt": lambda inputs: inputs["spec"].write_text(inputs["spec"].read_text() + " "),
+                 "changed reference": lambda inputs: inputs["ar"].write_text(inputs["ar"].read_text() + " "),
+                 "changed input": lambda inputs: inputs["approval"].write_text("{\"approved\": true} "),
+                 "missing reference": lambda inputs: inputs["ar"].unlink(),
+                 "missing input": lambda inputs: inputs["approval"].unlink()}
+        for case, change in cases.items():
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as temporary:
+                run, current, inputs = self.refused(Path(temporary))
+                self.assertEqual(self.rescore(current, run)[0], 0)
+                change(inputs)
+                status, rows = self.rescore(current, run)
+                self.assertEqual((status, rows[0]["status"]), (3, "insufficient"), rows)
+                key = {"tampered receipt": "spec", "changed input": "approval", "missing input": "approval"}.get(
+                    case, "ar")
+                self.assertIn(f"{key}: the input the gate judged is missing, unrecorded or changed", rows[0]["error"])
+        with tempfile.TemporaryDirectory() as temporary:
+            # An input the run read without recording its digest, or an
+            # argument's input it did not record.
+            run, current, _ = self.refused(Path(temporary), self.determinism("{model}", files=("ar", "approval")))
+            status, rows = self.rescore(current, run)
+            self.assertEqual((status, rows[0]["status"]), (3, "insufficient"))
+            self.assertIn("spec: the input the gate judged is missing", rows[0]["error"])
+            recorded = json.loads(run.read_text())
+            recorded["inputs"].pop("approval")
+            run.write_text(json.dumps(recorded))
+            current["checks"][-1]["args"].append("{approval}")
+            status, rows = self.rescore(current, run)
+            self.assertEqual((status, rows[0]["status"]), (3, "insufficient"))
+            self.assertIn("approval: the check's arguments name an input the run did not record", rows[0]["error"])
+
+    def test_a_refused_run_without_its_receipt_or_a_qualified_server_is_not_judged(self):
+        unqualified = {"model": "fixture/tp4", "health": {"serving": {"model_options": {"x": 1}}}}
+        for case, check, server, expected in (
+                ("module receipt", self.determinism("{model}", receipt="{run}/spec.json"), None,
+                 ("fail", "receipt is not one of its inputs")),
+                ("unqualified server", None, unqualified, ("fail", "server model options")),
+                ("no server", None, OSError("unreachable"), ("insufficient", "recorded no server identity"))):
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as temporary:
+                run, current, _ = self.refused(Path(temporary), check, server)
+                self.assertIsNone(json.loads(run.read_text())["row"])
+                if check is not None:
+                    current["checks"][-1]["json_file"] = check["json_file"]
+                status, rows = self.rescore(current, run)
+                self.assertEqual(rows[0]["status"], expected[0], rows)
+                self.assertEqual(status, 1 if expected[0] == "fail" else 3)
+                self.assertIn(expected[1], rows[0]["error"])
+                self.assertNotIn("unjudged", rows[0])
+
+
 class CheckCommandTests(unittest.TestCase):
     def run_check(self, root, passed):
         with patch.object(gate.Client, "identity", return_value={"model": "fixture/tp4"}), \

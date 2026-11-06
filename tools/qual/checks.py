@@ -18,11 +18,16 @@ recorded, server-bound inputs without a server (RUNNER_CHECK_ARM "offline");
 its run names no live server.
 
 `rescore` re-judges stored receipts offline, without a server. A PATH is a
-release gate run (its directory or summary.json) or a check receipt. Each
-receipt is scored by its kind with this code, recomputing what the kind
-derives from the receipt and its pinned reference, and judged by the
-current declaration's predicates and limits, or with `--limits recorded`
-by the policy the gate run recorded. Each verdict is shown next to the
+release gate run (its directory or summary.json), a `check` run (its
+directory or check.json) or a check receipt. Each receipt is scored by its
+kind with this code, recomputing what the kind derives from the receipt and
+its pinned reference, and judged by the current declaration's predicates
+and limits, or with `--limits recorded` by the policy the gate or check run
+recorded. A check run is judged as one gate row: its receipt (a log, for a
+check whose module prints it) and every input file it read must keep the
+digests the run recorded. A check run refused before its judge is judged
+from its recorded inputs when its receipt and reference record are among
+them, and otherwise stays failed. Each verdict is shown next to the
 recorded one, with the metric fields that differ. Exit status: 0 when every
 verdict passes, 1 when one fails, 3 when one has insufficient evidence and
 none fails, 2 for a usage error; with --require-recorded, 1 when any verdict
@@ -36,6 +41,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import sys
 import time
 import uuid
@@ -46,6 +52,9 @@ import kinds
 import release_gate
 
 PASSING = ("pass", "informational", "not_applicable", "waived")
+# The schemas of what rescore reads: a gate run's summary, a check run's
+# check.json and a check receipt.
+SUMMARY, CHECK_RUN, RECEIPT = "chopinfer-release-receipt/v1", "chopinfer-check-run/v1", "chopinfer-qualification/v1"
 
 
 def load(model):
@@ -113,7 +122,7 @@ def check_command(args):
     mechanics = config.get("qualification", {}).get("mechanics_only", False)
     context = {**inputs, **earlier, "url": args.url or "", "model": args.served_model or "", "run_id": run_id,
                "raw": str(directory / "checks"), "run": str(directory), "check_raw": earlier_raw}
-    result = {"schema": "chopinfer-check-run/v1", "at": stamp, "model": config["model"], "check": args.id,
+    result = {"schema": CHECK_RUN, "at": stamp, "model": config["model"], "check": args.id,
               "kind": kinds.of(check["module"]).name, "cohort": args.cohort, "mechanics_only": mechanics,
               "config_sha256": release_gate.digest(policy), "config_source": str(config_path), "inputs": inputs,
               "earlier": earlier, "earlier_raw": dict(earlier_raw), "variant_source": None, "status": "fail"}
@@ -150,29 +159,30 @@ def offline_module(module):
     return module_source.module_constants(module).get("RUNNER_CHECK_ARM") == ("offline",)
 
 
-def gate_runs(paths):
-    """Each PATH as (file, gate summary), the summary None for a check receipt."""
+def stored_runs(paths):
+    """Each PATH as (file, schema, value): a gate run's summary, a check
+    run's check.json or a check receipt. A directory is the run whose
+    summary.json, else check.json, it holds."""
     for path in map(Path, paths):
         if path.is_dir():
-            path = path / "summary.json"
+            path = path / next((name for name in ("summary.json", "check.json") if (path / name).exists()),
+                               "summary.json")
         value = json.loads(path.read_text())
         if not isinstance(value, dict):
             raise ValueError(f"{path}: not a JSON object")
-        if value.get("schema") == "chopinfer-release-receipt/v1":
-            yield path, value
-        elif value.get("schema") == "chopinfer-qualification/v1":
-            yield path, None
-        else:
-            raise ValueError(f"{path}: neither a release gate summary nor a check receipt")
+        if value.get("schema") not in (SUMMARY, CHECK_RUN, RECEIPT):
+            raise ValueError(f"{path}: neither a release gate summary, a check run nor a check receipt")
+        yield path, value["schema"], value
 
 
 def stored(summary, row, key="receipt"):
     """A gate row's receipt (or the file its `key` names), where the run is
     now. Its recorded path is under the run directory its log names."""
     recorded = Path(row[key])
-    if recorded.is_file():
+    run = Path(row["log"]).parent if row.get("log") else None
+    if recorded.is_file() or run is None or not recorded.is_relative_to(run):
         return recorded
-    return summary.parent / recorded.relative_to(Path(row["log"]).parent)
+    return summary.parent / recorded.relative_to(run)
 
 
 def reference_of(summary, row):
@@ -246,6 +256,33 @@ def rescore_one(value, check, config, config_path, mechanics, revision=None, nam
         return {**result, **kinds.rescore(kind, value, reference, check, mechanics)}
 
 
+def recorded_inputs(summary):
+    """(inputs, digests): the input paths a gate or check run recorded, its
+    inputs and the earlier receipts it was given, and the SHA-256 of each
+    input file it read. Raises kinds.Insufficient for maps that do not hold
+    strings or that give one input two paths."""
+    inputs, earlier, digests = (summary.get(key, {}) for key in ("inputs", "earlier", "input_sha256"))
+    if any(not isinstance(values, dict) or not all(isinstance(key, str) and isinstance(value, str)
+                                                  for key, value in values.items())
+           for values in (inputs, earlier, digests)):
+        raise kinds.Insufficient("recorded input, earlier and digest maps must hold strings")
+    conflicts = sorted(key for key in inputs.keys() & earlier.keys() if inputs[key] != earlier[key])
+    if conflicts:
+        raise kinds.Insufficient("conflicting recorded input paths: " + ", ".join(conflicts))
+    return {**inputs, **earlier}, digests
+
+
+def recorded_input(inputs, digests, key):
+    """The file of recorded input `key`. Raises kinds.Insufficient when the
+    run recorded no such input or no digest of it, or the file is missing or
+    no longer has that digest."""
+    path = Path(inputs.get(key) or "")
+    if not inputs.get(key) or not path.is_file() or digests.get(key) is None \
+            or hashlib.sha256(path.read_bytes()).hexdigest() != digests[key]:
+        raise kinds.Insufficient(f"{key}: the input the gate judged is missing, unrecorded or changed")
+    return path
+
+
 def input_verdict(row, check, value, named, summary):
     """None when the check's input records hold its declared input_rules as
     the live preflight judges them (release_gate.judge_input), else the
@@ -261,15 +298,10 @@ def input_verdict(row, check, value, named, summary):
         return None
     if not isinstance(summary, dict):
         return {"status": "insufficient", "error": "input rules need the gate run's summary"}
-    inputs, earlier, digests = (summary.get(key, {}) for key in ("inputs", "earlier", "input_sha256"))
-    if any(not isinstance(values, dict) or not all(isinstance(key, str) and isinstance(value, str)
-                                                  for key, value in values.items())
-           for values in (inputs, earlier, digests)):
-        return {"status": "insufficient", "error": "recorded input, earlier and digest maps must hold strings"}
-    conflicts = sorted(key for key in inputs.keys() & earlier.keys() if inputs[key] != earlier[key])
-    if conflicts:
-        return {"status": "insufficient", "error": "conflicting recorded input paths: " + ", ".join(conflicts)}
-    inputs = {**inputs, **earlier}
+    try:
+        inputs, digests = recorded_inputs(summary)
+    except kinds.Insufficient as error:
+        return {"status": "insufficient", "error": str(error)}
     context = dict(inputs)
     if (summary.get("server") or {}).get("model"):
         context["model"] = summary["server"]["model"]
@@ -279,12 +311,10 @@ def input_verdict(row, check, value, named, summary):
         elif check.get("reference_file") == f"{{{key}}}":
             record = named
         else:
-            path = Path(inputs.get(key) or "")
-            if not inputs.get(key) or not path.is_file() or digests.get(key) is None \
-                    or hashlib.sha256(path.read_bytes()).hexdigest() != digests[key]:
-                return {"status": "insufficient",
-                        "error": f"{key}: the input the gate judged is missing, unrecorded or changed"}
-            record = json.loads(path.read_text())
+            try:
+                record = json.loads(recorded_input(inputs, digests, key).read_text())
+            except kinds.Insufficient as error:
+                return {"status": "insufficient", "error": str(error)}
         try:
             release_gate.judge_input(key, record, key_rules, context)
         except KeyError as error:
@@ -322,9 +352,9 @@ def rescore_row(path, row, check, config, config_path, mechanics, revision, summ
         named = json.loads(reference.read_text())
     if row.get("receipt"):
         receipt = stored(path, row)
-        if hashlib.sha256(receipt.read_bytes()).hexdigest() != row.get("sha256"):
+        if not receipt.is_file() or hashlib.sha256(receipt.read_bytes()).hexdigest() != row.get("sha256"):
             result = {"kind": kind, "receipt": str(receipt), "status": "insufficient",
-                      "error": "receipt changed after the gate ran"}
+                      "error": "receipt missing or changed after the gate ran"}
         else:
             value = json.loads(receipt.read_text())
             refused = input_verdict(row, check, value, named, summary)
@@ -388,6 +418,98 @@ def rescore_gate(path, summary, model, limits):
     return rows
 
 
+def check_run_policy(path, run):
+    """The policy a check run at `path` (its check.json) recorded beside
+    it, which must keep the digest the run recorded."""
+    policy = path.parent / "policy.json"
+    if not policy.is_file() or release_gate.digest(policy) != run.get("config_sha256"):
+        raise ValueError(f"{path}: the check run's policy.json is missing or not the one it recorded")
+    return policy
+
+
+def unjudged_row(run, check):
+    """The gate row of a check run refused before its judge (check.json
+    "row" null), as release_gate.run_check writes it for a check whose
+    receipt (json_file) and reference record (reference_file) are inputs:
+    each the recorded input with the digest the run's preflight recorded.
+    Every input the check's arguments name must be recorded and every file
+    it reads keep its digest, and the run must have recorded a server with
+    qualified model options (or none, for an offline check). Raises
+    kinds.Insufficient for an input or server identity the run lacks or an
+    input that changed, and ValueError when the check's receipt is not a
+    recorded input (its module wrote it and never ran) or the server's
+    model options are not qualified."""
+    keys = {}
+    for field, record in (("json_file", "receipt"), ("reference_file", "reference record")):
+        match = re.fullmatch(r"\{(\w+)\}", check.get(field, ""))
+        if match is None and (field == "json_file" or field in check):
+            raise ValueError(f"the run never reached its judge, and {check['id']}'s {record} is not one of its "
+                             "inputs: its module writes it and did not run")
+        if match is not None:
+            keys[field] = match.group(1)
+    if "server" not in run or not isinstance(run["server"], (dict, type(None))):
+        raise kinds.Insufficient("the run recorded no server identity")
+    if run["server"] is not None:
+        require_qualified_model_options(run["server"])
+    inputs, digests = recorded_inputs(run)
+    arguments = check["args"] + check.get("profile_args", {}).get(check.get("_cohort"), [])
+    # The names a check run gives a check's arguments itself (check_command).
+    given = {"url", "model", "raw", "run", "run_id"}
+    for key in sorted(release_gate.placeholder_fields(arguments) - given):
+        if key not in inputs:
+            raise kinds.Insufficient(f"{key}: the check's arguments name an input the run did not record")
+    for key in dict.fromkeys([*check.get("files", []), *keys.values()]):
+        recorded_input(inputs, digests, key)
+    row = {"id": check["id"], "receipt": inputs[keys["json_file"]], "sha256": digests[keys["json_file"]]}
+    if "reference_file" in keys:
+        row.update(reference_file=inputs[keys["reference_file"]], reference_sha256=digests[keys["reference_file"]])
+    return row
+
+
+def rescore_check_run(path, run, model, limits, check_id=None):
+    """A check run (its check.json at `path`) rescored as the one row of a
+    gate run (rescore_row), its input rules judged against the inputs and
+    digests the run recorded, by the current declaration of `model` or
+    (`limits` recorded) the run's own policy and source revision. A run
+    refused before its judge is judged from its recorded inputs when its
+    receipt and reference record are among them (unjudged_row); any other
+    such run stays failed. `check_id` (--check) must be the run's check."""
+    policy = check_run_policy(path, run)
+    if limits == "recorded":
+        config, config_path = declaration.load(policy), policy
+        renamed, revision = {}, run.get("revision")
+    else:
+        config, config_path = load(model)
+        renamed, revision = declaration.renamed(model), None
+    checks = {check["id"]: check for check in config["checks"]}
+    name = renamed.get(run.get("check"), run.get("check"))
+    if check_id is not None and renamed.get(check_id, check_id) != name:
+        raise ValueError(f"{path}: a check run of {run.get('check')}, not {check_id}")
+    entry = {"source": str(path), "id": name, "recorded_id": run.get("check"), "recorded": run.get("status")}
+    if name not in checks:
+        return {**entry, "status": "insufficient", "error": "the declaration has no such check"}
+    check = {**checks[name], "_cohort": run.get("cohort")}
+    kind = kinds.of(check["module"]).name
+    row = run.get("row")
+    if row is None and not check.get("informational_reason"):
+        try:
+            row = unjudged_row(run, check)
+        except kinds.Insufficient as error:
+            return {**entry, "kind": kind, "status": "insufficient", "error": str(error)}
+        except ValueError as error:
+            return {**entry, "kind": kind, "status": "fail", "error": str(error)}
+        # The refusal the recorded run stopped at, judged again here; the
+        # run recorded no metrics.
+        entry["unjudged"] = run.get("error") or "the run recorded no row"
+    elif row is not None and (not isinstance(row, dict) or row.get("id") != run.get("check")):
+        raise ValueError(f"{path}: check.json holds no row of {run.get('check')}")
+    result = {**entry, **rescore_row(path, row or {}, check, config, config_path, run.get("mechanics_only") is True,
+                                     revision, summary=run)}
+    if "unjudged" in entry:
+        result["recorded_metrics"] = None
+    return result
+
+
 def rescore_receipt(path, value, model, limits, check_id=None):
     """A check receipt outside a gate run, rescored against the current
     declaration: the check its id names, else the check whose record
@@ -448,16 +570,20 @@ def rescore_command(args):
     config = load(args.model)[0]
     model = config["model"]
     rows, gates = [], []
-    for path, summary in gate_runs(args.paths):
-        if summary is None:
-            rows.append(rescore_receipt(path, json.loads(path.read_text()), args.model, args.limits, args.check))
+    for path, schema, summary in stored_runs(args.paths):
+        if schema == RECEIPT:
+            rows.append(rescore_receipt(path, summary, args.model, args.limits, args.check))
             continue
-        if args.check is not None:
-            raise ValueError(f"{path}: --check names the check of a single receipt, not of a gate run")
-        ran = (summary.get("model"), (summary.get("config") or {}).get("variant"))
+        if schema == SUMMARY and args.check is not None:
+            raise ValueError(f"{path}: --check names the check of a single receipt or check run, not of a gate run")
+        ran = (summary.get("model"), (summary.get("config") or {}).get("variant") if schema == SUMMARY
+               else json.loads(check_run_policy(path, summary).read_text()).get("variant"))
         if ran != (model, config.get("variant")):
             name = ran[0] if ran[1] is None else f"{ran[0]}.{ran[1]}"
-            raise ValueError(f"{path}: a gate run of {name}, not {args.model}")
+            raise ValueError(f"{path}: a {'gate' if schema == SUMMARY else 'check'} run of {name}, not {args.model}")
+        if schema == CHECK_RUN:
+            rows.append(rescore_check_run(path, summary, args.model, args.limits, args.check))
+            continue
         gate = rescore_gate(path, summary, args.model, args.limits)
         statuses = [row["status"] for row in gate if row["selected"]]
         passed = gate_passed(statuses)
@@ -516,9 +642,11 @@ def main():
     rescore.add_argument("paths", nargs="+", metavar="PATH")
     rescore.add_argument("--model", required=True)
     rescore.add_argument("--limits", choices=("current", "recorded"), default="current",
-                         help="judge by the current declaration (default) or by a gate run's recorded policy")
+                         help="judge by the current declaration (default) or by a gate or check run's "
+                              "recorded policy")
     rescore.add_argument("--check", metavar="ID",
-                         help="the declared check a single receipt is judged as (a gate row's check)")
+                         help="the declared check a single receipt is judged as (a gate row's check), or a "
+                              "check run's check")
     rescore.add_argument("--json", type=Path, help="write the rescore report here")
     rescore.add_argument("--require-recorded", action="store_true",
                          help="exit 1 unless every verdict and metric equals the recorded one")

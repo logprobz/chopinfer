@@ -72,6 +72,7 @@ impl MediaHost {
             fail_upload: Default::default(),
             release_order: RefCell::new(Vec::new()),
             references: RefCell::new(Vec::new()),
+            races: RefCell::new(Vec::new()),
         };
         Rc::new(Backend::new(MediaHost {
             host,

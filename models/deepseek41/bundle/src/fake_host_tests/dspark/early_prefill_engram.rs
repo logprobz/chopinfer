@@ -275,6 +275,7 @@ impl Schedule<'_> {
         }
         instance.destroy().unwrap();
         assert_eq!(host.acquired.get(), host.released.get());
+        assert!(host.races.borrow().is_empty(), "{:#?}", host.races.borrow());
         let logs = host
             .logs
             .borrow()

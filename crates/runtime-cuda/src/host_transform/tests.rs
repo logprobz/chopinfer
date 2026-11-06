@@ -178,3 +178,54 @@ fn host_transform_refuses_an_unordered_source_producer() {
     enqueue(&mut f).unwrap();
     finish(&mut f);
 }
+
+/// Every initialization mode uploads initialized bytes: the work's bytes
+/// once it wrote them, and zeros where work that fails left its targets
+/// to `OnFailure`.
+#[test]
+fn host_transform_uploads_initialized_bytes_in_every_mode() {
+    for init in [
+        HostTransformInit::Extents,
+        HostTransformInit::Targets,
+        HostTransformInit::OnFailure,
+    ] {
+        for fail in [false, true] {
+            let mut f = fixture();
+            f.transform.set_init(init);
+            f.transform
+                .enqueue(
+                    &f.source,
+                    0,
+                    8,
+                    &f.owners[0],
+                    &f.targets,
+                    move |input, output| {
+                        for output in output.iter_mut() {
+                            output.copy_from_slice(input);
+                        }
+                        if fail {
+                            Err("injected host failure".into())
+                        } else {
+                            Ok(())
+                        }
+                    },
+                )
+                .unwrap();
+            let stats = finish(&mut f);
+            assert_eq!(stats.failure.is_some(), fail, "{init:?}");
+            let expected = if fail && init == HostTransformInit::OnFailure {
+                [0; 8]
+            } else {
+                [1, 2, 3, 4, 5, 6, 7, 8]
+            };
+            for index in 0..2 {
+                let mut actual = [0xee; 8];
+                f.targets[index]
+                    .buffer
+                    .copy_to_bytes(&mut actual, &f.owners[index])
+                    .unwrap();
+                assert_eq!(actual, expected, "{init:?}, failing {fail}");
+            }
+        }
+    }
+}

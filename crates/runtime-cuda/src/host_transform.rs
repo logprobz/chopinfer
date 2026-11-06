@@ -10,6 +10,22 @@ pub struct HostTransformTarget {
     pub length: usize,
 }
 
+/// How a transform's host work leaves its pinned outputs for the uploads,
+/// which copy only each target's range. Every mode uploads initialized
+/// bytes.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum HostTransformInit {
+    /// Zero each output up to the end of its last target before the work,
+    /// gaps between targets included.
+    #[default]
+    Extents,
+    /// Zero only the targets' ranges before the work.
+    Targets,
+    /// Zero the targets' ranges only after work that fails or panics. Work
+    /// that succeeds must have written every byte of them.
+    OnFailure,
+}
+
 #[derive(Debug)]
 pub struct HostTransformStats {
     pub host_nanoseconds: u64,
@@ -43,6 +59,7 @@ pub struct HostTransform {
     transformed: Event,
     outputs: Vec<Output>,
     pending: Option<Pending>,
+    init: HostTransformInit,
 }
 
 impl HostTransform {
@@ -76,7 +93,13 @@ impl HostTransform {
                 })
                 .collect::<Result<_, CudaError>>()?,
             pending: None,
+            init: HostTransformInit::default(),
         })
+    }
+
+    /// How later enqueues' host work initializes the outputs.
+    pub fn set_init(&mut self, init: HostTransformInit) {
+        self.init = init;
     }
 
     pub fn pinned_bytes(&self) -> usize {
@@ -91,7 +114,8 @@ impl HostTransform {
     /// The callback runs on CUDA's host worker after D2H completes. It must
     /// perform only CPU work, never call CUDA, and may report an error for the
     /// owner to check before publishing results. Uploads still complete after
-    /// an error, so all output bytes are initialized before the callback runs.
+    /// an error, so the targets' bytes are initialized as `set_init` chose:
+    /// before the callback runs, or after one that fails.
     /// The source producer must be its allocation stream, which orders both
     /// allocation and content production before the recorded dependency.
     pub fn enqueue(
@@ -119,6 +143,7 @@ impl HostTransform {
             return Err(CudaError::InvalidLaunch);
         }
         let mut lengths = vec![0; self.outputs.len()];
+        let mut ranges = vec![Vec::new(); self.outputs.len()];
         for target in targets {
             let output = self
                 .outputs
@@ -133,6 +158,7 @@ impl HostTransform {
             checked_host_range(output.pinned.len(), target.source_offset, target.length)?;
             lengths[target.output] =
                 lengths[target.output].max(target.source_offset + target.length);
+            ranges[target.output].push((target.source_offset, target.length));
         }
         if lengths.contains(&0) {
             return Err(CudaError::InvalidLaunch);
@@ -171,11 +197,18 @@ impl HostTransform {
             .zip(&lengths)
             .map(|(output, &length)| (&output.pinned.allocation, length))
             .collect::<Vec<_>>();
+        let init = match self.init {
+            HostTransformInit::Extents => ffi::host_work::Init::Extents,
+            HostTransformInit::Targets => ffi::host_work::Init::Targets,
+            HostTransformInit::OnFailure => ffi::host_work::Init::OnFailure,
+        };
         let (code, result) = ffi::host_work::enqueue(
             self.stream.inner.handle,
             &self.input.allocation,
             bytes,
             &outputs,
+            ranges,
+            init,
             Box::new(call),
         );
         self.pending.as_mut().expect("retained transfers").result = result;

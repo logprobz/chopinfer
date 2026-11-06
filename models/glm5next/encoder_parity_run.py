@@ -6,8 +6,8 @@
     python3 models/glm5next/encoder_parity_run.py record --url URL \\
         --server-log LOG --taps-dir TAPS --run RUN [--reference-exact DIR] [--reference-policy DIR]
 
-The encoder_parity check reads a run directory (tools/qual/README.md,
-encoder parity): the engine's encoder taps, captured into it by
+The encoder_parity check reads a run directory
+(docs/check-kinds.md#encoder-parity): the engine's encoder taps, captured into it by
 tools/qual/tap_binding.py from a diagnostic-taps server, and the encoder
 reference runs (tools/refrun/encoder.py) of the same images.
 

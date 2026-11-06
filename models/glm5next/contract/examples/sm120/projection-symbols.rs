@@ -1,7 +1,6 @@
 //! Print, as a JSON array, every stage symbol of glm5next's projection
 //! inventory (`sm120::CATALOG`): the `--symbols` selection of kernel-lab's
-//! prepared projection jobs (`crates/kernel-lab/PROJECTION_JOBS.md`) that
-//! runs glm5next's offers.
+//! prepared projection jobs that runs glm5next's offers.
 use model_glm5next_contract::sm120::CATALOG;
 use std::collections::BTreeSet;
 

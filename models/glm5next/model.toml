@@ -23,7 +23,7 @@ bin = ["chopinfer-model-glm5next"]
 package = "model-glm5next-contract"
 
 # Released after its full requalification through the release preview
-# (docs/serving-profiles.md#release-qualification); the released-model
+# (models/glm5next/README.md#qualification-checks); the released-model
 # facts apply (tests/test_model_inventory.py, tests/test_serve_profiles.py,
 # tools/qual/qual_test_config.py). The release ships the helper and the
 # bundle; GLM loads checkpoints directly and has no explicit packaging bin.

@@ -1,5 +1,5 @@
 //! The same-architecture geometry recipe at the contract stage
-//! (tests/model_geometry_recipe.py, docs/adding-a-model.md). Every compiled
+//! (tests/model_geometry_recipe.py, BUNDLE_ARCHITECTURE.md#adding-a-model). Every compiled
 //! geometry gets kernel profiles, a catalog, a TP4 weight plan, tuning
 //! decisions and a capacity table from its data alone. With
 //! `CHOPINFER_GLM5NEXT_RECIPE_CONFIG` (a checkpoint `config.json`) and

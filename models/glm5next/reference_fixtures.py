@@ -21,7 +21,7 @@ skeleton over chat.json (`nvfp4-teacher` over it for a checkpoint variant).
   sequence (name, category, prompt token IDs and first scored position), the layout the teacher capture
   (chopinfer eval run) reads.
 - `nvfp4-teacher`: the same over another checkpoint of the model that stores projections as NVFP4,
-  qualified as an external variant (tools/qual/README.md#external-variants): its provenance is the
+  qualified as an external variant (docs/check-kinds.md#external-variants): its provenance is the
   checkpoint pin `--pin` (what `python3 -m tools.qual variant pin` prints) and its variants are
   described from the layout of `--checkpoint`'s safetensors headers (which projections are NVFP4);
   its runs are F32 and BF16 (`--modes f32=exact,bf16`).

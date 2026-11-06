@@ -1375,7 +1375,7 @@ class DeterminismPairTests(unittest.TestCase):
 
 class ExternalVariantTests(unittest.TestCase):
     """Another checkpoint of the model, qualified as an external variant
-    (tools/qual/README.md#external-variants): a synthetic one under a
+    (docs/check-kinds.md#external-variants): a synthetic one under a
     temporary variant root, its teacher reference the model's re-homed onto
     another checkpoint pin (tools/qual/test_variant.py)."""
 

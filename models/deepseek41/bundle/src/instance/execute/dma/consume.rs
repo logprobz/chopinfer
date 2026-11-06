@@ -34,6 +34,19 @@ pub(super) fn overlaps(a: DeviceBufferSpanV1, b: DeviceBufferSpanV1) -> bool {
 }
 
 impl Consumers {
+    /// The chains as lines (`skip::Plan::describe`).
+    #[cfg(test)]
+    pub(in crate::instance::execute) fn describe(&self, lines: &mut Vec<String>) {
+        for (rank, owners) in self.launches.iter().enumerate() {
+            for (owner, chain) in owners.iter().enumerate() {
+                for launch in chain {
+                    let launch = super::describe_launch(launch);
+                    lines.push(format!("consume {rank} {owner} {launch}"));
+                }
+            }
+        }
+    }
+
     /// Whether `other` issues the same chains over the same owners.
     pub(in crate::instance::execute) fn same(&self, other: &Self) -> Result<bool, String> {
         if self.launches.len() != other.launches.len() {

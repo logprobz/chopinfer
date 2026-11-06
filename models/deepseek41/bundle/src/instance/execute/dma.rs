@@ -89,7 +89,50 @@ pub(in crate::instance::execute) fn same_launches(
     Ok(true)
 }
 
+/// `launch` as one line of what `same_launch` compares: its symbol, rows,
+/// plan, route and resolved arguments.
+#[cfg(test)]
+pub(in crate::instance::execute) fn describe_launch(launch: &PreparedLaunch) -> String {
+    format!(
+        "{} rows={} {:?} route={:?} {:?}",
+        launch.symbol,
+        launch.rows,
+        launch.plan,
+        launch.bindings.route(),
+        dispatch::arguments(&launch.arguments, &launch.bindings),
+    )
+}
+
 impl Call {
+    /// The call as lines (`skip::Plan::describe`): its rows, footprint and
+    /// owners, from which its transfers follow, then its roundings, sends
+    /// and sums.
+    #[cfg(test)]
+    pub(super) fn describe(&self, lines: &mut Vec<String>) {
+        lines.push(format!(
+            "call first={} rows={} embedding={} footprint={:?} owners={:?}",
+            self.first,
+            self.rows,
+            self.embedding,
+            self.footprint,
+            self.transport.owners()
+        ));
+        for (rank, rounds) in self.rounds.iter().enumerate() {
+            for launch in rounds {
+                lines.push(format!("round {rank} {}", describe_launch(launch)));
+            }
+        }
+        for (rank, sends) in self.sends.iter().enumerate() {
+            for (owner, send) in sends.iter().enumerate() {
+                let send = send.as_ref().map(describe_launch);
+                lines.push(format!("send {rank} {owner} {send:?}"));
+            }
+        }
+        for (rank, sum) in self.sums.iter().enumerate() {
+            lines.push(format!("sum {rank} {}", describe_launch(sum)));
+        }
+    }
+
     /// Whether `other` reduces the same rows with the same transfers,
     /// roundings, sends and sums.
     pub(super) fn same(&self, other: &Self) -> Result<bool, String> {

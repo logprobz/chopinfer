@@ -715,6 +715,41 @@ impl Plan {
         (body, head)
     }
 
+    /// The plan as lines, for the metadata pins: every body and head launch
+    /// with its stage and collective flag, the sites, the DMA plan and the
+    /// row copies.
+    #[cfg(test)]
+    pub(super) fn describe(&self) -> Vec<String> {
+        let mut lines = Vec::new();
+        for (name, programs) in [("body", &self.body), ("head", &self.head)] {
+            for (rank, launches) in programs.0.iter().enumerate() {
+                for (at, launch) in launches.iter().enumerate() {
+                    lines.push(format!(
+                        "{name} {rank} {at} {:?} {} {}",
+                        programs.2[rank][at],
+                        programs.1[rank][at],
+                        super::dma::describe_launch(launch)
+                    ));
+                }
+            }
+        }
+        for site in &self.sites {
+            lines.push(format!(
+                "site {} {} {} {} {:?}",
+                site.rank, site.at, site.len, site.input.layer, site.input.part
+            ));
+        }
+        if let Some(dma) = &self.dma {
+            dma.describe(&mut lines);
+        }
+        for (rank, copies) in self.copies.iter().enumerate() {
+            for (destination, source) in copies {
+                lines.push(format!("copy {rank} {destination:?} {source:?}"));
+            }
+        }
+        lines
+    }
+
     pub(super) fn uses_dma(&self) -> bool {
         self.dma.is_some()
     }

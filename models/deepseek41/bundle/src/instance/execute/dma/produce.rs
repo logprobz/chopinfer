@@ -25,6 +25,17 @@ pub(in crate::instance::execute) struct Producers {
 }
 
 impl Producers {
+    /// The producer slices as lines (`skip::Plan::describe`).
+    #[cfg(test)]
+    pub(in crate::instance::execute) fn describe(&self, lines: &mut Vec<String>) {
+        for (rank, slices) in self.launches.iter().enumerate() {
+            for (slice, launch) in slices.iter().enumerate() {
+                let launch = super::describe_launch(launch);
+                lines.push(format!("produce {rank} {slice} {launch}"));
+            }
+        }
+    }
+
     /// Whether `other` issues the same producer slices.
     pub(in crate::instance::execute) fn same(&self, other: &Self) -> Result<bool, String> {
         if self.launches.len() != other.launches.len() {

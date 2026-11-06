@@ -158,6 +158,24 @@ impl Plan {
         Ok(true)
     }
 
+    /// The blocks as lines (`skip::Plan::describe`): each block's compute
+    /// spans, call, consumers and producers, then the tail and the reads.
+    #[cfg(test)]
+    pub(super) fn describe(&self, lines: &mut Vec<String>) {
+        for (index, block) in self.blocks.iter().enumerate() {
+            lines.push(format!("block {index} {:?}", block.compute));
+            block.reduce.describe(lines);
+            if let Some(consume) = &block.consume {
+                consume.describe(lines);
+            }
+            if let Some(produce) = &block.produce {
+                produce.describe(lines);
+            }
+        }
+        lines.push(format!("tail {:?}", self.tail));
+        lines.push(format!("reads {:?}", self.reads));
+    }
+
     /// Rank `rank`'s body launches this plan read (`reads`).
     pub(super) fn reads(&self, rank: usize) -> &[Range<usize>] {
         self.reads.get(rank).map_or(&[], Vec::as_slice)

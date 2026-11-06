@@ -63,6 +63,33 @@ pub(crate) fn plan(handle: BundleHandleV1, request: &[u8]) -> Result<Planned, St
     })
 }
 
+/// A fresh upper-skip lowering of the original batch `request` on the
+/// instance `handle` as lines (`skip::Plan::describe`), then its Engram
+/// plan for a run that takes prepared gathers.
+pub(crate) fn describe(handle: BundleHandleV1, request: &[u8]) -> Result<Vec<String>, String> {
+    with(handle, |instance| {
+        instance.skip_prefill = true;
+        let step = instance.pack(request).map_err(|e| format!("pack: {e:?}"))?;
+        let hashed = match (&instance.dspark, &instance.engram) {
+            (Some(_), Some(engram)) => Some(engram.hash(&step.prefill)?),
+            _ => None,
+        };
+        let run = instance
+            .plan_run(step.prefill, None, hashed)
+            .map_err(|e| format!("plan: {e:?}"))?;
+        let plan = skip::Plan::prepare(instance, &run)?;
+        let mut lines = plan.describe();
+        if let Some(gathers) = instance
+            .prefill_engram
+            .as_ref()
+            .filter(|_| run.route.prepared_gathers)
+        {
+            lines.push(format!("engram {:?}", plan.engram(gathers, false)?));
+        }
+        Ok(lines)
+    })
+}
+
 /// The median host time of `repeats` plans of `request` (`plan`), and of
 /// the same upper-skip plans lowered in full each time.
 pub(crate) fn time(handle: BundleHandleV1, request: &[u8], repeats: usize) -> (Duration, Duration) {

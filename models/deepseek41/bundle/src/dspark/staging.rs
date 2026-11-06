@@ -678,18 +678,21 @@ impl<P: Program> Host for Adapter<'_, P> {
     }
     fn begin_prefill_engram(&mut self, inputs: &[Input]) -> Result<(), String> {
         self.staging.early = None;
+        let is_prefill = |input: &&Input| matches!(input.rows.kind, Kind::Prefill { .. });
+        // Neither option, or no prefill, leaves the step as it was.
+        let begins = self.program.begins_prefill_engram();
+        if !(begins || self.program.plans_prefill_early()) || !inputs.iter().any(|i| is_prefill(&i))
+        {
+            return Ok(());
+        }
         let prefill = inputs
             .iter()
-            .filter(|input| matches!(input.rows.kind, Kind::Prefill { .. }))
+            .filter(is_prefill)
             .map(|input| TargetRows {
                 rows: input.rows,
                 tokens: input.tokens.clone(),
             })
             .collect::<Vec<_>>();
-        let begins = self.program.begins_prefill_engram();
-        if prefill.is_empty() || !(begins || self.program.plans_prefill_early()) {
-            return Ok(());
-        }
         // The target hashes these rows alike: its prefill rows are the
         // inputs' own, and nothing commits history in between.
         let (staging, text, ranks) = (&mut *self.staging, self.text, self.ranks);

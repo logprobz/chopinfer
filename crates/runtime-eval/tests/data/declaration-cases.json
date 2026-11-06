@@ -2888,7 +2888,7 @@
        ],
        "op": "eq",
        "value": true,
-       "source": "tools/qual/README.md#release-gates"
+       "source": "docs/check-kinds.md#release-gates"
       },
       {
        "path": [
@@ -2898,7 +2898,7 @@
        ],
        "op": "ge",
        "value": 1,
-       "source": "tools/qual/README.md#release-gates"
+       "source": "docs/check-kinds.md#release-gates"
       }
      ]
     },
@@ -3007,7 +3007,7 @@
        ],
        "op": "eq",
        "value": true,
-       "source": "tools/qual/README.md#release-gates"
+       "source": "docs/check-kinds.md#release-gates"
       },
       {
        "path": [
@@ -3017,7 +3017,7 @@
        ],
        "op": "ge",
        "value": 1,
-       "source": "tools/qual/README.md#release-gates"
+       "source": "docs/check-kinds.md#release-gates"
       }
      ]
     },
@@ -3150,7 +3150,7 @@
        ],
        "op": "eq",
        "value": true,
-       "source": "tools/qual/README.md#release-gates"
+       "source": "docs/check-kinds.md#release-gates"
       },
       {
        "path": [
@@ -3160,7 +3160,7 @@
        ],
        "op": "ge",
        "value": 1,
-       "source": "tools/qual/README.md#release-gates"
+       "source": "docs/check-kinds.md#release-gates"
       }
      ]
     },
@@ -3267,7 +3267,7 @@
        ],
        "op": "eq",
        "value": true,
-       "source": "tools/qual/README.md#release-gates"
+       "source": "docs/check-kinds.md#release-gates"
       },
       {
        "path": [
@@ -3277,7 +3277,7 @@
        ],
        "op": "ge",
        "value": 1,
-       "source": "tools/qual/README.md#release-gates"
+       "source": "docs/check-kinds.md#release-gates"
       }
      ]
     },
@@ -3384,7 +3384,7 @@
        ],
        "op": "eq",
        "value": true,
-       "source": "tools/qual/README.md#release-gates"
+       "source": "docs/check-kinds.md#release-gates"
       },
       {
        "path": [
@@ -3394,7 +3394,7 @@
        ],
        "op": "ge",
        "value": 1,
-       "source": "tools/qual/README.md#release-gates"
+       "source": "docs/check-kinds.md#release-gates"
       }
      ]
     },
@@ -3588,7 +3588,7 @@
        ],
        "op": "eq",
        "value": true,
-       "source": "tools/qual/README.md#release-gates"
+       "source": "docs/check-kinds.md#release-gates"
       },
       {
        "path": [
@@ -3598,7 +3598,7 @@
        ],
        "op": "ge",
        "value": 1,
-       "source": "tools/qual/README.md#release-gates"
+       "source": "docs/check-kinds.md#release-gates"
       }
      ]
     },

@@ -1,5 +1,5 @@
 //! Default native block-scaled MoE prefill, a within-bound path that
-//! changes bits (models/deepseek41/lab/native_moe_prefill.md).
+//! changes bits.
 //! Flash TP4's target expert
 //! bank runs its gate/up and down tiles through native MXFP4 x MXFP8 MMA
 //! in every prefill step, whatever its row count, so a prompt row's
@@ -7,12 +7,12 @@
 //! epilogue and the routed sum are the serving ones. In steps of at most
 //! [`FUSED_CEIL_ROWS`] rows the intermediate ceil quantizer runs in the
 //! gate/up tiles' epilogue (`native_grouped::Ceil`) with a fixup launch,
-//! bit for bit the serving quantizer's codes, scales and status
-//! (models/deepseek41/lab/native_ceil.md); larger steps keep the separate
+//! bit for bit the serving quantizer's codes, scales and status; larger
+//! steps keep the separate
 //! quantizer, run gate/up through the wider r2w6s3 tile and down through
 //! the 64-row r1w4s2 tile at two CTAs per SM, both with the lean inner
-//! loop behind an activation admission scan (native_tune.md,
-//! native_admission.md); every tile and loop gives the same bits and
+//! loop behind an activation admission scan; every tile and loop gives
+//! the same bits and
 //! refuses the same inputs. Decode,
 //! verify and the drafter's bank are unchanged.
 use super::moe_native_entries as entries;
@@ -34,7 +34,7 @@ pub const LEAN_CUBIN: &str = entries::LEAN_CUBIN;
 /// The intermediate quantizer the gate/up op keeps after its tiles.
 const QUANTIZER: &str = "_moe_ceil_";
 /// The largest step whose gate/up runs the fused ceil. Its paired lab
-/// timing (native_ceil.md, 250 W) was 0.85 of the separate quantizer's at
+/// timing (250 W) was 0.85 of the separate quantizer's at
 /// 512 rows and 0.95 at 2048, but 1.01 to 1.015 at 8192; the bits are the
 /// same either way.
 pub const FUSED_CEIL_ROWS: u32 = 2048;

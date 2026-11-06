@@ -17,7 +17,7 @@ const REDUCTIONS: usize = 81;
 const DEFERRED: usize = 77;
 /// (items, rows, whether the width defers the round): complete widths in
 /// the one-shot's rows, the two-shot's and the two-shot with workers, and
-/// deferring ones (`decode-reductions.md`).
+/// deferring ones.
 const STEPS: [(u32, u32, bool); 9] = [
     (1, 2, false),
     (1, 3, false),

@@ -3,17 +3,14 @@
 //! `certify`) and the router's certified projection
 //! (`f32_projection::certified`) reads the norm's BF16 rows and flags, in
 //! place of the zero-component prepare and projection (`router_prefill`).
-//! Every output is the served pair's bit for bit
-//! (models/deepseek41/lab/router_norm.md); the lab measured the pair at
+//! Every output is the served pair's bit for bit; the lab measured the pair at
 //! 0.880 of the served norm, prepare and projection at 8192 rows. The
 //! projection runs 64-expert tiles (`router_norm_entries::FEATURES`), bit
 //! for bit the 32-expert ones, which the router tile pair measured at 0.77
-//! of them on captured layers 14 and 39 (models/deepseek41/lab/
-//! router_wide.md). The norm writes no widened rows: the projection's SIMT
+//! of them on captured layers 14 and 39. The norm writes no widened rows: the projection's SIMT
 //! path widens the BF16 rows itself, bit for bit, and the narrow pair
-//! measured the norm and router at 0.89 of the step with the widened write
-//! (models/deepseek41/lab/router_narrow.md). Other row counts keep the
-//! served path.
+//! measured the norm and router at 0.89 of the step with the widened write.
+//! Other row counts keep the served path.
 use kernel_core::backend::{Launch, View};
 use kernel_core::contract::{Argument, ArgumentList, Refusal};
 use kernels_sm120::f32_projection::certified;

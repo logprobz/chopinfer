@@ -1,4 +1,4 @@
-//! The narrow pair (../../../router_narrow.md): the router-in-norm step as
+//! The narrow pair: the router-in-norm step as
 //! the 64-expert binding first served it (the certifying norm writing its
 //! widened rows, the router reading them on its SIMT path, now from the lab
 //! cubin) against the bundle's current step: the same norm without the

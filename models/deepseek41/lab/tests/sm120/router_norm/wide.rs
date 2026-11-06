@@ -1,4 +1,4 @@
-//! The router tile pair (../../../router_wide.md): the certified router
+//! The router tile pair: the certified router
 //! projection at its first 32-expert by 32-row tiles (served until the
 //! 64-expert binding, now from the lab cubin) against the same projection
 //! at 32-, 64- and 128-expert tiles, bit for bit on the logits and timed as

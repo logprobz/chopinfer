@@ -3,8 +3,7 @@
 Run with --chunk 2048 for configured chunks or --chunk 8192 for a lone
 request. JSON on stdout is an analysis artifact; save it outside the tree.
 Intervals are half-open absolute token positions. This counts dataflow,
-not GPU time. Sources and the snapshot-byte invariant are documented in
-prefill-dependencies.md.
+not GPU time.
 """
 
 import argparse

@@ -1476,9 +1476,8 @@ fn journal_steps_with(host: &Rc<Host>, options: &[(&str, serde_json::Value)]) {
 /// reduce-scatter, all-gather and round triples becomes one BF16-partial
 /// collective (972 two-shot, 648 one-shot), the rounded module's two
 /// resolves per rank become the two BF16-partial modules' three, and the
-/// prefill protocol buffers take their BF16-partial sizes
-/// (`journal-changes/bf16-kv-partials.md`). The native journals are
-/// byte-identical.
+/// prefill protocol buffers take their BF16-partial sizes. The native
+/// journals are byte-identical.
 const FLASH_JOURNALS: [(&str, KvStorage, (usize, u64)); 6] = [
     (
         "deepseek41-flash-tp1",

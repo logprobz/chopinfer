@@ -15,7 +15,7 @@ use std::path::{Path, PathBuf};
 pub const READY: &str = "CHOPINFER_NATIVE_MOE_READY";
 pub const BANKS: &str = "CHOPINFER_NATIVE_MOE_BANKS";
 pub const WORKER: &str = "CHOPINFER_NATIVE_MOE_WORKER";
-/// The declared layers (native_moe_prefill.md, criterion 2).
+/// The declared layers.
 pub const LAYERS: [u32; 4] = [0, 13, 14, 39];
 /// The declared chunks: (prompt, first position, rows).
 pub const CHUNKS: [(&str, u64, usize); 3] = [
@@ -152,7 +152,12 @@ pub fn captures(manifest: &Value, worker: u32) -> LabResult<Vec<Capture>> {
 
 /// The sealed capture's manifest and the sealed rank banks the captured
 /// harnesses read, or an error naming the missing input. Neither is in the
-/// repository (native_moe_prefill.md, "Captured inputs").
+/// repository: `CHOPINFER_NATIVE_MOE_READY` names the ready record (path and
+/// digest) of the sealed prefill capture, with inputs, routes and the exact
+/// producer's outputs at [`LAYERS`] on all four ranks for [`CHUNKS`], and
+/// `CHOPINFER_NATIVE_MOE_BANKS` the sealed rank banks of those layers (each
+/// rank's gate/up and down weights and scales), with `BANKS.json` naming each
+/// file's bytes and digest.
 pub fn sealed() -> LabResult<(Value, Banks)> {
     let var = |name: &str| std::env::var_os(name).map(PathBuf::from);
     sealed_from(var(READY), var(BANKS))
@@ -163,13 +168,13 @@ fn sealed_from(ready: Option<PathBuf>, banks: Option<PathBuf>) -> LabResult<(Val
     let named = |var: &str, path: Option<PathBuf>, what: &str| -> LabResult<PathBuf> {
         let path = path.ok_or_else(|| {
             format!(
-                "{var} is unset; it must name {what} (native_moe_prefill.md, \"Captured inputs\")"
+                "{var} is unset; it must name {what} (see `captured::sealed`)"
             )
         })?;
         if !path.exists() {
             return Err(format!(
                 "{var} names {}, which does not exist; regenerate {what} \
-                 (native_moe_prefill.md, \"Captured inputs\")",
+                 (see `captured::sealed`)",
                 path.display()
             ));
         }
@@ -188,7 +193,7 @@ fn sealed_from(ready: Option<PathBuf>, banks: Option<PathBuf>) -> LabResult<(Val
     let bytes = std::fs::read(&path).map_err(|e| {
         format!(
             "{READY}: capture manifest {}: {e}; regenerate the capture \
-             (native_moe_prefill.md, \"Captured inputs\")",
+             (see `captured::sealed`)",
             path.display()
         )
     })?;

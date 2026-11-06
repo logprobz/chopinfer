@@ -289,7 +289,7 @@ fn drafter_rows(shape: &crate::shape::Shape, set: Experts) -> bool {
 // routing patterns, with poisoned and live-row replays, dropped-join
 // controls and a clean memcheck subset. Complete-layer time fell in all
 // 2,048 timed cases of those row counts, widths and patterns (largest
-// ratio 0.944; models/deepseek41/lab/moe_direct_wide.md).
+// ratio 0.944).
 pub(crate) fn wide_rows(shape: &crate::shape::Shape, set: Experts) -> Vec<u32> {
     let g = shape.geometry;
     let Some(&widest) = shape.wide_verify_rows().last() else {

@@ -1143,7 +1143,7 @@ fn batched_catch_up_stays_within_the_one_row_exact_bounds() {
 /// per-stage passes; a 128-row bound projects it in one batched launch.
 /// Every row each transfer reads is at or above `retained_start` and its
 /// cell, in the request's slot, holds it. The eager replay drafts
-/// identically (`prefill-dependencies.md`).
+/// identically.
 #[test]
 fn raw_history_cells_older_than_the_window_are_never_read() {
     use model_deepseek41_contract::geometry::FLASH;

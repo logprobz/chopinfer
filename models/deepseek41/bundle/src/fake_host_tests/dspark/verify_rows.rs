@@ -378,8 +378,7 @@ fn row_fusions(
     }
     let symbol = |line: &String| line.split_whitespace().nth(2).unwrap().to_owned();
     // The drafter's window quantizers, whose groups compute the same codes,
-    // scales and status (`journal-changes/wide-verify-ceil.md`); a write's
-    // grid is its rows.
+    // scales and status; a write's grid is its rows.
     const SERIAL: &str = "chop_deepseek41_latent_ceil32_v1";
     const PARALLEL: &str = "chop_deepseek41_latent_ceil32_parallel_v1";
     const FUSED_ROWS: u32 = 6;

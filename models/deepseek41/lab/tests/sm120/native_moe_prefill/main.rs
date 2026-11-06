@@ -1,4 +1,4 @@
-//! Qualification of the native MoE prefill tiles (../../../native_moe_prefill.md):
+//! Qualification of the native MoE prefill tiles:
 //! the instruction probe, f64 oracle bounds, serving-entry and tile
 //! identity, invariance, negative controls and paired timing, over
 //! synthetic and captured operands. GPU tests are ignored by default and

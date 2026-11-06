@@ -15,7 +15,7 @@ pub const CUBIN: &str = "router_norm_deepseek41_sm120";
 /// The served router's tile rows (`f32_zero`).
 pub const TILE_ROWS: u32 = 32;
 /// Experts per tile (`certified::wide_entry_spec`): each activation row
-/// block is read 6 times instead of 12 (models/deepseek41/lab/router_wide.md).
+/// block is read 6 times instead of 12.
 pub const FEATURES: u32 = 64;
 
 /// The served cached prefill norm, also writing the certificate.

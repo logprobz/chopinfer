@@ -4,8 +4,8 @@
 //! certified projection (`f32_projection::certified`, 32-row tiles), which
 //! replace the served norm, the zero-component prepare and its projection;
 //! and the certified projection at wider feature tiles for the router tile
-//! pair (../router_wide.md), and the bound tiles reading only the norm's
-//! BF16 rows for the narrow pair (../router_narrow.md).
+//! pair, and the bound tiles reading only the norm's BF16 rows for the
+//! narrow pair.
 use bundle_deepseek41::sm120::{f32_zero, norm_prefill};
 use kernels_sm120::f32_projection::certified;
 use kernels_sm120::row::rmsnorm_prefill::{self, Mutation};
@@ -61,7 +61,7 @@ pub fn served_router_symbol() -> String {
     bundle_deepseek41::sm120::router_norm_entries::router_symbol()
 }
 
-/// The narrow pair's router (../router_narrow.md): the bound tiles whose
+/// The narrow pair's router: the bound tiles whose
 /// SIMT path widens the norm's BF16 rows itself.
 pub fn normed_router_symbol() -> String {
     certified::normed_symbol(&router(), TILE_ROWS, SERVED_FEATURES)

@@ -1,4 +1,4 @@
-//! Qualification of the router-in-norm prefill (../../../router_norm.md):
+//! Qualification of the router-in-norm prefill:
 //! the served MoE-input norm, zero-component prepare and router projection
 //! against the certifying norm and the certified projection, bit for bit on
 //! every norm output and the router logits, over synthetic rows. GPU tests

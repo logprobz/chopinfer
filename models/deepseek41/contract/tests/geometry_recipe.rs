@@ -1,5 +1,5 @@
 //! The same-architecture geometry recipe at the contract stage
-//! (tests/model_geometry_recipe.py, docs/adding-a-model.md). With
+//! (tests/model_geometry_recipe.py, BUNDLE_ARCHITECTURE.md#adding-a-model). With
 //! `CHOPINFER_DEEPSEEK41_RECIPE_CONFIG` (a checkpoint `config.json`) and
 //! `CHOPINFER_DEEPSEEK41_RECIPE_GEOMETRY` (the id the recipe added), the
 //! config must select that geometry, divide over every supported rank count,

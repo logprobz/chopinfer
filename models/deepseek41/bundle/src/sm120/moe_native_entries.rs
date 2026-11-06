@@ -5,8 +5,7 @@
 //! (`native_grouped::Ceil`) with its fixup, in their own cubin. Unfused
 //! gate/up steps run the wider r2w6s3 tile from a third cubin, with the
 //! scanned inner loop from a fourth, which also holds the two-CTA r1w4s2
-//! down tile of unfused steps and the admission scans before them
-//! (models/deepseek41/lab/native_tune.md, native_admission.md).
+//! down tile of unfused steps and the admission scans before them.
 use kernel_core::gated_mlp::GatedMlpProjection;
 use kernel_core::precision::quantizer::BlockQuantization;
 use kernels_sm120::moe::native_grouped::{self as native, Ceil, Shape, Tile, Tune, Variant};

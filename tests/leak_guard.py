@@ -108,7 +108,6 @@ PENDING = {
         'crates/kernels-sm120/src/backend/moe_experts.rs',
         'crates/kernels-sm120/src/gemm/mod.rs',
         'crates/kernels-sm120/src/gemm/stacked.rs',
-        'crates/kernels-sm120/src/linear/mod.rs',
         'crates/kernels-sm120/src/moe/chained.rs',
         'crates/runtime-bundle-sdk/src/batch.rs',
         'crates/runtime-engine/src/speculation.rs',

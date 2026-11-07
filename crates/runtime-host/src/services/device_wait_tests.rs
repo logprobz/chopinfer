@@ -10,8 +10,9 @@
 use super::*;
 use crate::fake::FakeHostDeviceV1;
 use runtime_bundle_abi::{
-    BundleEventHandleV1, BundleGraphHandleV1, BundleStreamHandleV1, DeviceBufferSpanV1,
-    HostServicesTableV1, HostServicesV1,
+    BundleEventHandleV1, BundleGraphHandleV1, BundleStreamHandleV1, CustomCompletionV1,
+    CustomOperandV1, DeviceBufferSpanV1, HostServicesTableV1, HostServicesV1, LentLaunchV1,
+    export_custom_operation_v1,
 };
 use runtime_engine::profile::{self, DeviceWaits};
 use std::rc::Rc;
@@ -301,6 +302,70 @@ fn an_untraced_readback_records_nothing() {
     assert!(called.elapsed() >= SUCCESSOR);
     assert_eq!(pending(&backend, ranks[0].stream), 0);
     assert_eq!(profile::device_waits(), before);
+}
+
+/// When a custom operation's callback ran.
+#[derive(Default)]
+struct Callback {
+    ran: Option<Instant>,
+}
+
+export_custom_operation_v1!(
+    timed_operation,
+    Callback,
+    |state: &mut Callback, _: LentLaunchV1<'_>| {
+        state.ran = Some(Instant::now());
+        0
+    },
+);
+
+/// A custom operation waits for its stream's earlier work before its
+/// callback, and one that may enqueue waits again after it. Both fences are
+/// device waits: the first opens the window and holds the earlier work's run,
+/// and only an operation that may enqueue closes the window after its
+/// callback.
+#[test]
+fn custom_operation_fences_are_device_waits() {
+    for completion in [
+        CustomCompletionV1::Synchronous,
+        CustomCompletionV1::MayEnqueue,
+    ] {
+        let backend = backend(1);
+        let table = HostServicesTableV1::new(Rc::clone(&backend));
+        let host = table.caller();
+        let (ranks, packet) = ranks(host, 1);
+        let rank = &ranks[0];
+        let mut callback = Callback::default();
+        let step = profile::TraceTotals::begin();
+        launch_time(&backend, TARGET);
+        host.launch_graph(rank.stream, rank.target).unwrap();
+        let called = Instant::now();
+        {
+            let operation = timed_operation(&mut callback);
+            host.run_custom_operation(
+                rank.context,
+                rank.stream,
+                completion,
+                b"timed-operation-v1",
+                &[CustomOperandV1::write(packet)],
+                &operation,
+            )
+            .unwrap();
+        }
+        let returned = Instant::now();
+        let waits = profile::device_waits();
+        drop(step);
+        assert_eq!(pending(&backend, rank.stream), 0);
+        let ran = callback.ran.expect("the callback ran");
+        assert!(waits.micros >= micros(TARGET));
+        assert!(within(waits.first_started.unwrap(), (called, ran)));
+        let ended = waits.last_ended.unwrap();
+        if completion.waits_after_callback() {
+            assert!(within(ended, (ran, returned)), "{completion:?}");
+        } else {
+            assert!(within(ended, (called, ran)), "{completion:?}");
+        }
+    }
 }
 
 /// With step overlap (`CHOPINFER_STEP_OVERLAP=1`) the events queued after a

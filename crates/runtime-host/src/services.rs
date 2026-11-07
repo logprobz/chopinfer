@@ -6096,7 +6096,12 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
         // receive name buffers that work may still be writing. The wait comes
         // before the callback, so a wait this host cannot complete invokes
         // nothing and changes nothing, and the same call can be made again.
-        state.device.synchronize_stream(stream_object)?;
+        {
+            let _profile = runtime_engine::profile::PhaseTimer::new(
+                runtime_engine::profile::StepPhase::DeviceWait,
+            );
+            state.device.synchronize_stream(stream_object)?;
+        }
         let outcome = state.device.run_custom_operation(
             context_object,
             stream_object,
@@ -6114,7 +6119,13 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
         // returns, and every address it was lent belongs to a buffer this host
         // may be asked to release next. The wait is what makes that release
         // safe, and a wait the device refuses is the more serious answer.
-        match (outcome, state.device.synchronize_stream(stream_object)) {
+        let waited = {
+            let _profile = runtime_engine::profile::PhaseTimer::new(
+                runtime_engine::profile::StepPhase::DeviceWait,
+            );
+            state.device.synchronize_stream(stream_object)
+        };
+        match (outcome, waited) {
             (outcome, Ok(())) => outcome,
             (_, Err(status)) => Err(status),
         }

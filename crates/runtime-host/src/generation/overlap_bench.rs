@@ -91,8 +91,15 @@ fn median(mut values: Vec<Duration>) -> f64 {
 }
 
 /// Median host microseconds per step on the critical path, of it the engine
-/// step and the event handling, and the tokens each step emitted.
-fn run(concurrency: usize, prompt: usize, draft: usize, overlap: bool) -> [f64; 4] {
+/// step and the event handling, and the tokens each step emitted. Each verify
+/// item accepts `accepted` of its `draft` proposals.
+fn run(
+    concurrency: usize,
+    prompt: usize,
+    draft: usize,
+    accepted: usize,
+    overlap: bool,
+) -> [f64; 4] {
     let tokenizer = super::stop_tests::tokenizer();
     // Early requests decode while later ones still prefill, 65,536 tokens
     // a step.
@@ -118,7 +125,7 @@ fn run(concurrency: usize, prompt: usize, draft: usize, overlap: bool) -> [f64; 
     };
     let waited = Rc::new(Cell::new(Duration::ZERO));
     let executor = BenchExecutor {
-        wrong: draft.saturating_sub(2),
+        wrong: accepted,
         waited: Rc::clone(&waited),
     };
     let mut engine = Engine::new(config, executor).unwrap();
@@ -243,21 +250,26 @@ fn host_step_cost_bench() {
         "| C | Prompt | K | Tokens/step | Overlap | Critical, us | Engine step, us | Events, us |"
     );
     eprintln!("|---:|---:|---:|---:|---|---:|---:|---:|");
-    for (concurrency, prompt, draft) in [
-        (1, 1024, 0),
-        (16, 1024, 0),
-        (32, 1024, 0),
-        (32, 8192, 0),
-        (128, 1024, 0),
-        (256, 1024, 0),
-        (256, 8192, 0),
-        (16, 1024, 7),
-        (32, 1024, 7),
-        (32, 8192, 7),
-        (128, 1024, 3),
+    for (concurrency, prompt, draft, accepted) in [
+        (1, 1024, 0, 0),
+        (16, 1024, 0, 0),
+        (32, 1024, 0, 0),
+        (32, 8192, 0, 0),
+        (128, 1024, 0, 0),
+        (256, 1024, 0, 0),
+        (256, 8192, 0, 0),
+        (16, 1024, 7, 5),
+        (32, 1024, 7, 5),
+        (32, 8192, 7, 5),
+        (128, 1024, 3, 1),
+        // A served multi-rank drafting decode: three proposals per item,
+        // nearly all accepted.
+        (8, 1024, 3, 3),
+        (16, 1024, 3, 3),
     ] {
         for overlap in [false, true] {
-            let [critical, stepped, handled, tokens] = run(concurrency, prompt, draft, overlap);
+            let [critical, stepped, handled, tokens] =
+                run(concurrency, prompt, draft, accepted, overlap);
             let overlap = if overlap { "on" } else { "off" };
             eprintln!(
                 "| {concurrency} | {prompt} | {draft} | {tokens:.0} | {overlap} | {critical:.0} | {stepped:.0} | {handled:.0} |"

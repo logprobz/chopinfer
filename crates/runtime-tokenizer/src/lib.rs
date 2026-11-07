@@ -774,6 +774,17 @@ impl Tokenizer {
         })
     }
 
+    /// Whether [`Self::token_bytes`] has bytes for every identifier: whether
+    /// the largest is inside the vocabulary.
+    #[must_use]
+    pub fn has_token_ids(&self, ids: &[u32]) -> bool {
+        let size = self.decoded.len() as u64;
+        ids.iter()
+            .map(|id| u64::from(*id))
+            .max()
+            .is_none_or(|largest| largest < size)
+    }
+
     pub fn decode_utf8(&self, ids: &[u32]) -> Result<String> {
         String::from_utf8(self.decode_bytes(ids)?).map_err(|error| {
             TokenizerError::new(format!("decoded tokens are not valid UTF-8: {error}"))
@@ -3034,6 +3045,30 @@ mod tests {
                 .to_string()
                 .contains("malformed")
         );
+    }
+
+    /// A prompt has every token's bytes exactly when each token has its own.
+    #[test]
+    fn token_ids_have_bytes_exactly_when_each_one_does() {
+        let (definition, configuration, contract) = fixture();
+        let tokenizer =
+            Tokenizer::from_verified_bytes(&definition, &configuration, &contract).unwrap();
+        let size = contract.vocabulary_size();
+        for ids in [
+            vec![],
+            vec![0],
+            vec![size - 1],
+            vec![size],
+            vec![u32::MAX],
+            (0..size).collect(),
+            [vec![1; 1000], vec![size], vec![2; 1000]].concat(),
+        ] {
+            assert_eq!(
+                tokenizer.has_token_ids(&ids),
+                ids.iter().all(|id| tokenizer.token_bytes(*id).is_ok()),
+                "{ids:?}"
+            );
+        }
     }
 
     fn fixture() -> (Vec<u8>, Vec<u8>, TokenizerContract) {

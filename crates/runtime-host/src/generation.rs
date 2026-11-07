@@ -2955,8 +2955,10 @@ fn prompt_tail_bytes_v1(
     prompt: &[u32],
     skip_special: bool,
 ) -> Result<Vec<u8>, runtime_tokenizer::TokenizerError> {
-    for id in prompt {
-        tokenizer.token_bytes(*id)?;
+    if !tokenizer.has_token_ids(prompt) {
+        for id in prompt {
+            tokenizer.token_bytes(*id)?;
+        }
     }
     let mut pieces = Vec::new();
     let mut length = 0;
@@ -4767,10 +4769,10 @@ fn validate_logit_bias(
 }
 
 fn validate_token_ids(tokenizer: &Tokenizer, ids: &[u32]) -> Result<(), AdmissionError> {
-    if ids.iter().any(|id| tokenizer.token_bytes(*id).is_err()) {
-        Err(AdmissionError::InvalidPrompt)
-    } else {
+    if tokenizer.has_token_ids(ids) {
         Ok(())
+    } else {
+        Err(AdmissionError::InvalidPrompt)
     }
 }
 

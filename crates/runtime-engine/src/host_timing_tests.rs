@@ -49,6 +49,9 @@ fn commit_trace_separates_scheduler_and_model_scopes() {
 struct SampledExecutor {
     gather_waits: std::collections::VecDeque<u64>,
     device_wait: Duration,
+    /// Per device wait: clock reads just before its timer starts, just
+    /// after, just before it ends and just after.
+    wait_windows: Vec<[Instant; 4]>,
 }
 
 impl ModelExecutor for SampledExecutor {
@@ -60,8 +63,14 @@ impl ModelExecutor for SampledExecutor {
         _: &PreparedAppendBatch,
     ) -> Result<ModelTransaction<Self::TransactionState<'a>>, ExecutorError> {
         if !self.device_wait.is_zero() {
-            let _wait = profile::PhaseTimer::new(profile::StepPhase::DeviceWait);
+            let before = Instant::now();
+            let wait = profile::PhaseTimer::new(profile::StepPhase::DeviceWait);
+            let started = Instant::now();
             std::thread::sleep(self.device_wait);
+            let ending = Instant::now();
+            drop(wait);
+            self.wait_windows
+                .push([before, started, ending, Instant::now()]);
         }
         if let Some(nanoseconds) = self.gather_waits.pop_front() {
             profile::record_mapped_gather_exposed(nanoseconds);
@@ -197,7 +206,8 @@ fn traced_steps_report_the_prepared_gather_waits_their_execution_completed() {
 
 /// `boundary_us` runs from the previous step's last device wait ending to
 /// this step's first one starting: at least the gap between the executor
-/// calls, and short of the waits themselves.
+/// calls, and within the clock reads around the waits' timers, however the
+/// test thread is scheduled.
 #[test]
 fn traced_steps_bound_device_idle_between_their_device_waits() {
     let wait = Duration::from_millis(20);
@@ -218,9 +228,18 @@ fn traced_steps_bound_device_idle_between_their_device_waits() {
     for host in &hosts {
         assert!(host.device_wait >= wait.as_micros() as u64);
     }
-    for host in &hosts[1..] {
+    let windows = &engine.executor.wait_windows;
+    assert_eq!(windows.len(), hosts.len());
+    for (step, host) in hosts.iter().enumerate().skip(1) {
         let (boundary, gap) = (host.boundary.unwrap(), host.gap.unwrap());
-        assert!(gap <= boundary && boundary < gap + wait.as_micros() as u64);
+        let (previous, current) = (windows[step - 1], windows[step]);
+        let shortest = current[0].saturating_duration_since(previous[3]);
+        let longest = current[1].saturating_duration_since(previous[2]);
+        assert!(gap <= boundary);
+        assert!(
+            (shortest.as_micros()..=longest.as_micros()).contains(&u128::from(boundary)),
+            "boundary {boundary} us outside {shortest:?} to {longest:?}"
+        );
     }
 }
 

@@ -1274,7 +1274,12 @@ impl DeviceSamplingSession {
             } else {
                 crate::overlap::device_wait();
                 let waiting = std::time::Instant::now();
-                self.context.synchronize().map_err(host_error)?;
+                {
+                    let _wait = runtime_engine::profile::PhaseTimer::new(
+                        runtime_engine::profile::StepPhase::DeviceWait,
+                    );
+                    self.context.synchronize().map_err(host_error)?;
+                }
                 waiting.elapsed()
             }
         } else {
@@ -2795,5 +2800,68 @@ mod device_submission_lifetime_tests {
             logits.release().unwrap();
             output.release().unwrap();
         }
+    }
+}
+
+#[cfg(all(test, feature = "cuda-fake-driver-tests"))]
+mod device_wait_tests {
+    use super::*;
+    use runtime_cuda::{Driver, fake_driver};
+    use runtime_scheduler::BatchPhase;
+
+    /// Once a session has ordered inputs (after its first device-results
+    /// view), a host-sampled view waits for its logits through the ring
+    /// branch. That wait is the traced step's device wait, as the pinned
+    /// branch's is.
+    #[test]
+    fn a_host_sampled_view_waits_for_its_logits_as_a_device_wait() {
+        fake_driver::reset();
+        let context = Driver::initialize()
+            .unwrap()
+            .retain_primary_context(0)
+            .unwrap();
+        let owner = context.stream().unwrap();
+        let pool = context.default_memory_pool().unwrap();
+        let width = 128_usize;
+        let logits = pool.allocate(&owner, width * 4).unwrap();
+        owner.synchronize().unwrap();
+        let mut view = runtime_bundle_abi::BundleLogitsViewV1::empty();
+        view.element_type = runtime_bundle_abi::BUNDLE_LOGITS_ELEMENT_V1_F32;
+        view.buffer.length = (width * 4) as u64;
+        view.row_stride_elements = width as u64;
+        view.row_count = 1;
+        view.live_width = width as u32;
+        let item = ModelBatchItem::new(RequestId::new(1), BatchPhase::Decode, vec![7], true)
+            .with_sampling(SamplingWork {
+                parameters: SamplingParameters::new(0.0).unwrap(),
+                state: SamplingState::new(1),
+                history: Default::default(),
+                emitted_tokens: 0,
+                stop_ids: Vec::new(),
+                constraint: None,
+            });
+        let mut sampler = DeviceSamplingSession::new(context.clone()).unwrap();
+        for ordered in [false, true] {
+            if ordered {
+                sampler.ordered_inputs = Some(PinnedUploadRing::new(
+                    PinnedHostBuffer::new(&context, 4096).unwrap(),
+                ));
+            }
+            let step = runtime_engine::profile::TraceTotals::begin();
+            // The synthetic driver runs no sampling kernel, so the issue
+            // fails at its first launch, after the wait this test checks.
+            assert_eq!(
+                sampler.issue(&logits, view, &[&item]),
+                Err(BundleStatusV1::HostError)
+            );
+            let waits = runtime_engine::profile::device_waits();
+            drop(step);
+            assert!(
+                waits.first_started.is_some() && waits.last_ended.is_some(),
+                "ordered inputs {ordered}"
+            );
+            assert_eq!(sampler.ordered_inputs.is_some(), ordered);
+        }
+        logits.release().unwrap();
     }
 }

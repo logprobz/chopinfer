@@ -287,7 +287,7 @@ mod tests {
                                 && a["symbol"] == call.launch.symbol
                                 && a["phase"] == "prefill"
                                 && a["family"] == tag.family
-                                && ["tp4-ar", "tp4-dspark*"].iter().all(|profile| {
+                                && ["tp4-ar*", "tp4-dspark*"].iter().all(|profile| {
                                     a["profiles"]
                                         .as_array()
                                         .unwrap()

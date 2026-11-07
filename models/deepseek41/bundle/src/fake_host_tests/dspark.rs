@@ -29,6 +29,7 @@ mod round_trips;
 mod undrafted;
 mod verify_rows;
 mod wide_draft;
+mod wide_successor;
 pub(super) use host::MappedHost;
 type Sink = RecordingSink<super::conformance::Limits>;
 

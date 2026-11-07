@@ -96,7 +96,9 @@ impl LogitsRowSinkV1 for DeviceSink {
     }
 }
 
-fn batch(items: u32, start: u64, k: u32) -> Vec<u8> {
+/// One verify step of `items` items in slots from 0, each `k` drafts
+/// after `start` committed tokens.
+pub(super) fn batch(items: u32, start: u64, k: u32) -> Vec<u8> {
     BatchRequestV1::new(
         BatchWireVersionV1::V3,
         (0..items)

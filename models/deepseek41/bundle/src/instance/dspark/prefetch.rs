@@ -268,3 +268,36 @@ pub(crate) fn for_test(
     })
 }
 
+/// The drafting items of the successor the instance holds, if any.
+#[cfg(test)]
+pub(crate) fn queued_for_test(handle: runtime_bundle_abi::BundleHandleV1) -> Option<usize> {
+    crate::instance::INSTANCES.with(|table| {
+        let mut table = table.borrow_mut();
+        let device = table.get_mut(handle)?.dspark.as_ref()?;
+        device.prefetch.plan.as_ref().map(|plan| plan.drafts.len())
+    })
+}
+
+/// Each rank's committed ring and the successor's undo and next rings.
+#[cfg(test)]
+pub(crate) fn rings_for_test(
+    handle: runtime_bundle_abi::BundleHandleV1,
+) -> Vec<(Span, Span, Span)> {
+    crate::instance::INSTANCES.with(|table| {
+        let mut table = table.borrow_mut();
+        let instance = table.get_mut(handle).expect("instance");
+        let device = instance.dspark.as_ref().expect("drafter");
+        instance
+            .buffers
+            .iter()
+            .zip(&device.prefetch.ranks)
+            .map(|(buffers, memory)| {
+                (
+                    buffers.state.named("dspark.ring").expect("ring"),
+                    memory.undo_ring,
+                    memory.next_ring,
+                )
+            })
+            .collect()
+    })
+}

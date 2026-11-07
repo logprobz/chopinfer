@@ -1526,6 +1526,10 @@ pub(crate) use dspark::drafter_launches_at_depth_for_test as dspark_drafter_laun
 pub(crate) use dspark::drafter_launches_for_test as dspark_drafter_launches;
 #[cfg(test)]
 pub(crate) use dspark::prefetch::for_test as dspark_prefetch_for_test;
+#[cfg(test)]
+pub(crate) use dspark::prefetch::queued_for_test as dspark_successor_for_test;
+#[cfg(test)]
+pub(crate) use dspark::prefetch::rings_for_test as dspark_successor_rings_for_test;
 
 #[cfg(test)]
 pub(crate) fn fold_views_for_test(

@@ -762,18 +762,25 @@ Step and request logs are not replay inputs; they omit token contents.
   `boundary_us`, an upper bound on device idle time between steps). Phases
   nest, so do not sum them.
 - `host.device_wait_us` is the time the engine thread blocked on the device:
-  stream and event synchronizations, device-to-host readbacks and host
-  sampling's wait for its logits. Readbacks include a bundle's blocking
-  copies (DeepSeek's DSpark boundary readback, GLM's and MiMo's draft token
-  readbacks) and device-result collection. Waiting for upload ring space is
-  `upload_backpressure_us` instead, and a full peer-copy queue's wait is not
-  timed. `boundary_us` runs from the previous step's last device wait ending
+  stream and event synchronizations; device-to-host readbacks, which are a
+  bundle's blocking copies (DeepSeek's DSpark boundary readback, GLM's and
+  MiMo's draft token readbacks), device-result collection and prompt logprob
+  logit reads; host sampling's wait for its logits and for sampler work a
+  view left behind; the fences before and after a bundle's custom operation;
+  and the wait for a step's serving KV page zeroing and copies. It leaves out
+  the wait for upload ring space (`upload_backpressure_us`), a full peer-copy
+  queue's wait, debug logits capture (`CHOPINFER_SAMPLING_CAPTURE`), the
+  CUDA host's generic collective fallback, which no served bundle uses, and
+  waits outside step execution: load, allocation, release and the drains
+  after a failed or cancelled execution.
+  `boundary_us` runs from the previous step's last device wait ending
   to this step's first one starting, or to deferred event delivery starting
   (`CHOPINFER_STEP_OVERLAP=1`), which runs only once device work is queued.
   It is absent when either step never waited. The device has work queued
   during each wait, so between the two steps it is idle for at most
   `boundary_us`; it can also idle between a step's own waits. Hosts built
-  before 2026-11-07 did not count a bundle's blocking copies: their DSpark
+  before 2026-11-07 counted only stream and event synchronizations,
+  device-result collection and part of host sampling's waits: their DSpark
   decode records show `device_wait_us` near 0 and a `boundary_us` close to
   the whole step.
 - Within `host.commit_us`, `scheduler_commit_us` measures scheduler preflight

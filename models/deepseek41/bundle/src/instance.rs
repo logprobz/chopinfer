@@ -160,9 +160,12 @@ pub struct Instance {
     state_capture_root: Option<std::path::PathBuf>,
     #[cfg(feature = "state-capture")]
     transition_capture_bytes: std::cell::Cell<u64>,
-    /// The last step whose saved status a successor dump holds.
+    /// The drafted step whose execute dumps its saved status checks, or 0.
     #[cfg(feature = "state-capture")]
     successor_status_step: std::cell::Cell<u64>,
+    /// The checks that execute dumped.
+    #[cfg(feature = "state-capture")]
+    successor_status_checks: std::cell::Cell<u32>,
     /// Per-layer taps of prefills (`crate::taps`), when the environment
     /// asks for them.
     taps: crate::taps::StepTaps,
@@ -1090,6 +1093,8 @@ fn create(services: HostServicesV1, bytes: &[u8]) -> Result<Instance, Failed<Ins
         transition_capture_bytes: std::cell::Cell::new(0),
         #[cfg(feature = "state-capture")]
         successor_status_step: std::cell::Cell::new(0),
+        #[cfg(feature = "state-capture")]
+        successor_status_checks: std::cell::Cell::new(0),
         config,
         prefill_counts: Vec::new(),
         anchor_spares: Vec::new(),

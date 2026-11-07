@@ -11,13 +11,15 @@
 //!   draft decode rows reads it; such a step whose items it does not name
 //!   fails.
 //! - `successor-steps`: each drafted step writes `successor-step-{step}/`:
-//!   every rank's saved status before validation (`status-rank-R.bin`),
+//!   every rank's saved status before each check of the step's execute,
+//!   decode-only or mixed, appended in check order (`status-rank-R.bin`),
 //!   its draft IDs then confidence (`drafts-rank-R.bin`), the drafter ring
 //!   cells each item's context holds (`ring-rank-R.bin`), and `step.json`,
-//!   with those cells' positions, the computed heads and the successor
-//!   outcome. A context holds, at each stage, the cells of the positions it
-//!   projected within the last window, from its retained start: other
-//!   cells hold an earlier occupant's bytes, which no draft reads.
+//!   with the status checks, those cells' positions, the computed heads and
+//!   the successor outcome. A context holds, at each stage, the cells of the
+//!   positions it projected within the last window, from its retained
+//!   start: other cells hold an earlier occupant's bytes, which no draft
+//!   reads. Every I/O error names its path.
 use super::Instance;
 use crate::dspark::device::slice;
 use crate::dspark::execution::Input;
@@ -43,21 +45,31 @@ struct RingCells {
 /// The largest `successor.json` read.
 const CONTROL_BYTES: u64 = 64 << 10;
 
+/// `result`, its error naming `path`.
+fn at<T>(path: &Path, result: std::io::Result<T>) -> Result<T, String> {
+    result.map_err(|error| format!("{}: {error}", path.display()))
+}
+
 fn read_control(path: &Path) -> Result<Value, String> {
-    let metadata = std::fs::symlink_metadata(path).map_err(|error| error.to_string())?;
+    let metadata = at(path, std::fs::symlink_metadata(path))?;
     if !metadata.is_file() || metadata.len() > CONTROL_BYTES {
-        return Err("successor control must be a regular file of at most 64 KiB".into());
+        return Err(format!(
+            "{}: successor control must be a regular file of at most 64 KiB",
+            path.display()
+        ));
     }
     let mut bytes = Vec::new();
-    std::fs::File::open(path)
-        .map_err(|error| error.to_string())?
+    let read = at(path, std::fs::File::open(path))?
         .take(CONTROL_BYTES + 1)
-        .read_to_end(&mut bytes)
-        .map_err(|error| error.to_string())?;
+        .read_to_end(&mut bytes);
+    at(path, read)?;
     if bytes.len() as u64 > CONTROL_BYTES {
-        return Err("successor control grew past its bound".into());
+        return Err(format!(
+            "{}: successor control grew past its bound",
+            path.display()
+        ));
     }
-    serde_json::from_slice(&bytes).map_err(|error| format!("successor control: {error}"))
+    serde_json::from_slice(&bytes).map_err(|error| format!("{}: {error}", path.display()))
 }
 
 /// The feedback `control` names for the drafting decode step `inputs`.
@@ -189,8 +201,39 @@ impl Instance {
             return Ok(None);
         };
         let directory = root.join(format!("successor-step-{}", device.diagnostic.step_id));
-        std::fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
+        at(&directory, std::fs::create_dir_all(&directory))?;
         Ok(Some(directory))
+    }
+
+    /// Before a step's execute: a drafted step dumps each saved status
+    /// check while it runs.
+    pub(super) fn begin_successor_status(&self, inputs: &[Input]) {
+        let step = match &self.dspark {
+            Some(device)
+                if self.successor_control("successor-steps").is_some()
+                    && inputs.iter().any(|input| input.rows.kind.drafts() > 0) =>
+            {
+                device.diagnostic.step_id
+            }
+            _ => 0,
+        };
+        self.successor_status_step.set(step);
+        self.successor_status_checks.set(0);
+    }
+
+    /// After a step's execute: later checks, a commit's among them, dump
+    /// nothing.
+    pub(super) fn end_successor_status(&self) {
+        self.successor_status_step.set(0);
+    }
+
+    fn append(path: &Path, bytes: &[u8]) -> Result<(), String> {
+        use std::io::Write as _;
+        let file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path);
+        at(path, at(path, file)?.write_all(bytes))
     }
 
     fn read_span(&self, rank: usize, span: Span, output: &mut Vec<u8>) -> Result<(), String> {
@@ -210,19 +253,19 @@ impl Instance {
             return Ok(());
         };
         let step = device.diagnostic.step_id;
-        if device.cycle.pending.is_none() || self.successor_status_step.get() == step {
+        if step == 0 || self.successor_status_step.get() != step {
             return Ok(());
         }
         let Some(directory) = self.successor_step_directory()? else {
             return Ok(());
         };
-        self.successor_status_step.set(step);
         for (rank, stored) in device.ranks.iter().enumerate() {
             let mut bytes = Vec::new();
             self.read_span(rank, stored.status.pending()?, &mut bytes)?;
-            std::fs::write(directory.join(format!("status-rank-{rank}.bin")), bytes)
-                .map_err(|error| error.to_string())?;
+            Self::append(&directory.join(format!("status-rank-{rank}.bin")), &bytes)?;
         }
+        self.successor_status_checks
+            .set(self.successor_status_checks.get() + 1);
         Ok(())
     }
 
@@ -303,9 +346,11 @@ impl Instance {
                 }
             }
             for (name, bytes) in [("drafts", drafts), ("ring", ring)] {
-                std::fs::write(directory.join(format!("{name}-rank-{rank}.bin")), bytes)
-                    .map_err(|error| error.to_string())?;
+                let path = directory.join(format!("{name}-rank-{rank}.bin"));
+                at(&path, std::fs::write(&path, bytes))?;
             }
+            // A step whose execute checked no status still lists its file.
+            Self::append(&directory.join(format!("status-rank-{rank}.bin")), &[])?;
         }
         let items: Vec<_> = inputs
             .iter()
@@ -318,14 +363,13 @@ impl Instance {
             "schema": "chopinfer.deepseek41.successor-step.v1",
             "step": device.diagnostic.step_id, "items": items, "drafting": drafting,
             "computed_positions": device.computed_positions, "rings": rings,
+            "status_checks": self.successor_status_checks.get(),
             "consumed": device.prefetch.outcome.get(),
             "queued": device.prefetch.plan.is_some(),
         });
-        std::fs::write(
-            directory.join("step.json"),
-            serde_json::to_vec_pretty(&record).map_err(|error| error.to_string())?,
-        )
-        .map_err(|error| error.to_string())
+        let path = directory.join("step.json");
+        let bytes = serde_json::to_vec_pretty(&record).map_err(|error| error.to_string())?;
+        at(&path, std::fs::write(&path, bytes))
     }
 }
 

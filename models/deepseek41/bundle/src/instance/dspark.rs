@@ -583,6 +583,8 @@ impl Instance {
             .filter(|input| input.rows.kind.drafts() > 0)
             .count();
         let streamed = self.plans.streamed_launches();
+        #[cfg(feature = "state-capture")]
+        self.begin_successor_status(&inputs);
         let mut result = self.dspark_with(
             |runtime, host| {
                 runtime
@@ -596,6 +598,8 @@ impl Instance {
             text,
             &mut times,
         );
+        #[cfg(feature = "state-capture")]
+        self.end_successor_status();
         // A failed step settles the gathers it began early before it
         // returns, fencing every destination, as an issue failure does: its
         // poisoned runtime refuses the next execute before that entry's

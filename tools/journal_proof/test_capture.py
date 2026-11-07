@@ -6,6 +6,7 @@ import hashlib
 import io
 import json
 import os
+import re
 from pathlib import Path
 import subprocess
 import sys
@@ -193,6 +194,61 @@ class CaptureTests(Harness):
         _, out, record = self.capture(self.base, revision, dump=lambda out: write_dump(out, self.base, sites))
         self.assertTrue(record['complete'])
         self.assertEqual(json.loads((out / 'index.json').read_text())['sites'], sites)
+
+    def plan_tables(self, check):
+        """A revision pinning the step body in two tables, as a model's plan
+        metadata pins a plan with DMA on and off, and checking table rows in
+        a fresh plan test and a streamed plan test by `check`. Returns the
+        revision and the line of each test's call."""
+        body = self.base[STEP]
+        pin = f'({len(body)}, 0x{fnv(chr(10).join(body).encode())})'
+        table = (f'const DMA: [(&str, (usize, u64)); 1] = [("r1", {pin})];\n'
+                 f'const NO_DMA: [(&str, (usize, u64)); 1] = [("r1", {pin})];\n'
+                 f'fn plans() {{ {check} }}\nfn streamed() {{ {check} }}\n')
+        revision = self.repo.commit({CREATE: self.base[CREATE]}, source_extra=TEST + table, extra_files={
+            'crates/bundle-runtime/src/fake_host.rs': FAKE_HOST.encode(), ROOT + 'src/instance.rs': INSTANCE.encode(),
+            'ci/rust-profile.env': b'export CARGO_BUILD_JOBS=1\n'})
+        source = self.repo.run('show', f'{revision}:{ROOT}src/fixture_tests.rs').splitlines()
+        return revision, {test: next(n for n, item in enumerate(source, 1) if item.startswith(f'fn {test}()'))
+                          for test in ('plans', 'streamed')}
+
+    def plan_dump(self, lines, names):
+        """A run in which each test checks its `names` at its call line."""
+        def dump(out):
+            for test, line in lines.items():
+                bodies = {CREATE: self.base[CREATE], **{name: self.base[STEP] for name in names.get(test, [])}}
+                sites = {CREATE: [ROOT + 'src/fixture_tests.rs', 2],
+                         **{name: [ROOT + 'src/fixture_tests.rs', line] for name in names.get(test, [])}}
+                write_dump(out, bodies, sites, test=test)
+        return dump
+
+    def test_plan_pins_compared_by_digest_alone_are_refused(self):
+        # DeepSeek's plan metadata compared each plan's digest with its table
+        # row and called check_journal only on a mismatch, so a passing run
+        # dumped no plan and neither table row was accounted for.
+        revision, lines = self.plan_tables('if journal_digest(&lines) != pin { check_journal(&lines, pin, &file).unwrap(); }')
+        pin = (len(self.base[STEP]), fnv(chr(10).join(self.base[STEP]).encode()))
+        with self.assertRaisesRegex(Invalid, re.escape(f'source pins exactly: unreached {[pin, pin]}, unpinned []')):
+            self.capture({CREATE: self.base[CREATE]}, revision, dump=self.plan_dump(lines, {}))
+
+    def test_plan_pins_checked_as_journals_are_captured(self):
+        # Each pinned plan is checked as a journal: both tables' rows by the
+        # fresh plan test and again by the streamed plan test. The two
+        # streamed checks of the byte-identical body are its aliases, and
+        # the table rows are both accounted for.
+        names = dict(plans=['plan-dma-r1.txt', 'plan-r1.txt'], streamed=['streamed-dma-r1.txt', 'streamed-r1.txt'])
+        revision, lines = self.plan_tables('check_journal(&lines, pin, &file).unwrap();')
+        bodies = {CREATE: self.base[CREATE], **{name: self.base[STEP] for made in names.values() for name in made}}
+        _, out, record = self.capture(bodies, revision, dump=self.plan_dump(lines, names))
+        self.assertTrue(record['complete'])
+        index = json.loads((out / 'index.json').read_text())
+        self.assertEqual(set(index['pins']), set(bodies))
+        self.assertEqual(index['pin_aliases'], {'streamed-dma-r1.txt': 'plan-r1.txt', 'streamed-r1.txt': 'plan-r1.txt'})
+        self.assertEqual({name: site[1] for name, site in index['sites'].items() if name != CREATE},
+                         {name: lines[test] for test, made in names.items() for name in made})
+        # Without the streamed test, the second call is never reached.
+        with self.assertRaisesRegex(Invalid, rf'never reached.*fixture_tests\.rs:{lines["streamed"]}'):
+            self.capture(bodies, revision, dump=self.plan_dump({'plans': lines['plans']}, names))
 
     def test_an_empty_journal_is_captured_as_a_text_journal(self):
         # A guard pinned as the empty body (0, 0xcbf29ce484222325): its test's

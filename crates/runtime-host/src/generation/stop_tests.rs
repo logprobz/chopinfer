@@ -806,6 +806,141 @@ fn a_refused_token_names_the_decoder_reason_ordinal_and_id() {
     }
 }
 
+/// Each engine event leaves a request's generation in the worker while the
+/// request lives, and removes it at the event that ends its output: the
+/// engine's length finish, a client stop the worker stops the request for,
+/// or a full event stream the worker cancels the request for. Events after
+/// that are ignored.
+#[test]
+fn a_generation_leaves_the_worker_at_the_event_that_ends_its_output() {
+    let tokenizer = tokenizer();
+    let ids = [1, 2, 3, 4].map(RequestId::new);
+    let maximum = [3, 8, 8, 6];
+    for speculative in [false, true] {
+        for sampled in [false, true] {
+            let config = EngineConfig::new(
+                SchedulerConfig::new(4, 32, 64, 4, 1).unwrap(),
+                KvGeometry::new(4, 64).unwrap(),
+                ModelVocabulary::new(259).unwrap(),
+                128,
+                64,
+            )
+            .unwrap();
+            let config = if speculative {
+                config.with_speculation(
+                    SpeculationConfig::new(3, 32, SpeculationMode::Fixed, DraftSource::Bundle)
+                        .unwrap(),
+                )
+            } else {
+                config
+            };
+            let model = ScriptedModel {
+                tokens: vec![X; 8],
+                sampled,
+                ..Default::default()
+            };
+            let mut engine = Engine::new(config, model).unwrap();
+            let mut generations = BTreeMap::new();
+            let mut receivers = Vec::new();
+            for (index, id) in ids.into_iter().enumerate() {
+                engine
+                    .submit(
+                        EngineRequest::new(
+                            id,
+                            vec![X],
+                            maximum[index],
+                            SamplingParameters::new(0.0).unwrap(),
+                            0,
+                            vec![EOS],
+                            ModelVocabulary::new(259).unwrap(),
+                        )
+                        .unwrap(),
+                    )
+                    .unwrap();
+                let stops = if index == 1 {
+                    vec!["xx".to_owned()]
+                } else {
+                    Vec::new()
+                };
+                let (mut generation, mut receiver) = active(0, &stops);
+                if index == 2 {
+                    // Room for one event, which nothing reads.
+                    let (sender, full) = tokio::sync::mpsc::channel(1);
+                    generation.events = Outbox::new(
+                        EventSender::new(sender),
+                        generation.cancellation.clone(),
+                        false,
+                    );
+                    receiver = full;
+                }
+                generations.insert(id, generation);
+                receivers.push(receiver);
+            }
+            let cancellation = generations[&ids[2]].cancellation.clone();
+            let mut left = BTreeMap::new();
+            for step in 0..16 {
+                engine.step().unwrap();
+                for event in engine.drain_events() {
+                    let id = event.request_id();
+                    let live = generations.contains_key(&id);
+                    assert!(handle_engine_event(
+                        &tokenizer,
+                        &mut engine,
+                        &mut generations,
+                        event
+                    ));
+                    if live && !generations.contains_key(&id) {
+                        left.insert(id, step);
+                    }
+                    // A generation never comes back.
+                    assert!(left.keys().all(|gone| !generations.contains_key(gone)));
+                }
+                engine.audit().unwrap();
+                if generations.is_empty() {
+                    break;
+                }
+            }
+            assert!(generations.is_empty());
+            assert_eq!(left.len(), ids.len());
+            for id in ids {
+                assert!(match engine.request_state(id) {
+                    Ok(state) => state.is_terminal(),
+                    Err(EngineError::Scheduler(
+                        runtime_scheduler::ScheduleError::UnknownRequest(_),
+                    )) => true,
+                    Err(_) => false,
+                });
+            }
+            assert!(cancellation.is_cancelled());
+            let streams = receivers
+                .iter_mut()
+                .map(|receiver| {
+                    let mut events = Vec::new();
+                    while let Ok(event) = receiver.try_recv() {
+                        events.push(event);
+                    }
+                    events
+                })
+                .collect::<Vec<_>>();
+            let finish = |events: &[GenerationEvent]| match events.last() {
+                Some(GenerationEvent::Finished { reason, usage }) => {
+                    Some((*reason, usage.completion_tokens))
+                }
+                _ => None,
+            };
+            assert_eq!(finish(&streams[0]), Some((FinishReason::Length, 3)));
+            assert_eq!(finish(&streams[1]), Some((FinishReason::Stop, 2)));
+            assert_eq!(
+                streams[2].len(),
+                1,
+                "one event fit, then the worker cancelled"
+            );
+            assert!(matches!(streams[2][0], GenerationEvent::Content(_)));
+            assert_eq!(finish(&streams[3]), Some((FinishReason::Length, 6)));
+        }
+    }
+}
+
 fn client_stop_metrics(maximum: usize) {
     for observed in [false, true] {
         client_stop_observer_metrics(maximum, observed);

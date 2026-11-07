@@ -104,8 +104,13 @@ fn engine(concurrency: usize, drafts: usize, trace: bool) -> Engine<SampledExecu
     .unwrap();
     if drafts > 0 {
         config = config.with_speculation(
-            SpeculationConfig::new(drafts, 32, SpeculationMode::Fixed, DraftSource::Bundle)
-                .unwrap(),
+            SpeculationConfig::new(
+                drafts,
+                concurrency * (drafts + 1),
+                SpeculationMode::Fixed,
+                DraftSource::Bundle,
+            )
+            .unwrap(),
         );
     }
     let mut engine = Engine::new(config, SampledExecutor::default()).unwrap();
@@ -247,7 +252,12 @@ fn traced_steps_bound_device_idle_between_their_device_waits() {
 #[ignore = "release CPU host timing microbenchmark"]
 fn release_host_phase_costs() {
     assert!(!cfg!(debug_assertions), "run with --release");
-    for (concurrency, drafts) in [(1, 0), (1, 5), (8, 0), (8, 4), (8, 3), (16, 0), (32, 0)] {
+    let shapes = [0, 3, 4, 7].into_iter().flat_map(|drafts| {
+        [1, 8, 16, 32, 64, 128]
+            .into_iter()
+            .map(move |concurrency| (concurrency, drafts))
+    });
+    for (concurrency, drafts) in shapes {
         let mut measured = Vec::new();
         for _ in 0..5 {
             let mut engine = engine(concurrency, drafts, true);

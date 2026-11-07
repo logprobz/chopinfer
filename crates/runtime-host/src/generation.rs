@@ -7699,6 +7699,9 @@ mod tests {
 }
 
 #[cfg(test)]
+#[path = "generation/admission_bench.rs"]
+mod admission_bench;
+#[cfg(test)]
 #[path = "generation/overlap_bench.rs"]
 mod overlap_bench;
 #[cfg(test)]

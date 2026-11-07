@@ -5054,3 +5054,114 @@ fn ordered_json_preserves_number_like_object_keys_and_rejects_nonfinite_floats()
         );
     }
 }
+
+/// A long prompt's IDs and the text and per-token labels a backend echoes
+/// for it: words, multi-byte characters and characters JSON escapes, about
+/// five bytes a token. It is built on another thread, as a served echo is.
+fn long_prompt_echo(tokens: usize) -> (Vec<u32>, String, Vec<String>) {
+    std::thread::spawn(move || {
+        const PIECES: [&str; 8] = [
+            " the",
+            " model",
+            "\u{4e2d}\u{6587}",
+            " \"quoted\"",
+            "\n",
+            " caf\u{e9}",
+            "\\path",
+            " tokens",
+        ];
+        let ids = (0..tokens)
+            .map(|index| (index as u32).wrapping_mul(7919) % 128_000)
+            .collect::<Vec<_>>();
+        let labels = (0..tokens)
+            .map(|index| PIECES[index % PIECES.len()].to_owned())
+            .collect::<Vec<_>>();
+        (ids, labels.concat(), labels)
+    })
+    .join()
+    .unwrap()
+}
+
+/// The events of a one-token completion of a long prompt, with the prompt
+/// echo first when it is asked for.
+fn long_prompt_events(prompt: Option<(Vec<u32>, String, Vec<String>)>) -> Vec<GenerationEvent> {
+    let echo = prompt.is_some();
+    let mut events = prompt
+        .map(|(token_ids, text, tokens)| GenerationEvent::Prompt {
+            token_ids,
+            text,
+            tokens,
+        })
+        .into_iter()
+        .collect::<Vec<_>>();
+    events.push(GenerationEvent::GeneratedTokenLogprobs(vec![
+        GeneratedTokenLogprob {
+            token_id: 11,
+            token: "hi".to_owned(),
+            bytes: b"hi".to_vec(),
+            logprob: -0.1,
+            top_logprobs: Vec::new(),
+        },
+    ]));
+    if echo {
+        events.push(GenerationEvent::GeneratedTokenIds(vec![11]));
+    }
+    events.extend([
+        GenerationEvent::Content(VisibleContent {
+            delta: "hi".to_owned(),
+            generated_token_count: 1,
+        }),
+        GenerationEvent::Finished {
+            reason: FinishReason::Length,
+            usage: TokenUsage {
+                prompt_tokens: PROMPT_TOKENS as u64,
+                completion_tokens: 1,
+                cached_tokens: None,
+            },
+        },
+    ]);
+    events
+}
+
+/// The reply path's cost for a long prompt that returns its token IDs, the
+/// served admission probe's request: a one-token greedy completion with
+/// logprobs over a 94,080-token prompt, against the same request without
+/// the echo. Prints one `REPLY_COST` line per variant.
+///
+/// `cargo test --release -p runtime-server --test request_surface
+/// long_prompt_echo_reply_cost -- --ignored --nocapture`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "release CPU reply-path timing"]
+async fn long_prompt_echo_reply_cost() {
+    const TOKENS: usize = 94_080;
+    const ROUNDS: usize = 40;
+    let server = InProcessServerV1::full();
+    let (ids, _, _) = long_prompt_echo(TOKENS);
+    for echo in [false, true] {
+        let mut request = serde_json::json!({"model": MODEL, "prompt": ids, "max_tokens": 1,
+            "temperature": 0, "logprobs": 1, "seed": 1});
+        if echo {
+            request["return_token_ids"] = Value::Bool(true);
+        }
+        let request = request.to_string();
+        let mut micros = Vec::new();
+        let mut bytes = 0;
+        for _ in 0..ROUNDS {
+            let events = long_prompt_events(echo.then(|| long_prompt_echo(TOKENS)));
+            *server.backend.replay.lock().unwrap() = Some(events);
+            let started = std::time::Instant::now();
+            let response = server.post("/v1/completions", &request).await;
+            micros.push(started.elapsed().as_micros() as u64);
+            assert_eq!(response.status, 200, "{}", &response.body[..200]);
+            bytes = response.body.len();
+        }
+        micros.sort_unstable();
+        println!(
+            "REPLY_COST {}",
+            serde_json::json!({"echo": echo, "tokens": TOKENS, "rounds": ROUNDS,
+                "body_bytes": bytes, "median_us": micros[ROUNDS / 2],
+                "p10_us": micros[ROUNDS / 10], "p90_us": micros[ROUNDS * 9 / 10],
+                "all_us": micros})
+        );
+    }
+}

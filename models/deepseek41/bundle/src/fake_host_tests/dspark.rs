@@ -27,6 +27,7 @@ mod prefill_successor;
 mod results;
 mod retention;
 mod round_trips;
+mod successor_capture;
 mod undrafted;
 mod verify_rows;
 mod wide_draft;

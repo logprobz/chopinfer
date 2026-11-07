@@ -69,7 +69,7 @@ const SNAPSHOT_PAGE: u64 = 512;
 
 /// An instance of `items` slots serving `verify` rows with the successor
 /// bound `bound` and `options`, each item's three-token prompt committed.
-fn prompted(
+pub(super) fn prompted(
     items: u32,
     verify: u32,
     bound: u32,
@@ -126,7 +126,7 @@ fn prompted_in(
 /// One device-result cycle: every item verifies `k` drafts after `start`
 /// committed tokens, `projected` of its rows caught up, each accepting
 /// `accepted`. Returns the step's journal, or the failed execute.
-fn cycle(
+pub(super) fn cycle(
     host: &Rc<Host>,
     instance: &mut BundleInstanceV1,
     (items, k, start): (u32, u32, u64),

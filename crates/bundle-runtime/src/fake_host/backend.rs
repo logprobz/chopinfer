@@ -786,6 +786,11 @@ impl<P: FakePackage> HostServicesBackendV1 for Backend<P> {
             // runtime-host maps CUDA_ERROR_INVALID_VALUE from the driver to HostError.
             return Err(BundleStatusV1::HostError);
         }
+        device
+            .check_pointer_slots(arguments)
+            .inspect_err(|status| {
+                eprintln!("fake host launch_cuda_symbol {name} peer pointers: {status:?}");
+            })?;
         self.0.admit_launch(stream, &name, config, arguments)?;
         if device.fail_launch.fails() {
             return Err(BundleStatusV1::HostError);
@@ -835,7 +840,13 @@ impl<P: FakePackage> HostServicesBackendV1 for Backend<P> {
         state: BundleStateHandleV1,
         rank: u32,
     ) -> HostServiceResultV1<DeviceBufferSpanV1> {
-        self.0.resolve_state_view(state, rank)
+        let view = self.0.resolve_state_view(state, rank)?;
+        self.0
+            .device()
+            .state_buffers
+            .borrow_mut()
+            .insert(view.buffer.slot());
+        Ok(view)
     }
     fn release_state(&self, state: BundleStateHandleV1) -> HostServiceResultV1<()> {
         self.release(Handle::State(state.slot()), || {})
@@ -879,10 +890,14 @@ mod tests {
     use super::*;
     use crate::fake_host::{Countdown, NoObserver};
 
-    /// A package without images, components, KV or state, whose readbacks
-    /// read sevens. It holds its live handles, newest last, releases only
-    /// the newest, and refuses a synchronization when its countdown fires.
-    /// Its one mapped view, `rows` of rank 1, holds `0..32`.
+    const STATE_BUFFER: u32 = 900;
+    const STATE_BYTES: u64 = 4096;
+
+    /// A package without images, components or KV, whose readbacks read
+    /// sevens. It holds its live handles, newest last, releases only the
+    /// newest, and refuses a synchronization when its countdown fires. Its
+    /// one mapped view, `rows` of rank 1, holds `0..32`, and every state's
+    /// view is [`STATE_BYTES`] of buffer [`STATE_BUFFER`].
     #[derive(Default)]
     struct Empty(
         FakeDevice,
@@ -977,14 +992,22 @@ mod tests {
             &self,
             _request: &StateRequestV1,
         ) -> HostServiceResultV1<BundleStateHandleV1> {
-            Err(BundleStatusV1::Unsupported)
+            Ok(BundleStateHandleV1::from_parts(1, self.0.id()))
         }
         fn resolve_state_view(
             &self,
             _state: BundleStateHandleV1,
             _rank: u32,
         ) -> HostServiceResultV1<DeviceBufferSpanV1> {
-            Err(BundleStatusV1::Unsupported)
+            self.0
+                .extents
+                .borrow_mut()
+                .insert(STATE_BUFFER, STATE_BYTES);
+            Ok(DeviceBufferSpanV1::new(
+                BundleDeviceBufferHandleV1::from_parts(1, STATE_BUFFER),
+                0,
+                STATE_BYTES,
+            ))
         }
         fn read_back(
             &self,
@@ -1132,6 +1155,67 @@ mod tests {
                 Err(BundleStatusV1::HostError)
             );
         }
+    }
+
+    /// An address array slot is refused where the real host refuses it
+    /// before ordering anything: on a state view, which that host records
+    /// without an origin context, or with a zero handle. The same view is an
+    /// ordinary device-buffer argument, and a slot on the bundle's own
+    /// allocation launches.
+    #[test]
+    fn an_address_array_slot_on_a_state_view_or_a_zero_handle_is_refused() {
+        let (host, stream, buffer) = host();
+        let module = host
+            .load_cuda_module(BundleContextHandleV1::from_parts(1, 1), b"module")
+            .unwrap();
+        let symbol = host.resolve_cuda_symbol(module, b"shared_kernel").unwrap();
+        let state = host
+            .allocate_state(&StateRequestV1 {
+                flags: 0,
+                byte_length: STATE_BYTES,
+                alignment: 256,
+                state_id: b"state".to_vec(),
+            })
+            .unwrap();
+        let view = host.resolve_state_view(state, 0).unwrap();
+        let piece = DeviceBufferSpanV1::new(view.buffer, 64, 128);
+        let allocated = DeviceBufferSpanV1::new(buffer, 0, 16);
+        let unnamed = DeviceBufferSpanV1::new(
+            BundleDeviceBufferHandleV1::from_parts(0, buffer.slot()),
+            0,
+            16,
+        );
+        let lines = host.device().journal.borrow().len();
+        for slots in [
+            vec![Some(piece)],
+            vec![Some(allocated), Some(piece), None],
+            vec![Some(unnamed)],
+        ] {
+            assert_eq!(
+                host.launch_cuda_symbol(
+                    stream,
+                    symbol,
+                    shared_launch(0),
+                    &[KernelArgumentV1::DevicePointerArray(slots.clone())],
+                ),
+                Err(BundleStatusV1::InvalidArgument),
+                "{slots:?}"
+            );
+        }
+        assert_eq!(host.device().journal.borrow().len(), lines);
+        host.launch_cuda_symbol(
+            stream,
+            symbol,
+            shared_launch(0),
+            &[
+                KernelArgumentV1::DeviceBuffer(piece),
+                KernelArgumentV1::NullDevicePointer,
+                KernelArgumentV1::DevicePointerArray(vec![Some(allocated), None]),
+            ],
+        )
+        .unwrap();
+        assert_eq!(host.device().launch_symbols(lines), ["shared_kernel"]);
+        host.release_state(state).unwrap();
     }
 
     #[test]

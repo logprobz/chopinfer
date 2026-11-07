@@ -217,6 +217,10 @@ pub struct FakeDevice<O = NoObserver> {
     pub released: Cell<u32>,
     /// Bytes of every span a call may point into, by buffer slot.
     pub extents: RefCell<BTreeMap<u32, u64>>,
+    /// Buffer slots of every state view the host resolved. The real host
+    /// records state buffers without an origin context, so a by-value
+    /// address array may not name them.
+    pub state_buffers: RefCell<BTreeSet<u32>>,
     /// (stream, collective) of every launch, eager or captured, for the
     /// captures to count their nodes in.
     launched: RefCell<Vec<(u32, bool)>>,
@@ -293,6 +297,31 @@ impl<O: JournalObserver> FakeDevice<O> {
                 .is_some_and(|end| end <= extent),
             "span {span:?} passes its buffer's {extent} bytes"
         );
+    }
+
+    /// Refuses the by-value address array slots the real host refuses with
+    /// InvalidArgument before it orders anything (`consumer_may_reach`): a
+    /// zero handle, or a state buffer, which carries no origin context. The
+    /// peer lease and grant half of that rule is not modelled.
+    pub fn check_pointer_slots(&self, arguments: &[KernelArgumentV1]) -> HostServiceResultV1<()> {
+        let state = self.state_buffers.borrow();
+        let refused = arguments
+            .iter()
+            .filter_map(|argument| match argument {
+                KernelArgumentV1::DevicePointerArray(slots) => Some(slots),
+                _ => None,
+            })
+            .flatten()
+            .flatten()
+            .any(|slot| {
+                let buffer = slot.buffer;
+                buffer.generation() == 0 || buffer.slot() == 0 || state.contains(&buffer.slot())
+            });
+        if refused {
+            Err(BundleStatusV1::InvalidArgument)
+        } else {
+            Ok(())
+        }
     }
 
     /// Records a journal line.

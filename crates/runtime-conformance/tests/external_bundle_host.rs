@@ -333,7 +333,23 @@ impl ServedFixtureV1 {
                 assert_eq!(logged, [live], "{body}");
                 assert_eq!(serving["startup_nonce"].as_str().unwrap().len(), 32);
                 assert_eq!(serving["bundle_id"], TP4_FIXTURE.bundle_id, "{body}");
-                assert_eq!(serving["package_identity"], Value::Null, "{body}");
+                // A `--bundle` start names the package it verified and the
+                // metadata of the checkpoint it loads, as `--model` does.
+                let manifest = fs::read(bundle_directory(root, TP4_FIXTURE).join("manifest.json"))
+                    .expect("the fixture manifest is readable");
+                assert_eq!(
+                    serving["package_identity"],
+                    sha256_bytes(&manifest),
+                    "{body}"
+                );
+                let metadata: String = runtime_weights::checkpoint::metadata_identity(
+                    &checkpoint_directory(root, TP4_FIXTURE),
+                )
+                .expect("the fixture checkpoint's metadata is readable")
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect();
+                assert_eq!(serving["metadata_identity"], metadata, "{body}");
                 let profile = &serving["profile"];
                 assert_eq!(profile["name"], Value::Null, "{body}");
                 assert_eq!(profile["tensor_parallel_size"], TP4_FIXTURE.rank_count);

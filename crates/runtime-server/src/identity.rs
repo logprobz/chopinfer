@@ -8,12 +8,14 @@ use serde::Serialize;
 pub struct ServingIdentity {
     /// The bundle manifest's identifier.
     pub bundle_id: String,
-    /// SHA-256 of a direct package's canonical manifest.
+    /// SHA-256 of the served package's canonical manifest.
     pub package_identity: Option<String>,
     /// A direct load's checkpoint identity: the SHA-256 of every safetensors
     /// file's name, length and header.
     pub checkpoint_identity: Option<String>,
-    /// SHA-256 of the other checkpoint files a direct package was selected for.
+    /// SHA-256 of the other files of the checkpoint a direct load reads
+    /// (`runtime_weights::checkpoint::metadata_identity`), which a direct
+    /// package was selected for.
     pub metadata_identity: Option<String>,
     /// A random value drawn once per server process and also written to its
     /// startup log, so a client can tell that log from one another process

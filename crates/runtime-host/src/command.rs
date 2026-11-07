@@ -2464,6 +2464,42 @@ fn serving_identity_v1(
     })
 }
 
+/// Fills the identities a `serve --bundle` start has no preparation for, as
+/// `serve --model` reports them: the package's, the SHA-256 of the manifest
+/// `package` was verified with, and, with a checkpoint selected for direct
+/// loads, that checkpoint's metadata identity. A direct package's are kept.
+fn bundle_package_identities_v1(
+    identity: &mut runtime_server::ServingIdentity,
+    package: &BundlePackageV1,
+) -> Result<(), HostCommandErrorV1> {
+    let checkpoint = crate::direct::selected_checkpoint_v1().map_err(run_error)?;
+    fill_package_identities_v1(
+        identity,
+        package.manifest_sha256(),
+        checkpoint
+            .as_deref()
+            .map(crate::direct::DirectCheckpointV1::root),
+    )
+}
+
+fn fill_package_identities_v1(
+    identity: &mut runtime_server::ServingIdentity,
+    manifest_sha256: &str,
+    checkpoint: Option<&Path>,
+) -> Result<(), HostCommandErrorV1> {
+    if identity.package_identity.is_none() {
+        identity.package_identity = Some(manifest_sha256.to_owned());
+    }
+    if identity.metadata_identity.is_none()
+        && let Some(root) = checkpoint
+    {
+        let metadata = runtime_weights::checkpoint::metadata_identity(root)
+            .map_err(|e| run_error(format!("checkpoint metadata: {e}")))?;
+        identity.metadata_identity = Some(metadata.iter().map(|b| format!("{b:02x}")).collect());
+    }
+    Ok(())
+}
+
 /// 128 random bits for one server process, in hex.
 fn startup_nonce_v1() -> Result<String, HostCommandErrorV1> {
     let mut bytes = [0_u8; 16];
@@ -3051,7 +3087,7 @@ fn serve_check_v1(
         crate::deployment::package_frontend_v1(&preflight.package).map_err(unservable_v1)?;
     let topology = ServedTopologyV1::checked(manifest, topology, devices, backend)?
         .with_context_parallel(manifest, serving.context_parallel_size)?;
-    serving_identity_v1(
+    let mut identity = serving_identity_v1(
         manifest,
         (profile_name, direct_package),
         (
@@ -3062,6 +3098,7 @@ fn serve_check_v1(
         preflight.speculation,
         serving,
     )?;
+    bundle_package_identities_v1(&mut identity, &preflight.package)?;
     validate_remote_media_v1(remote_media)?;
     crate::deployment::check_served_images_v1(
         &frontend.declaration,
@@ -3297,6 +3334,7 @@ fn serve_v1(
         speculation,
         &serving,
     )?;
+    bundle_package_identities_v1(&mut identity, &package)?;
     identity.model_options = resolved_options;
     identity.model_options_qualified = package
         .manifest()
@@ -10130,6 +10168,64 @@ mod tests {
                 .capabilities_of_every_topology()
                 .all(|capability| { host.capabilities().any(|offered| offered == capability) })
         );
+    }
+
+    /// `serve --bundle` reports its package's manifest digest and, with a
+    /// direct checkpoint, the checkpoint's metadata identity, as
+    /// `serve --model` does; a direct package's identities stay.
+    #[test]
+    fn a_bundle_start_reports_its_package_and_checkpoint_metadata() {
+        let plain = manifest(vec![topology("tp1", 1)], 8);
+        let identity = |direct: Option<&super::DirectPackageIdentityV1>| {
+            super::serving_identity_v1(
+                &plain,
+                (None, direct),
+                (1, None),
+                resolve_kv_cache_dtype_v1(&plain, KvCacheDtypeV1::Auto).unwrap(),
+                None,
+                &ServingOptionsV1::default(),
+            )
+            .unwrap()
+        };
+        let package = "b".repeat(64);
+        let mut bundle = identity(None);
+        super::fill_package_identities_v1(&mut bundle, &package, None).unwrap();
+        assert_eq!(bundle.package_identity.as_ref(), Some(&package));
+        assert_eq!(bundle.metadata_identity, None);
+
+        let root =
+            std::env::temp_dir().join(format!("chopinfer-bundle-identity-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("encoding")).unwrap();
+        std::fs::write(root.join("config.json"), b"{}").unwrap();
+        std::fs::write(root.join("encoding/notes.txt"), b"notes").unwrap();
+        std::fs::write(root.join("model.safetensors"), b"not metadata").unwrap();
+        let metadata: String = runtime_weights::checkpoint::metadata_identity(&root)
+            .unwrap()
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
+        let mut bundle = identity(None);
+        super::fill_package_identities_v1(&mut bundle, &package, Some(&root)).unwrap();
+        assert_eq!(bundle.package_identity.as_ref(), Some(&package));
+        assert_eq!(bundle.metadata_identity.as_ref(), Some(&metadata));
+
+        let direct = super::DirectPackageIdentityV1 {
+            package_identity: "a".repeat(64),
+            metadata_identity: "c".repeat(64),
+        };
+        let mut prepared = identity(Some(&direct));
+        super::fill_package_identities_v1(&mut prepared, &package, Some(&root)).unwrap();
+        assert_eq!(prepared.package_identity, Some(direct.package_identity));
+        assert_eq!(prepared.metadata_identity, Some(direct.metadata_identity));
+
+        // A checkpoint whose metadata cannot be read refuses the start.
+        let missing = root.join("missing");
+        assert!(
+            super::fill_package_identities_v1(&mut identity(None), &package, Some(&missing))
+                .is_err()
+        );
+        std::fs::remove_dir_all(&root).unwrap();
     }
 
     /// `/health` names a mixed-plane element's planes, so a client can show

@@ -414,8 +414,12 @@ Docker marks an unhealthy container but does not restart it for that alone.
 `/health` and `/ping` expose status, modalities and a `serving` object with
 bundle, package, checkpoint and metadata identities, startup nonce and the
 effective profile. Checkpoint identity covers safetensors names, headers
-and lengths; byte verification is separate. `kv_page_tokens` and the declared
-context-parallel size determine prefix reuse stripes. When the profile's
+and lengths; byte verification is separate. The package identity is the
+SHA-256 of the package's verified `manifest.json` and the metadata identity
+that of the checkpoint's other files; `serve --bundle DIR --checkpoint DIR`
+reports both as `serve --model` does, and without `--checkpoint` only the
+package identity. `kv_page_tokens` and the declared context-parallel size
+determine prefix reuse stripes. When the profile's
 `kv_cache_dtype` is `mixed`, `kv_cache_planes` lists each plane's name, code
 (`bf16`, `fp8_e4m3` or `fp4_e2m1`), block scale and bytes per token; other
 elements omit it. Startup logs repeat

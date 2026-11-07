@@ -1537,6 +1537,8 @@ pub(crate) use dspark::prefetch::queued_for_test as dspark_successor_for_test;
 pub(crate) use dspark::prefetch::ring_writes_for_test as dspark_ring_writes_for_test;
 #[cfg(test)]
 pub(crate) use dspark::prefetch::rings_for_test as dspark_successor_rings_for_test;
+#[cfg(test)]
+pub(crate) use dspark::prefetch::status_for_test as dspark_successor_status_for_test;
 
 #[cfg(test)]
 pub(crate) fn fold_views_for_test(

@@ -84,6 +84,12 @@ impl Status {
         self.validate(rank, &bytes)
     }
 
+    /// The whole buffer the parts are saved into, from its first byte.
+    #[cfg(test)]
+    pub fn buffer(&self) -> DeviceBufferSpanV1 {
+        self.buffer
+    }
+
     pub fn pending(&self) -> Result<DeviceBufferSpanV1, String> {
         super::device::slice(self.buffer, 0, self.bytes.get())
     }

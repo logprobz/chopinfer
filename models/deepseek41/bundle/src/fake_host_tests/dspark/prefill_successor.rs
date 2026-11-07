@@ -381,8 +381,17 @@ fn split(run: &Run, items: u64) -> (&[String], &[String]) {
 /// The zero lines that cut every decoder's draft IDs and confidence to
 /// three heads on every rank.
 fn head_cuts(run: &Run, items: u64) -> Vec<String> {
+    cut_lines(&run.outputs.0, &run.streams, items)
+}
+
+/// [`head_cuts`] of each rank's draft `outputs` on its stream.
+fn cut_lines(
+    outputs: &[(DeviceBufferSpanV1, DeviceBufferSpanV1)],
+    streams: &[u32],
+    items: u64,
+) -> Vec<String> {
     let mut lines = Vec::new();
-    for (&(ids, confidence), stream) in run.outputs.0.iter().zip(&run.streams) {
+    for (&(ids, confidence), stream) in outputs.iter().zip(streams) {
         for output in [ids, confidence] {
             for item in 0..items {
                 let span =
@@ -534,11 +543,12 @@ fn a_decode_step_reuses_a_five_head_successor_cut_to_its_heads() {
     assert_eq!(five.contexts, three.contexts);
 }
 
-/// A device copy that fails while the mixed step adopts the successor
-/// poisons the drafter before any launch: the step fails and every later
-/// step is refused.
-#[test]
-fn a_failed_adoption_poisons_before_any_launch() {
+/// The decoders prompted one at a time and a decode step whose five-head
+/// successor (an allocated step's) predicts two accepted drafts, committed;
+/// then `fault` on the host and the mixed step beside a cold prompt.
+/// Returns the instance, the step's result and journal, its sink, and each
+/// rank's draft outputs and stream.
+fn adopt(fault: impl FnOnce(&Host)) -> Adopted {
     let (host, mut instance) = create(&[(DSPARK_SUCCESSOR_PREFILL, true.into())]);
     for slot in 0..DECODERS {
         execute(
@@ -558,44 +568,157 @@ fn a_failed_adoption_poisons_before_any_launch() {
         crate::instance::dspark_successor_for_test(instance.handle()),
         Some(DECODERS as usize)
     );
-    host.device.fail_copy.set(Some(1));
+    let outputs = crate::instance::dspark_draft_outputs_for_test(instance.handle()).0;
+    let streams = (0..4)
+        .map(|rank| host.rank_streams.borrow()[&rank])
+        .collect();
+    let rings = crate::instance::dspark_successor_rings_for_test(instance.handle());
+    fault(&host);
     let begin = host.journal.borrow().len();
     let mut sink = Sink::default();
-    assert_eq!(
-        instance
-            .execute(
-                &mixed(Some((PREFILL, PREFILL_SLOT, 0, 40)), DECODERS, 6, 3),
-                &mut sink
-            )
-            .err(),
-        Some(BundleAbiError::Status(BundleStatusV1::BundleError))
+    let result = instance.execute(
+        &mixed(Some((PREFILL, PREFILL_SLOT, 0, 40)), DECODERS, 6, 3),
+        &mut sink,
     );
     let step = host.journal.borrow()[begin..].to_vec();
-    assert_eq!(
-        count(&step, "copy "),
-        1,
-        "the ring copy, then the failed draft copy"
-    );
-    assert!(
-        !step
-            .iter()
-            .any(|line| line.starts_with("launch ") || line.starts_with("replay "))
-    );
-    assert_eq!(
-        crate::instance::dspark_successor_for_test(instance.handle()),
-        None
-    );
-    let begin = host.journal.borrow().len();
-    assert!(
-        instance
-            .execute(&verify_all(&decoders, 3), &mut Sink::default())
-            .is_err()
-    );
-    assert!(
-        host.journal.borrow()[begin..]
-            .iter()
-            .all(|line| !line.starts_with("launch ") && !line.starts_with("replay "))
-    );
+    Adopted {
+        host,
+        instance,
+        result,
+        step,
+        sink,
+        outputs,
+        streams,
+        rings,
+    }
+}
+
+struct Adopted {
+    host: Rc<Host>,
+    instance: BundleInstanceV1,
+    result: Result<(), BundleAbiError>,
+    step: Vec<String>,
+    sink: Sink,
+    outputs: Vec<(DeviceBufferSpanV1, DeviceBufferSpanV1)>,
+    streams: Vec<u32>,
+    rings: Vec<(DeviceBufferSpanV1, DeviceBufferSpanV1, DeviceBufferSpanV1)>,
+}
+
+/// A host call that fails while the mixed step adopts the successor
+/// poisons the drafter before any launch: the first rank's ring and draft
+/// ID copies and the last rank's confidence copy, the head cut's first and
+/// last zero, and the first and last saved status append. The step fails
+/// with no result, and every later step is refused; destroy releases
+/// everything.
+#[test]
+fn a_failed_adoption_poisons_before_any_launch() {
+    let mut reference = adopt(|_| {});
+    assert_eq!(reference.result, Ok(()));
+    let step = &reference.step;
+    let launch = step
+        .iter()
+        .position(|line| line.starts_with("launch ") || line.starts_with("replay "))
+        .expect("the step's launches");
+    let copies: Vec<_> = (0..launch)
+        .filter(|&at| step[at].starts_with("copy "))
+        .collect();
+    let (ring, _, next) = reference.rings[0];
+    assert!(step[copies[0]].ends_with(&format!(" {next:?} {ring:?}")));
+    let bytes = DECODERS * 20;
+    let confidence = reference.outputs[3].1;
+    assert!(step[copies[11]].ends_with(&format!(
+        " {:?}",
+        DeviceBufferSpanV1::new(confidence.buffer, confidence.offset, bytes)
+    )));
+    let cuts = cut_lines(&reference.outputs, &reference.streams, DECODERS);
+    let zeros: Vec<_> = (0..launch).filter(|&at| cuts.contains(&step[at])).collect();
+    assert_eq!(zeros.len(), cuts.len());
+    assert!(zeros.iter().all(|&at| at > copies[11]));
+    // Each rank's saved status: both planes of the projection, then of
+    // the draft.
+    let appends: Vec<_> = copies
+        .iter()
+        .copied()
+        .filter(|&at| at > zeros[zeros.len() - 1])
+        .collect();
+    assert_eq!(appends.len(), 4 * 4);
+    for (phase, at, zero) in [
+        ("first ring copy", copies[0], false),
+        ("first draft ID copy", copies[1], false),
+        ("last confidence copy", copies[11], false),
+        ("first head cut", zeros[0], true),
+        ("last head cut", zeros[zeros.len() - 1], true),
+        ("first status append", appends[0], false),
+        ("last status append", appends[appends.len() - 1], false),
+    ] {
+        let prefix = &step[..at];
+        let mut failed = adopt(|host| {
+            if zero {
+                host.device
+                    .fail_zero
+                    .set(Some(count(prefix, "zero ") as u32));
+            } else {
+                host.device
+                    .fail_copy
+                    .set(Some(count(prefix, "copy ") as u32));
+            }
+        });
+        assert_eq!(
+            failed.result,
+            Err(BundleAbiError::Status(BundleStatusV1::BundleError)),
+            "{phase}"
+        );
+        assert_eq!(
+            failed.step[..at],
+            step[..at],
+            "{phase}: the calls before it"
+        );
+        assert_ne!(
+            failed.step.get(at),
+            Some(&step[at]),
+            "{phase}: the failed call"
+        );
+        assert!(
+            !failed
+                .step
+                .iter()
+                .any(|line| line.starts_with("launch ") || line.starts_with("replay ")),
+            "{phase}"
+        );
+        assert!(
+            failed.sink.views.is_empty() && failed.sink.draft_tokens().is_empty(),
+            "{phase}"
+        );
+        let instance = &mut failed.instance;
+        assert_eq!(
+            crate::instance::dspark_successor_for_test(instance.handle()),
+            None,
+            "{phase}"
+        );
+        let decoders: Vec<_> = (0..DECODERS).map(|slot| (slot + 1, slot, 6)).collect();
+        let begin = failed.host.journal.borrow().len();
+        assert!(
+            instance
+                .execute(&verify_all(&decoders, 3), &mut Sink::default())
+                .is_err(),
+            "{phase}"
+        );
+        assert!(
+            failed.host.journal.borrow()[begin..]
+                .iter()
+                .all(|line| !line.starts_with("launch ") && !line.starts_with("replay ")),
+            "{phase}"
+        );
+        failed.instance.destroy().unwrap();
+        assert_eq!(
+            failed.host.acquired.get(),
+            failed.host.released.get(),
+            "{phase}"
+        );
+    }
+    reference.instance.cancel().unwrap();
+    reference.instance.destroy().unwrap();
+    assert_eq!(reference.host.acquired.get(), reference.host.released.get());
 }
 
 /// Every committed drafter ring writer advances the count a successor

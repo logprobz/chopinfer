@@ -565,65 +565,134 @@ fn a_full_c16_successor_status_is_checked_in_every_launch_and_rank() {
     }
 }
 
-/// A queue phase that fails poisons the drafter with no successor: the
-/// first ring backup copy, the first projection launch, the second draft
-/// forward and the join's first event record each fail the step after the
-/// target published, and the instance refuses every later step and cancel.
+/// Which host call a queue failure fails.
+#[derive(Clone, Copy, Debug)]
+enum Fault {
+    Copy,
+    Record,
+    Wait,
+    Replay,
+}
+
+/// A queue phase that fails poisons the drafter with no successor. Each
+/// rank's ring backup copy, a projection replay of the first launch on
+/// rank 0 or of the second on rank 3, the status save of a projection or a
+/// forward, the second draft forward's replay, its chunk retention and the
+/// chunk restore copies, the join's first event record and its first and
+/// last waits, and the next and undo ring copies after the join each fail
+/// the step after the target published, and the instance refuses every
+/// later step and cancel.
 #[test]
 fn a_failed_wide_successor_phase_poisons_with_no_adoption() {
     let items = 16;
-    let reference = {
+    let (step, rings, status) = {
         let (host, mut instance) = prompted(items, 64, 16, &[]);
         let rings = crate::instance::dspark_successor_rings_for_test(instance.handle());
+        let status = crate::instance::dspark_successor_status_for_test(instance.handle());
         let step = cycle(&host, &mut instance, (items, 3, 3), (items * 3, 3), 1).unwrap();
         finish(&host, instance, items, 4);
-        (step, rings)
+        (step, rings, status)
     };
-    let (step, rings) = reference;
     let download = position(&step, "download ");
-    let backup = format!(" {:?} {:?}", rings[0].0, rings[0].1);
-    let backup = step
-        .iter()
-        .position(|line| line.starts_with("copy ") && line.ends_with(&backup))
-        .expect("rank 0's ring backup");
-    assert!(backup > download);
+    let copy = |source: DeviceBufferSpanV1, destination: DeviceBufferSpanV1| {
+        let suffix = format!(" {source:?} {destination:?}");
+        (download..step.len())
+            .find(|&at| step[at].starts_with("copy ") && step[at].ends_with(&suffix))
+            .unwrap_or_else(|| panic!("no copy {suffix}"))
+    };
+    let into = |destination: DeviceBufferSpanV1| {
+        let suffix = format!(" {destination:?}");
+        (download..step.len())
+            .find(|&at| step[at].starts_with("copy ") && step[at].ends_with(&suffix))
+            .unwrap_or_else(|| panic!("no copy into {destination:?}"))
+    };
+    let within = |span: DeviceBufferSpanV1, offset: u64, length: u64| {
+        DeviceBufferSpanV1::new(span.buffer, span.offset + offset, length)
+    };
     let replays: Vec<_> = (download..step.len())
         .filter(|&at| step[at].starts_with("replay "))
         .collect();
     // Per rank: two 32-row projections, then two eight-item forwards.
     assert_eq!(replays.len(), 4 * 4);
-    let second_forward = replays[4 * 3];
     let join = (replays[replays.len() - 1]..step.len())
         .find(|&at| step[at].starts_with("record "))
         .expect("the join records");
-    for (phase, at, replayed) in [
-        ("ring backup", backup, false),
-        ("projection", replays[0], true),
-        ("second forward", second_forward, true),
-        ("join", join, false),
+    let waits: Vec<_> = (join..step.len())
+        .filter(|&at| step[at].starts_with("wait "))
+        .take(6)
+        .collect();
+    // Four rank records and three waits for them, then the joined record
+    // and three waits for it.
+    assert_eq!(count(&step[join..waits[5]], "record "), 5);
+    // Each rank's saved status: both planes of the two 32-row projections
+    // (128 bytes each), then of the two forwards (160 bytes each). The
+    // chunk output holds every item's draft IDs, then their confidence.
+    let (_, status, chunk) = status[3];
+    let plane = u64::from(model_deepseek41_contract::serving::DECODE_BATCH) * 5 * 4;
+    for (phase, at, fault) in [
+        (
+            "first ring backup",
+            copy(rings[0].0, rings[0].1),
+            Fault::Copy,
+        ),
+        (
+            "last ring backup",
+            copy(rings[3].0, rings[3].1),
+            Fault::Copy,
+        ),
+        ("first projection", replays[0], Fault::Replay),
+        ("second projection on rank 3", replays[4 + 3], Fault::Replay),
+        (
+            "projection status",
+            into(within(status, 384, 128)),
+            Fault::Copy,
+        ),
+        ("second forward", replays[4 * 3], Fault::Replay),
+        (
+            "forward status",
+            into(within(status, 992, 160)),
+            Fault::Copy,
+        ),
+        (
+            "chunk retention",
+            into(within(chunk, plane + 160, 160)),
+            Fault::Copy,
+        ),
+        (
+            "chunk restore",
+            (download..step.len())
+                .find(|&at| {
+                    step[at].starts_with("copy ")
+                        && step[at].contains(&format!(" {:?} ", within(chunk, plane, 320)))
+                })
+                .expect("rank 3's confidence restore"),
+            Fault::Copy,
+        ),
+        ("join record", join, Fault::Record),
+        ("first join wait", waits[0], Fault::Wait),
+        ("last join wait", waits[5], Fault::Wait),
+        ("next ring copy", copy(rings[0].0, rings[0].2), Fault::Copy),
+        ("ring undo copy", copy(rings[3].1, rings[3].0), Fault::Copy),
     ] {
         let (host, mut instance) = prompted(items, 64, 16, &[]);
         let prefix = &step[..at];
-        match phase {
-            "ring backup" => host
-                .device
-                .fail_copy
-                .set(Some(count(prefix, "copy ") as u32)),
-            "join" => host
-                .device
-                .fail_record
-                .set(Some(count(prefix, "record ") as u32)),
-            _ => host
-                .device
-                .fail_graph_launch
-                .set(Some(count(prefix, "replay ") as u32)),
-        }
+        let (switch, lines) = match fault {
+            Fault::Copy => (&host.device.fail_copy, "copy "),
+            Fault::Record => (&host.device.fail_record, "record "),
+            Fault::Wait => (&host.device.fail_wait, "wait "),
+            Fault::Replay => (&host.device.fail_graph_launch, "replay "),
+        };
+        switch.set(Some(count(prefix, lines) as u32));
+        let begin = host.journal.borrow().len();
         let failed = cycle(&host, &mut instance, (items, 3, 3), (items * 3, 3), 1);
         assert_eq!(
             failed.err(),
             Some(BundleAbiError::Status(BundleStatusV1::BundleError)),
             "{phase}"
         );
+        let journal = host.journal.borrow()[begin..].to_vec();
+        assert_eq!(journal[..at], step[..at], "{phase}: the calls before it");
+        assert_ne!(journal.get(at), Some(&step[at]), "{phase}: the failed call");
         assert_eq!(
             crate::instance::dspark_successor_for_test(instance.handle()),
             None,
@@ -644,9 +713,9 @@ fn a_failed_wide_successor_phase_poisons_with_no_adoption() {
         );
         // A failed graph replay of the collectives poisons the instance
         // itself, which then refuses destroy and keeps every handle; after a
-        // failed copy or record the drafter alone is poisoned.
+        // failed copy, record or wait the drafter alone is poisoned.
         let released = host.released.get();
-        if replayed {
+        if matches!(fault, Fault::Replay) {
             assert!(instance.destroy().is_err(), "{phase}");
             assert!(instance.is_poisoned(), "{phase}");
             assert_eq!(host.released.get(), released, "{phase}");

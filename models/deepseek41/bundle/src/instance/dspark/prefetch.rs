@@ -388,6 +388,34 @@ pub(crate) fn rings_for_test(
     })
 }
 
+/// Each rank's drafter status buffer, its successor status buffer and its
+/// drafter's chunk output.
+#[cfg(test)]
+pub(crate) fn status_for_test(
+    handle: runtime_bundle_abi::BundleHandleV1,
+) -> Vec<(Span, Span, Span)> {
+    crate::instance::INSTANCES.with(|table| {
+        let mut table = table.borrow_mut();
+        let device = table
+            .get_mut(handle)
+            .and_then(|instance| instance.dspark.as_ref())
+            .expect("drafter");
+        device
+            .prefetch
+            .ranks
+            .iter()
+            .zip(&device.ranks)
+            .map(|(memory, rank)| {
+                (
+                    rank.status.buffer(),
+                    memory.status.buffer(),
+                    rank.chunk_output,
+                )
+            })
+            .collect()
+    })
+}
+
 /// The instance's committed ring writes after adding `add`, a stand-in
 /// for a committed writer that leaves the drafter state unchanged.
 #[cfg(test)]

@@ -125,6 +125,7 @@ mod retain_rows_entries;
 mod ring_gather_cubin;
 mod ring_gather_entries;
 mod single_entry_cubin;
+#[allow(dead_code, reason = "the bundle registers the entry")]
 mod snapshot_copy;
 #[allow(dead_code)]
 mod window_fused;

@@ -14,3 +14,11 @@ pub const CUBIN: &str = "snapshot_copy_sm120";
 pub fn cubin_spec() -> CubinSpec {
     shared_spec(CUBIN, &entries())
 }
+
+/// `sm120` with the shared entry registered; an instance prepares it only
+/// under the candidate.
+pub fn register(sm120: kernels_sm120::backend::Sm120) -> kernels_sm120::backend::Sm120 {
+    entries()
+        .into_iter()
+        .fold(sm120, |sm120, entry| sm120.with_snapshot_copy(entry))
+}

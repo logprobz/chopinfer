@@ -72,6 +72,7 @@ mod scratch_regions;
 mod selected_cache;
 mod shared_overlap;
 mod short_prefill;
+mod snapshot_kernel;
 mod startup_memory;
 #[cfg(feature = "diagnostic-taps")]
 mod tapped_anchors;
@@ -473,6 +474,9 @@ pub(crate) struct FakeHost {
     pub pull_only: Cell<bool>,
     /// Fail an upload, after its journal record, once this many more pass.
     pub fail_upload: bundle_runtime::fake_host::Countdown,
+    /// Fail a stream synchronization, before it waits, once this many
+    /// more pass: a drain that cannot be confirmed.
+    pub fail_synchronize: bundle_runtime::fake_host::Countdown,
     /// The live handles in acquisition order: releasing any but the newest
     /// is `InvalidState`, as the host's release order refuses it. Pool peer
     /// grants stay outside it, as they do on the host. A context or pool
@@ -724,6 +728,7 @@ impl FakeHost {
             layouts: RefCell::new(BTreeMap::new()),
             pull_only: Cell::new(false),
             fail_upload: Default::default(),
+            fail_synchronize: Default::default(),
             release_order: RefCell::new(Vec::new()),
             references: RefCell::new(Vec::new()),
             races: RefCell::new(Vec::new()),
@@ -779,6 +784,34 @@ impl FakeHost {
     fn page_bytes(&self) -> u64 {
         model_deepseek41_contract::state::request_state(self.shape.geometry, self.kv.storage, false)
             .page_bytes()
+    }
+}
+
+thread_local! {
+    /// The snapshot copy kernel launches this thread's fake hosts ran.
+    pub(crate) static SNAPSHOT_COPY_LAUNCHES: Cell<usize> = const { Cell::new(0) };
+}
+
+impl FakeHost {
+    /// Runs a snapshot copy kernel launch on the device memory as the
+    /// device copies its arguments and uploaded table name
+    /// (`bundle_runtime::snapshot::launched_copies`), so its bytes take the
+    /// origins the device copies would give them.
+    fn run_snapshot_copy(&self, arguments: &[KernelArgumentV1]) {
+        let copies = bundle_runtime::snapshot::launched_copies(arguments, |table| {
+            self.uploads
+                .borrow()
+                .get(&(table.buffer.raw, table.offset))
+                .filter(|bytes| bytes.len() as u64 == table.length)
+                .cloned()
+                .expect("the snapshot copy table was uploaded before its launch")
+        })
+        .expect("a snapshot copy launch over a checked table");
+        let mut memory = self.memory.borrow_mut();
+        for (source, destination) in copies {
+            memory.copy(source, destination);
+        }
+        SNAPSHOT_COPY_LAUNCHES.with(|launches| launches.set(launches.get() + 1));
     }
 }
 
@@ -934,6 +967,15 @@ impl FakePackage for FakeHost {
                 replay.launch(self, stream, name, config, arguments);
             }
         });
+        if name == kernels_sm120::snapshot_copy::SYMBOL {
+            self.run_snapshot_copy(arguments);
+        }
+        Ok(())
+    }
+    fn admit_synchronize(&self, _stream: BundleStreamHandleV1) -> HostServiceResultV1<()> {
+        if self.fail_synchronize.fails() {
+            return Err(BundleStatusV1::HostError);
+        }
         Ok(())
     }
     fn on_copy(

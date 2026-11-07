@@ -2,7 +2,11 @@
 //! compressor tails: the slot's committed entries of every captured buffer,
 //! copied piece by piece between the slot and the snapshot's serving pages
 //! with device copies (`bundle_runtime::snapshot`), each rank its own
-//! copy, and the shared header (`HeaderLayout::V1`) on rank 0. The KV
+//! copy, and the shared header (`HeaderLayout::V1`) on rank 0. Under the
+//! `prefix_snapshot_copy_kernel` candidate each rank instead uploads the
+//! snapshot's page and segment table and launches the shared snapshot copy
+//! kernel once ([`SnapshotKernel`]), with the same checks, header actions
+//! and drain. The KV
 //! sources' compressed latents and index keys live in the shared pages
 //! already. A ring holds its last window of positions; a tail the open
 //! group's row. The Engram history needs no pages: a restore names every
@@ -16,16 +20,109 @@ use bundle_runtime::prefix::{
 };
 use bundle_runtime::resources::status;
 use bundle_runtime::snapshot::{
-    HeaderAction, HeldBuffers, HostRankStreams, Pages, Table, copy_prefix,
+    Action, BoundLaunch, HeaderAction, HeldBuffers, HostRankStreams, KernelCopy, Pages, Table,
+    copy_prefix,
 };
-use bundle_runtime::state::Holder;
-use runtime_bundle_abi::{BundleStatusV1, PrefixStateRequestV1};
+use bundle_runtime::state::{Extent, Holder, RequestState};
+use kernel_core::backend::{Backend, Need, Prepared, View};
+use kernel_core::snapshot_copy::{Direction, SnapshotCopy, SnapshotCopyBuffers};
+use runtime_bundle_abi::{
+    BundleStatusV1, BundleStreamHandleV1, DeviceBufferSpanV1, PrefixStateRequestV1,
+};
 
 use super::Instance;
 
 /// The shared header: the tokens, the capturing request, the rank count
 /// and the declaration's layout digest.
 const HEADER: HeaderLayout = HeaderLayout::V1;
+
+/// The shared snapshot copy kernel of an instance's snapshots: one op a
+/// direction, prepared for the snapshot's pages, the views its pieces name
+/// and the most pieces a slot's or an anchor item's table holds, and each
+/// rank's table buffer.
+pub(crate) struct SnapshotKernel {
+    capture: (SnapshotCopy, Prepared<SnapshotCopyBuffers<View>>),
+    restore: (SnapshotCopy, Prepared<SnapshotCopyBuffers<View>>),
+    table_bytes: u64,
+    /// Each rank's table buffer, which acquire allocates.
+    pub(super) tables: Vec<DeviceBufferSpanV1>,
+}
+
+impl SnapshotKernel {
+    /// The kernel of `state`'s snapshots in an instance of `extent`, on
+    /// `backend`; why not, when the kernel cannot serve a slot's or an
+    /// anchor item's table, so the instance keeps the device copies.
+    pub(crate) fn prepare(
+        backend: &dyn Backend,
+        state: &RequestState,
+        extent: Extent,
+    ) -> Result<Self, String> {
+        HEADER
+            .check(state)
+            .map_err(|refusal| refusal.0.to_owned())?;
+        let anchored = state.buffers.iter().any(|buffer| buffer.spare_bytes() > 0);
+        let holders = [Some(Holder::Slot(0)), anchored.then_some(Holder::Anchor(0))];
+        let tables = holders
+            .into_iter()
+            .flatten()
+            .map(|holder| Table::new(state, extent, holder).map_err(|error| format!("{error:?}")))
+            .collect::<Result<Vec<_>, _>>()?;
+        // Each declared buffer, or each spare, a piece names is one view.
+        let views = |table: &Table| {
+            table
+                .descriptors
+                .iter()
+                .map(|descriptor| (descriptor.buffer, descriptor.spare))
+                .collect::<std::collections::BTreeSet<_>>()
+                .len()
+        };
+        let slot = &tables[0];
+        if tables
+            .iter()
+            .any(|table| views(table) != views(slot) || table.pages() != slot.pages())
+        {
+            return Err("slot and anchor snapshots differ in views or pages".into());
+        }
+        let segments = tables
+            .iter()
+            .map(|table| table.descriptors.len())
+            .max()
+            .unwrap_or(0);
+        let segments = u32::try_from(segments).map_err(|_| "too many snapshot pieces")?;
+        let op = |direction| -> Result<SnapshotCopy, String> {
+            Ok(SnapshotCopy {
+                direction,
+                views: u32::try_from(views(slot)).map_err(|_| "too many snapshot views")?,
+                page_bytes: slot.page_bytes,
+                pages: u32::try_from(slot.pages()).map_err(|_| "too many snapshot pages")?,
+            })
+        };
+        let prepare = |direction| -> Result<_, String> {
+            let op = op(direction)?;
+            let prepared = backend
+                .snapshot_copy(&op, Need::rows(segments))
+                .map_err(|refused| refused.to_string())?;
+            Ok((op, prepared))
+        };
+        let capture = prepare(Direction::ToPages)?;
+        let restore = prepare(Direction::FromPages)?;
+        let table_bytes = capture
+            .0
+            .table_bytes(segments)
+            .map_err(|refusal| refusal.0.to_owned())?;
+        Ok(Self {
+            capture,
+            restore,
+            table_bytes,
+            tables: Vec::new(),
+        })
+    }
+
+    /// Bytes of one rank's table buffer.
+    pub(crate) fn table_bytes(&self) -> u64 {
+        self.table_bytes
+    }
+}
 
 impl Instance {
     /// What both sides of a snapshot must agree on.
@@ -59,41 +156,93 @@ impl Instance {
     ) -> Result<Vec<u8>, BundleStatusV1> {
         let table = self.snapshot_table(holder)?;
         let to_pages = header.is_some();
+        // Rank `rank`'s held state, its view of the snapshot's pages (once
+        // they are checked) and its header action.
+        let rank_of = |rank: usize, buffers: &crate::buffers::RankBuffers| {
+            let held = HeldBuffers {
+                buffers: buffers
+                    .state
+                    .buffers
+                    .iter()
+                    .map(|&(_, span)| Some(span))
+                    .collect(),
+                spares: self.anchor_spares.get(rank).map_or_else(
+                    || vec![None; buffers.state.buffers.len()],
+                    |spares| spares.buffers.clone(),
+                ),
+            };
+            let paged = Pages {
+                pool: buffers.kv_pool,
+                ids: pages,
+                page_bytes: self.config.page_bytes,
+            };
+            paged
+                .check(&table, self.kv_pages)
+                .map_err(|_| BundleStatusV1::InvalidArgument)?;
+            let action = match (rank, &header) {
+                (0, Some(bytes)) => HeaderAction::Write(bytes.clone()),
+                (0, None) => HeaderAction::Read,
+                _ => HeaderAction::None,
+            };
+            Ok((held, paged, action))
+        };
+        let Some(kernel) = &self.snapshot_kernel else {
+            let plans = self
+                .buffers
+                .iter()
+                .enumerate()
+                .map(|(rank, buffers)| {
+                    let (held, paged, action) = rank_of(rank, buffers)?;
+                    table
+                        .actions::<()>(&held, &paged, to_pages, action)
+                        .map_err(|_| BundleStatusV1::InternalError)
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            return self.submit_snapshot(plans, &|_, _, ()| Ok(()));
+        };
+        let (op, prepared) = if to_pages {
+            &kernel.capture
+        } else {
+            &kernel.restore
+        };
         let plans = self
             .buffers
             .iter()
             .enumerate()
             .map(|(rank, buffers)| {
-                let held = HeldBuffers {
-                    buffers: buffers
-                        .state
-                        .buffers
-                        .iter()
-                        .map(|&(_, span)| Some(span))
-                        .collect(),
-                    spares: self.anchor_spares.get(rank).map_or_else(
-                        || vec![None; buffers.state.buffers.len()],
-                        |spares| spares.buffers.clone(),
-                    ),
-                };
-                let paged = Pages {
-                    pool: buffers.kv_pool,
-                    ids: pages,
-                    page_bytes: self.config.page_bytes,
-                };
-                paged
-                    .check(&table, self.kv_pages)
-                    .map_err(|_| BundleStatusV1::InvalidArgument)?;
-                let action = match (rank, &header) {
-                    (0, Some(bytes)) => HeaderAction::Write(bytes.clone()),
-                    (0, None) => HeaderAction::Read,
-                    _ => HeaderAction::None,
+                let (held, paged, action) = rank_of(rank, buffers)?;
+                let copy = KernelCopy {
+                    op: *op,
+                    prepared: prepared.as_ref(),
+                    table: *kernel
+                        .tables
+                        .get(rank)
+                        .ok_or(BundleStatusV1::InternalError)?,
                 };
                 table
-                    .actions::<()>(&held, &paged, to_pages, action)
-                    .map_err(|_| BundleStatusV1::InternalError)
+                    .kernel_actions(&held, &paged, to_pages, action, &copy)
+                    .map_err(|refusal| {
+                        self.log(&format!("prefix snapshot copy kernel: {}", refusal.0));
+                        BundleStatusV1::InternalError
+                    })
             })
             .collect::<Result<Vec<_>, _>>()?;
+        self.submit_snapshot(plans, &|rank, stream, launch: BoundLaunch| {
+            launch
+                .submit(&self.services, stream, &self.symbols[rank])
+                .map_err(bundle_runtime::dispatch::status)
+        })
+    }
+
+    /// Submits every rank's snapshot `plans`, launching through `launch`,
+    /// and returns once every rank that received work is drained, with the
+    /// bytes rank 0 read. A drain that cannot be confirmed is
+    /// INTERNAL_ERROR.
+    fn submit_snapshot<L>(
+        &self,
+        plans: Vec<Vec<Action<L>>>,
+        launch: &dyn Fn(usize, BundleStreamHandleV1, L) -> Result<(), BundleStatusV1>,
+    ) -> Result<Vec<u8>, BundleStatusV1> {
         let streams = self
             .ranks
             .iter()
@@ -102,7 +251,7 @@ impl Instance {
         let rank_streams = HostRankStreams {
             services: &self.services,
             streams: &streams,
-            launch: &|_, _, ()| Ok(()),
+            launch,
             host_error: &status,
             refusal: &|_| BundleStatusV1::InternalError,
             unconfirmed: &|| BundleStatusV1::InternalError,

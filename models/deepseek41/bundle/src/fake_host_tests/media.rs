@@ -70,6 +70,7 @@ impl MediaHost {
             layouts: RefCell::new(std::collections::BTreeMap::new()),
             pull_only: Cell::new(false),
             fail_upload: Default::default(),
+            fail_synchronize: Default::default(),
             release_order: RefCell::new(Vec::new()),
             references: RefCell::new(Vec::new()),
             races: RefCell::new(Vec::new()),

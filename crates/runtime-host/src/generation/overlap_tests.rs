@@ -330,6 +330,7 @@ fn run(scenario: &Scenario, overlap: bool) -> Run {
             id,
             request: Box::new(request),
             constraint: planned.grammar.map(grammar),
+            prefix_chain: None,
             events: WorkerEvents(sender),
             response,
         }]);

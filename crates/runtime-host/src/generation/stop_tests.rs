@@ -1165,6 +1165,7 @@ fn admitted_ignored_eos(
         RequestId::new(1),
         request,
         grammar,
+        None,
         WorkerEvents(sender),
         response,
         65536,
@@ -1514,6 +1515,7 @@ fn idle_worker_prefills_grouped_prompts_and_finishes_a_slow_copy_without_new_com
                 id: RequestId::new(index + 2),
                 request: Box::new(choice),
                 constraint: None,
+                prefix_chain: None,
                 events: WorkerEvents(events),
                 response,
             });
@@ -1924,6 +1926,7 @@ fn a_client_gone_before_its_prompt_echo_leaves_nothing_behind() {
             RequestId::new(id),
             request,
             None,
+            None,
             WorkerEvents(sender),
             response,
             65536,
@@ -1988,6 +1991,7 @@ fn admitted_events(echo: bool, tracing: bool) -> (Vec<String>, OutsideTiming) {
         &mut active,
         RequestId::new(1),
         request,
+        None,
         None,
         WorkerEvents(sender),
         response,
@@ -2157,5 +2161,23 @@ fn the_decoder_primed_from_the_prompt_tail_decodes_as_the_whole_prompt() {
                 Err(AdmissionError::InvalidPrompt)
             ));
         }
+    }
+}
+
+/// A submission hashes the chain the engine would build for a prompt of
+/// token IDs, salted or not, and none for a prompt it has not tokenized or
+/// an engine that keys no prompt.
+#[test]
+fn a_submission_hashes_the_prefix_chain_the_engine_builds() {
+    let tokens = (0..1000).map(|index| X + index % 5).collect::<Vec<_>>();
+    for salt in [None, Some("tenant")] {
+        let mut request = raw_request(true);
+        request.cache_salt = salt.map(str::to_owned);
+        request.prompt = PreparedPrompt::TokenIds(tokens.clone());
+        let chain = prefix_chain_v1(Some(64), &request).expect("a chain");
+        assert!(chain.is_salted(64, &tokens, &[], salt.map(str::as_bytes)));
+        assert!(prefix_chain_v1(None, &request).is_none());
+        request.prompt = PreparedPrompt::Raw("x".repeat(1000));
+        assert!(prefix_chain_v1(Some(64), &request).is_none());
     }
 }

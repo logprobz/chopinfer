@@ -397,6 +397,9 @@ pub struct EngineGenerationBackend {
     maximum_sequence_tokens: usize,
     startup_page_tokens: usize,
     startup_pages: usize,
+    /// The page tokens of the prefix chains the engine keys prompts with,
+    /// when it keys them; a submission hashes them off the engine thread.
+    prefix_chain_block_tokens: Option<usize>,
     metrics: EngineMetrics,
     kv_metrics: KvMetrics,
     worker: Mutex<Option<JoinHandle<()>>>,
@@ -530,6 +533,7 @@ impl EngineGenerationBackend {
                         maximum_sequence_tokens: engine.maximum_sequence_tokens(),
                         startup_page_tokens: engine.startup_page_tokens(),
                         startup_pages: engine.kv_stats().free_blocks(),
+                        prefix_chain_block_tokens: engine.prefix_chain_block_tokens(),
                         metrics: engine.metrics(),
                         kv_metrics: engine.kv_metrics(),
                     };
@@ -613,6 +617,7 @@ impl EngineGenerationBackend {
             maximum_sequence_tokens: started.maximum_sequence_tokens,
             startup_page_tokens: started.startup_page_tokens,
             startup_pages: started.startup_pages,
+            prefix_chain_block_tokens: started.prefix_chain_block_tokens,
             metrics: started.metrics,
             kv_metrics: started.kv_metrics,
             reply_history: started.reply_history,
@@ -1547,12 +1552,14 @@ impl GenerationBackend for EngineGenerationBackend {
                 Arc::clone(&self.tokenizer),
             ));
             let (response, admitted) = oneshot::channel();
+            let prefix_chain = prefix_chain_v1(self.prefix_chain_block_tokens, &request);
             submissions.push(WorkerSubmission {
                 observe_delivery,
                 skip_reply_history,
                 id,
                 request: Box::new(request),
                 constraint: None,
+                prefix_chain,
                 events: WorkerEvents(forward_sender),
                 response,
             });
@@ -1609,6 +1616,26 @@ impl GenerationBackend for EngineGenerationBackend {
         }
         results
     }
+}
+
+/// The prefix chain of a prompt of token IDs, hashed before the worker
+/// reads the request, at the engine's chain page size. The engine keys the
+/// prompt with it only when it is the chain it would build itself.
+fn prefix_chain_v1(
+    block_tokens: Option<usize>,
+    request: &PreparedRequest,
+) -> Option<Arc<runtime_kv::PrefixChainV1>> {
+    let PreparedPrompt::TokenIds(tokens) = &request.prompt else {
+        return None;
+    };
+    runtime_kv::PrefixChainV1::salted(
+        block_tokens?,
+        Arc::from(tokens.as_slice()),
+        Vec::new(),
+        request.cache_salt.as_deref().map(str::as_bytes),
+    )
+    .ok()
+    .map(Arc::new)
 }
 
 /// Joins the worker thread once it has returned. A worker the watchdog
@@ -1767,6 +1794,7 @@ struct WorkerStartupV1 {
     maximum_sequence_tokens: usize,
     startup_page_tokens: usize,
     startup_pages: usize,
+    prefix_chain_block_tokens: Option<usize>,
     metrics: EngineMetrics,
     kv_metrics: KvMetrics,
 }
@@ -2010,6 +2038,8 @@ struct WorkerSubmission {
     id: RequestId,
     request: Box<PreparedRequest>,
     constraint: Option<Arc<CompiledGrammar>>,
+    /// The prompt's prefix chain, hashed before the worker reads it.
+    prefix_chain: Option<Arc<runtime_kv::PrefixChainV1>>,
     events: WorkerEvents,
     response: oneshot::Sender<Result<(), AdmissionError>>,
 }
@@ -2394,6 +2424,7 @@ where
                     id,
                     request,
                     constraint,
+                    prefix_chain,
                     events,
                     response,
                 } = submission;
@@ -2409,6 +2440,7 @@ where
                     id,
                     *request,
                     constraint,
+                    prefix_chain,
                     events,
                     response,
                     tokenizer_input_bytes,
@@ -2600,6 +2632,7 @@ fn admit<E: ModelExecutor>(
     id: RequestId,
     mut request: PreparedRequest,
     constraint: Option<Arc<CompiledGrammar>>,
+    prefix_chain: Option<Arc<runtime_kv::PrefixChainV1>>,
     events: WorkerEvents,
     response: oneshot::Sender<Result<(), AdmissionError>>,
     tokenizer_input_bytes: usize,
@@ -2740,6 +2773,10 @@ fn admit<E: ModelExecutor>(
             };
             let engine_request = match request.decoding.warmup_draft_tokens {
                 Some(tokens) => engine_request.with_pinned_draft_tokens(tokens),
+                None => engine_request,
+            };
+            let engine_request = match prefix_chain {
+                Some(chain) => engine_request.with_prefix_chain(chain),
                 None => engine_request,
             };
             if let Some(top) = request.logprobs.prompt_top {

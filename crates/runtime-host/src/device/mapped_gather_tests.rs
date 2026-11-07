@@ -464,12 +464,23 @@ fn large_gathers_read_through_descriptors_and_zero_restores_the_mapping() {
     }
 }
 
-/// The large routes a test gathers on: every reader on the retained
-/// descriptor, then 1, 3 and 24 reader descriptions per mapping.
+/// The large routes a test gathers on: the reader pool, then direct reads
+/// on 1, 2, 7 and the served policy's workers, each through the retained
+/// descriptor alone and through 1, 3 and 24 descriptions per mapping.
 fn routes() -> Vec<crate::host_rows::fetch::LargeRoute> {
-    [0, 1, 3, 24]
+    let policy = crate::host_rows::fetch::direct_policy(
+        std::thread::available_parallelism().map_or(1, usize::from),
+    );
+    [None, Some(1), Some(2), Some(7), Some(policy)]
         .into_iter()
-        .map(|reader_files| crate::host_rows::fetch::LargeRoute { reader_files })
+        .flat_map(|direct| {
+            [0, 1, 3, 24]
+                .into_iter()
+                .map(move |reader_files| crate::host_rows::fetch::LargeRoute {
+                    reader_files,
+                    direct,
+                })
+        })
         .collect()
 }
 

@@ -392,11 +392,21 @@ struct Candidate {
     engaged: &'static str,
 }
 
-const CANDIDATES: [Candidate; 1] = [Candidate {
-    name: "reader-files",
-    selectors: &[("CHOPINFER_MAPPED_READER_FILES", "1")],
-    engaged: "\"phase\":\"reader-files\",\"descriptions\"",
-}];
+const CANDIDATES: [Candidate; 2] = [
+    Candidate {
+        name: "reader-files",
+        selectors: &[("CHOPINFER_MAPPED_READER_FILES", "1")],
+        engaged: "\"phase\":\"reader-files\",\"descriptions\"",
+    },
+    Candidate {
+        name: "direct",
+        selectors: &[
+            ("CHOPINFER_MAPPED_READER_FILES", "1"),
+            ("CHOPINFER_MAPPED_LARGE_GATHER_DIRECT", "1"),
+        ],
+        engaged: "\"phase\":\"direct-gather\"",
+    },
+];
 
 /// Runs test `name` of this binary in a child process under each
 /// candidate, which the child names in `child`, and checks the log line

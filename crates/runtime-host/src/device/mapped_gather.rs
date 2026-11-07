@@ -252,11 +252,32 @@ pub(crate) fn gather_planes_routed(
                 .transpose()
         })
         .collect::<Result<Vec<_>, _>>()?;
+    // The same table, width and ids give the same bytes: such a plane is a
+    // large leader's twin.
+    let twins = (0..planes.len())
+        .map(|index| {
+            let plane = &planes[index];
+            (0..index).find(|&leader| {
+                let earlier = &planes[leader];
+                leads[index] == Lead::No
+                    && leads[leader] == Lead::Large
+                    && earlier.row_bytes == plane.row_bytes
+                    && earlier.index_offset == plane.index_offset
+                    && outputs[leader].len() == outputs[index].len()
+                    && Arc::ptr_eq(&earlier.mapping, &plane.mapping)
+            })
+        })
+        .collect::<Vec<_>>();
+    // Direct large reads write each twin's rows as they read its leader's.
+    let direct = route.direct.is_some();
     for kind in [Lead::Resident, Lead::Large] {
+        let mut slots = outputs
+            .iter_mut()
+            .map(|output| Some(&mut **output))
+            .collect::<Vec<_>>();
         let mut copies = Vec::new();
-        for (((plane, output), &lead), ids) in
-            planes.iter().zip(outputs.iter_mut()).zip(&leads).zip(&ids)
-        {
+        let mut copy_twins = Vec::new();
+        for (index, ((plane, &lead), ids)) in planes.iter().zip(&leads).zip(&ids).enumerate() {
             if lead != kind {
                 continue;
             }
@@ -266,13 +287,21 @@ pub(crate) fn gather_planes_routed(
                 mapping: &plane.mapping,
                 width: plane.row_bytes,
                 rows: ids.as_deref().expect("a leader's ids"),
-                out: output,
+                out: slots[index].take().expect("one plane per output"),
             });
+            if kind == Lead::Large && direct {
+                copy_twins.push(
+                    (index + 1..planes.len())
+                        .filter(|&twin| twins[twin] == Some(index))
+                        .map(|twin| slots[twin].take().expect("one leader per twin"))
+                        .collect::<Vec<_>>(),
+                );
+            }
         }
         match kind {
             _ if copies.is_empty() => {}
             Lead::Resident => fetch::copy_planes(&mut copies)?,
-            Lead::Large => fetch::copy_large_routed(&mut copies, route)?,
+            Lead::Large => fetch::copy_large_twinned(&mut copies, &mut copy_twins, route)?,
             Lead::No => unreachable!("only leaders copy"),
         }
     }
@@ -280,23 +309,15 @@ pub(crate) fn gather_planes_routed(
         if leads[index] != Lead::No {
             continue;
         }
-        let plane = &planes[index];
-        // The same table, width and ids give the same bytes.
-        let twin = (0..index).find(|&leader| {
-            let earlier = &planes[leader];
-            leads[leader] == Lead::Large
-                && earlier.row_bytes == plane.row_bytes
-                && earlier.index_offset == plane.index_offset
-                && outputs[leader].len() == outputs[index].len()
-                && Arc::ptr_eq(&earlier.mapping, &plane.mapping)
-        });
         let (done, rest) = outputs.split_at_mut(index);
-        match twin {
+        match twins[index] {
             Some(leader) => {
                 let _ = gather::mapped_async_read_ahead_v1();
-                rest[0].copy_from_slice(done[leader]);
+                if !direct {
+                    rest[0].copy_from_slice(done[leader]);
+                }
             }
-            None => gather_plane_routed(plane, input, rest[0], route)?,
+            None => gather_plane_routed(&planes[index], input, rest[0], route)?,
         }
     }
     Ok(())

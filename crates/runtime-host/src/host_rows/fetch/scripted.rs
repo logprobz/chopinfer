@@ -40,9 +40,9 @@ pub(super) struct Scripted {
     pub(super) fail_after: Option<usize>,
     /// A probe of this offset panics.
     pub(super) panic_at: Option<u64>,
-    calls: Mutex<Vec<Call>>,
-    reads: AtomicUsize,
-    in_flight: AtomicUsize,
+    pub(super) calls: Mutex<Vec<Call>>,
+    pub(super) reads: AtomicUsize,
+    pub(super) in_flight: AtomicUsize,
 }
 
 /// Counts a call in flight until dropped, unwinding included.

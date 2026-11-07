@@ -1,0 +1,493 @@
+//! DSpark successor reuse against inline drafting on a real TP4 instance,
+//! bit for bit on every rank. Build before the GPU job.
+//!
+//! The package must be built with the bundle's `state-capture` feature,
+//! and `CHOPINFER_DSPARK_STATE_DIR` must name an empty directory: the test
+//! drives the capture controls there (`instance::dspark::successor_capture`).
+//! Each case runs twice through the same host steps: a reuse arm, whose
+//! queueing step queues the successor its `successor.json` names, and an
+//! inline arm, where `successors-off` queues none and the consumer drafts
+//! inline. Every drafted step's saved status, draft IDs, confidence and
+//! item rings on every rank, its target logits and draft tokens, must be
+//! identical across the arms, and the reuse arm's consumer must have
+//! reused the successor. A case either forces its acceptance or takes each
+//! item's greedy acceptance from the queueing step's own target logits.
+use model_deepseek41_contract::execution_options::{
+    DSPARK_GRAPH_HANDLES_PER_RANK, DSPARK_SUCCESSOR_ITEMS, DSPARK_SUCCESSOR_PREFILL,
+};
+use runtime_bundle_abi::*;
+use serde::Deserialize;
+use serde_json::{Value, json};
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
+
+#[path = "dspark_successor/device.rs"]
+mod device;
+use device::{Capture, Fixture, Greedy, Item, Scheduled};
+type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Config {
+    bundle: PathBuf,
+    checkpoint: PathBuf,
+    output: PathBuf,
+}
+
+fn gpu_guard() -> Result<()> {
+    let selected = std::env::var("CHOPINFER_KERNEL_GPUS")?;
+    let ordinals = selected.split(',').map(str::trim).collect::<Vec<_>>();
+    if ordinals != ["0", "1", "2", "3"] {
+        return Err("this test requires the job's four GPUs, numbered 0,1,2,3".into());
+    }
+    Ok(())
+}
+
+/// How the queueing step's items accept their drafts.
+#[derive(Clone, Copy, Debug)]
+enum Acceptance {
+    /// Every item accepts this many drafts, with bonus [`FORCED_BONUS`].
+    Forced(u32),
+    /// Each item's greedy acceptance of its own target logits.
+    Greedy,
+}
+
+/// The step that consumes the successor.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Next {
+    /// The decoders alone.
+    Decode,
+    /// The decoders beside a fresh 40-token prompt.
+    Cold,
+    /// The decoders beside 20 more tokens of a prompt restored from a
+    /// prefix captured at 141 tokens, restored after the queueing step.
+    Restored,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct Case {
+    label: &'static str,
+    decoders: u32,
+    /// Each decoder's prompt tokens.
+    prompt: usize,
+    /// The drafts of every verify step.
+    depth: u32,
+    acceptance: Acceptance,
+    /// Whether the successor is an allocated step's, of five heads.
+    allocated: bool,
+    next: Next,
+}
+
+const fn case(
+    label: &'static str,
+    decoders: u32,
+    prompt: usize,
+    depth: u32,
+    acceptance: Acceptance,
+    allocated: bool,
+    next: Next,
+) -> Case {
+    Case {
+        label,
+        decoders,
+        prompt,
+        depth,
+        acceptance,
+        allocated,
+        next,
+    }
+}
+
+use Acceptance::{Forced, Greedy as Natural};
+
+/// Every case. Decode-to-mixed steps take a five-head successor into a
+/// three-head consumer at C3 and C8 (C16 computes five); decode-only
+/// allocated-to-unallocated steps cut the same way; depth five accepts all
+/// five drafts, at C5 within one 32-row projection and at C16 with its
+/// saved status at the 1,408-byte bound (C6 to C8 queue none); a 125-token
+/// prompt's successor projects across the 128-cell ring wrap; 9 to 16
+/// items take the wide successor. Every kind but all-accepted, which
+/// forcing defines, also has a greedy case.
+const CASES: &[Case] = &[
+    case("c3-mixed-cold", 3, 40, 3, Forced(2), true, Next::Cold),
+    case(
+        "c8-mixed-restored",
+        8,
+        40,
+        3,
+        Forced(2),
+        true,
+        Next::Restored,
+    ),
+    case("c16-mixed-cold", 16, 40, 3, Forced(2), true, Next::Cold),
+    case("c8-mixed-greedy", 8, 40, 3, Natural, true, Next::Cold),
+    case("c3-decode-cut", 3, 40, 3, Forced(2), true, Next::Decode),
+    case("c8-decode-cut", 8, 40, 3, Forced(1), true, Next::Decode),
+    case(
+        "c8-decode-cut-greedy",
+        8,
+        40,
+        3,
+        Natural,
+        true,
+        Next::Decode,
+    ),
+    case("c5-all-accepted", 5, 40, 5, Forced(5), false, Next::Decode),
+    case(
+        "c16-all-accepted",
+        16,
+        40,
+        5,
+        Forced(5),
+        false,
+        Next::Decode,
+    ),
+    case("c8-ring-wrap", 8, 125, 3, Forced(3), false, Next::Decode),
+    case(
+        "c8-ring-wrap-greedy",
+        8,
+        125,
+        3,
+        Natural,
+        false,
+        Next::Decode,
+    ),
+    case("c9-wide", 9, 40, 3, Forced(3), false, Next::Decode),
+    case("c12-wide", 12, 40, 3, Forced(3), false, Next::Decode),
+    case("c13-wide", 13, 40, 3, Forced(3), false, Next::Decode),
+    case("c16-wide", 16, 40, 3, Forced(3), false, Next::Decode),
+    case("c12-wide-greedy", 12, 40, 3, Natural, false, Next::Decode),
+];
+
+const FORCED_BONUS: u32 = 13;
+/// The input tokens of the warm, queueing and follow-up steps.
+const WARM_INPUT: u32 = 7;
+const QUEUE_INPUT: u32 = 11;
+const FOLLOW_INPUT: u32 = 17;
+/// The prefill request and the source of its restored prefix.
+const PREFILL: u64 = 100;
+const SOURCE: u64 = 200;
+const SOURCE_SLOT: u64 = 19;
+const SOURCE_TOKENS: usize = 141;
+
+fn prompt(decoder: u64, tokens: usize) -> Vec<u32> {
+    (0..tokens as u64)
+        .map(|at| 100 + ((at * 7 + decoder * 131) % 4000) as u32)
+        .collect()
+}
+
+fn source_prompt() -> Vec<u32> {
+    (0..SOURCE_TOKENS as u32 + 20).map(|at| 6000 + at).collect()
+}
+
+/// One arm's captures and decided acceptance.
+struct Arm {
+    captures: BTreeMap<&'static str, Capture>,
+    records: BTreeMap<&'static str, Value>,
+    /// The queueing step's `successor.json`.
+    feedback: Value,
+}
+
+fn verify(decoders: u32, inputs: &BTreeMap<u64, u32>, drafts: u32) -> Vec<Scheduled> {
+    (1..=u64::from(decoders))
+        .map(|request| Scheduled {
+            request,
+            item: Item::Verify {
+                bonus: inputs[&request],
+                drafts,
+            },
+        })
+        .collect()
+}
+
+fn each(decoders: u32, value: u32) -> BTreeMap<u64, u32> {
+    (1..=u64::from(decoders)).map(|r| (r, value)).collect()
+}
+
+fn run_arm(fixture: &mut Fixture, case: &Case, inline: bool, output: &Path) -> Result<Arm> {
+    let off = fixture.root.join("successors-off");
+    if inline {
+        std::fs::write(&off, [])?;
+    } else if off.exists() {
+        std::fs::remove_file(&off)?;
+    }
+    let arm = output.join(if inline { "inline" } else { "reuse" });
+    let mut captures = BTreeMap::new();
+    let mut records = BTreeMap::new();
+    let decoders = u64::from(case.decoders);
+    let mut pages = Vec::new();
+    if case.next == Next::Restored {
+        fixture.admit(SOURCE, SOURCE_SLOT)?;
+        let tokens = source_prompt()[..SOURCE_TOKENS].to_vec();
+        fixture.step(
+            &[Scheduled {
+                request: SOURCE,
+                item: Item::Prefill { tokens },
+            }],
+            None,
+        )?;
+        fixture.commit(&BTreeMap::new())?;
+        pages = fixture.capture(SOURCE, SOURCE_TOKENS)?;
+        fixture.preempt(SOURCE)?;
+    }
+    let mut prompts = Vec::new();
+    for request in 1..=decoders {
+        fixture.admit(request, request - 1)?;
+        prompts.push(Scheduled {
+            request,
+            item: Item::Prefill {
+                tokens: prompt(request, case.prompt),
+            },
+        });
+    }
+    fixture.step(&prompts, None)?;
+    fixture.commit(&BTreeMap::new())?;
+    let mut drafted = |fixture: &mut Fixture,
+                       name: &'static str,
+                       items: &[Scheduled],
+                       greedy: Option<Greedy>|
+     -> Result<()> {
+        let capture = fixture.step(items, greedy)?;
+        records.insert(name, fixture.take_dump(&arm.join(name))?);
+        captures.insert(name, capture);
+        Ok(())
+    };
+    drafted(
+        fixture,
+        "warm",
+        &verify(case.decoders, &each(case.decoders, WARM_INPUT), case.depth),
+        None,
+    )?;
+    fixture.commit(&each(case.decoders, 1))?;
+    let control = fixture.root.join("successor.json");
+    let greedy = match case.acceptance {
+        Forced(accepted) => {
+            let items: Vec<_> = (1..=decoders)
+                .map(|request| json!({"request": request, "accepted": accepted, "bonus": FORCED_BONUS}))
+                .collect();
+            std::fs::write(
+                &control,
+                serde_json::to_vec(
+                    &json!({"version": 1, "allocated": case.allocated, "items": items}),
+                )?,
+            )?;
+            None
+        }
+        Natural => Some(Greedy {
+            path: control.clone(),
+            allocated: case.allocated,
+        }),
+    };
+    drafted(
+        fixture,
+        "queue",
+        &verify(case.decoders, &each(case.decoders, QUEUE_INPUT), case.depth),
+        greedy,
+    )?;
+    let feedback: Value = serde_json::from_slice(&std::fs::read(&control)?)?;
+    std::fs::remove_file(&control)?;
+    let mut kept = BTreeMap::new();
+    let mut bonus = BTreeMap::new();
+    for item in feedback["items"]
+        .as_array()
+        .ok_or("feedback has no items")?
+    {
+        let request = item["request"]
+            .as_u64()
+            .ok_or("feedback item has no request")?;
+        let accepted = item["accepted"]
+            .as_u64()
+            .ok_or("feedback item has no acceptance")?;
+        kept.insert(request, accepted as u32 + 1);
+        bonus.insert(
+            request,
+            item["bonus"].as_u64().ok_or("feedback item has no bonus")? as u32,
+        );
+    }
+    fixture.commit(&kept)?;
+    let mut items = Vec::new();
+    match case.next {
+        Next::Decode => {}
+        Next::Cold => {
+            fixture.admit(PREFILL, decoders)?;
+            items.push(Scheduled {
+                request: PREFILL,
+                item: Item::Prefill {
+                    tokens: (0..40).map(|at| 5000 + at).collect(),
+                },
+            });
+        }
+        Next::Restored => {
+            let ids = source_prompt();
+            fixture.restore(SOURCE, PREFILL, decoders, &ids[..SOURCE_TOKENS], &pages)?;
+            items.push(Scheduled {
+                request: PREFILL,
+                item: Item::Prefill {
+                    tokens: ids[SOURCE_TOKENS..].to_vec(),
+                },
+            });
+        }
+    }
+    items.extend(verify(case.decoders, &bonus, case.depth));
+    drafted(fixture, "consume", &items, None)?;
+    fixture.commit(&each(case.decoders, 1))?;
+    drafted(
+        fixture,
+        "follow",
+        &verify(
+            case.decoders,
+            &each(case.decoders, FOLLOW_INPUT),
+            case.depth,
+        ),
+        None,
+    )?;
+    fixture.commit(&each(case.decoders, 1))?;
+    for request in 1..=decoders {
+        fixture.retire(request)?;
+    }
+    if case.next != Next::Decode {
+        fixture.retire(PREFILL)?;
+    }
+    if case.next == Next::Restored {
+        fixture.release(SOURCE)?;
+    }
+    Ok(Arm {
+        captures,
+        records,
+        feedback,
+    })
+}
+
+/// The first byte at which `a` and `b` differ, if any.
+fn first_difference(a: &[u8], b: &[u8]) -> Option<usize> {
+    a.iter()
+        .zip(b)
+        .position(|(x, y)| x != y)
+        .or((a.len() != b.len()).then_some(a.len().min(b.len())))
+}
+
+fn compare(output: &Path, case: &Case, reuse: &Arm, inline: &Arm) -> Result<()> {
+    let label = case.label;
+    if reuse.feedback != inline.feedback {
+        return Err(format!("{label}: the arms decided different acceptance").into());
+    }
+    for step in ["warm", "queue", "consume", "follow"] {
+        let (a, b) = (&reuse.captures[step], &inline.captures[step]);
+        if a.drafts != b.drafts {
+            return Err(format!("{label} {step}: draft tokens differ").into());
+        }
+        if a.rows.len() != b.rows.len() {
+            return Err(format!("{label} {step}: logits row counts differ").into());
+        }
+        for (row, (x, y)) in a.rows.iter().zip(&b.rows).enumerate() {
+            if let Some(at) = first_difference(x, y) {
+                return Err(
+                    format!("{label} {step}: logits row {row} differs at byte {at}").into(),
+                );
+            }
+        }
+        for rank in 0..4 {
+            for name in ["status", "drafts", "ring"] {
+                let file = format!("{name}-rank-{rank}.bin");
+                let x = std::fs::read(output.join("reuse").join(step).join(&file))?;
+                let y = std::fs::read(output.join("inline").join(step).join(&file))?;
+                if let Some(at) = first_difference(&x, &y) {
+                    return Err(format!("{label} {step}: {file} differs at byte {at}").into());
+                }
+            }
+        }
+        let (a, b) = (&reuse.records[step], &inline.records[step]);
+        if a["computed_positions"] != b["computed_positions"] || a["drafting"] != b["drafting"] {
+            return Err(format!("{label} {step}: heads or drafting items differ").into());
+        }
+    }
+    let expected = [
+        ("queue", "queued", json!(true), json!(false)),
+        ("consume", "consumed", json!("reused"), json!("none")),
+        ("follow", "consumed", json!("none"), json!("none")),
+    ];
+    for (step, field, reused, drafted) in expected {
+        if reuse.records[step][field] != reused || inline.records[step][field] != drafted {
+            return Err(format!(
+                "{label} {step}: {field} is {} with the successor and {} inline",
+                reuse.records[step][field], inline.records[step][field]
+            )
+            .into());
+        }
+    }
+    Ok(())
+}
+
+fn run(extra: &[(&str, &str)]) -> Result<()> {
+    gpu_guard()?;
+    let config: Config = serde_json::from_reader(std::fs::File::open(std::env::var(
+        "CHOPINFER_DEEPSEEK41_SUCCESSOR_TEST",
+    )?)?)?;
+    std::fs::create_dir(&config.output)?;
+    let mut options = BTreeMap::from([
+        (DSPARK_SUCCESSOR_ITEMS.to_owned(), "16".to_owned()),
+        (DSPARK_SUCCESSOR_PREFILL.to_owned(), "true".to_owned()),
+    ]);
+    options.extend(
+        extra
+            .iter()
+            .map(|&(name, value)| (name.to_owned(), value.to_owned())),
+    );
+    let mut fixture = Fixture::new(&config, &options)?;
+    let mut receipts = Vec::new();
+    for case in CASES {
+        let output = config.output.join(case.label);
+        let reuse = run_arm(&mut fixture, case, false, &output)?;
+        let inline = run_arm(&mut fixture, case, true, &output)?;
+        compare(&output, case, &reuse, &inline)?;
+        let heads = &reuse.records["consume"]["computed_positions"];
+        receipts.push(json!({
+            "case": case.label, "decoders": case.decoders, "prompt": case.prompt,
+            "depth": case.depth, "acceptance": format!("{:?}", case.acceptance),
+            "allocated": case.allocated, "next": format!("{:?}", case.next),
+            "feedback": reuse.feedback, "consumer_heads": heads,
+        }));
+        eprintln!(
+            "DSpark successor {}: reuse matches inline bitwise ({heads} heads)",
+            case.label
+        );
+    }
+    fixture.finish()?;
+    std::fs::write(
+        config.output.join("receipt.json"),
+        serde_json::to_vec_pretty(&json!({
+            "schema": "chopinfer.deepseek41.dspark-successor-gpu.v1", "passed": true,
+            "geometry": "flash", "tensor_parallel": 4, "model_options": options,
+            "comparison": "bitwise per-rank saved status, draft IDs, confidence and item \
+                rings, rank-0 draft tokens and F32 target logits, reuse against inline",
+            "cases": receipts,
+        }))?,
+    )?;
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires a state-capture package, its checkpoint, an empty CHOPINFER_DSPARK_STATE_DIR and four idle GPUs; run alone"]
+fn dspark_successor_graphs_gpu() -> Result<()> {
+    run(&[])
+}
+
+#[test]
+#[ignore = "requires a state-capture package, its checkpoint, an empty CHOPINFER_DSPARK_STATE_DIR and four idle GPUs; run alone"]
+fn dspark_successor_eager_gpu() -> Result<()> {
+    run(&[(DSPARK_GRAPH_HANDLES_PER_RANK, "0")])
+}
+
+#[test]
+fn greedy_acceptance_breaks_ties_by_id_and_refuses_nonfinite_rows() {
+    let row = [1_f32, 3.0, 3.0]
+        .into_iter()
+        .flat_map(f32::to_le_bytes)
+        .collect::<Vec<_>>();
+    assert_eq!(device::maximum(&row).unwrap(), 1);
+    assert!(device::maximum(&f32::NAN.to_le_bytes()).is_err());
+    assert!(device::maximum(&[]).is_err());
+    assert_eq!(first_difference(b"abc", b"abd"), Some(2));
+    assert_eq!(first_difference(b"ab", b"abc"), Some(2));
+    assert_eq!(first_difference(b"ab", b"ab"), None);
+}

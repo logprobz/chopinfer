@@ -4521,6 +4521,8 @@ impl BundleHostCompatibilityV1 {
 pub struct BundlePackageV1 {
     root: PathBuf,
     manifest: BundleManifestV1,
+    /// Hex SHA-256 of the canonical manifest bytes verification read.
+    manifest_sha256: String,
     component_files: BTreeMap<BundleOpaqueId, VerifiedComponentFileV1>,
     native_module: Option<VerifiedNativeModuleV1>,
 }
@@ -4709,6 +4711,15 @@ impl BundlePackageV1 {
     #[must_use]
     pub const fn manifest(&self) -> &BundleManifestV1 {
         &self.manifest
+    }
+
+    /// The hex SHA-256 of the canonical manifest file this package was
+    /// verified with, the package's identity: it names every file the
+    /// package holds, and it stays the whole package's after
+    /// [`Self::for_topology`].
+    #[must_use]
+    pub fn manifest_sha256(&self) -> &str {
+        &self.manifest_sha256
     }
 
     /// This package as it serves `topology` alone
@@ -4906,6 +4917,7 @@ fn verify_directory_v1(
     Ok(BundlePackageV1 {
         root: root.to_path_buf(),
         manifest,
+        manifest_sha256: sha256_bytes(&manifest_bytes),
         component_files,
         native_module,
     })

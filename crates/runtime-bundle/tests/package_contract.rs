@@ -1828,5 +1828,12 @@ fn topology_resources_select_each_topology() {
     assert_eq!(package.for_topology("tp1").unwrap().manifest(), &first);
     let package = BundlePackageV1::verify_directory(fixture.package(), &tp2_host(true)).unwrap();
     assert_eq!(package.manifest(), &manifest);
-    assert_eq!(package.for_topology("tp2").unwrap().manifest(), &second);
+    // The package keeps the identity of the manifest file it verified, also
+    // as it serves one topology alone.
+    let identity = sha256_bytes(&fs::read(fixture.manifest_path()).unwrap());
+    assert_eq!(package.manifest_sha256(), identity);
+    let selected = package.for_topology("tp2").unwrap();
+    assert_eq!(selected.manifest(), &second);
+    assert_eq!(selected.manifest_sha256(), identity);
+    assert_ne!(sha256_bytes(&second.to_canonical_json().unwrap()), identity);
 }

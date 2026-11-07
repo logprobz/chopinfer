@@ -561,6 +561,31 @@ fn kernel_plans_refuse_before_any_rank_submits() {
             .collect::<Result<Vec<_>, _>>();
         assert_eq!(plans.unwrap_err(), Refusal(what));
     }
+    // Nor may the table start off an eight-byte boundary, which the kernel
+    // reads as u64 words.
+    for offset in [1, 4, 12] {
+        let unaligned = KernelCopy {
+            op: capture,
+            prepared: full.as_ref(),
+            table: DeviceBufferSpanV1::new(span(TABLE, 0).buffer, offset, 4096),
+        };
+        assert_eq!(
+            table
+                .kernel_actions(&good, &pages, true, HeaderAction::None, &unaligned)
+                .unwrap_err(),
+            Refusal("a snapshot copy table starts at an eight-byte boundary")
+        );
+    }
+    let aligned = KernelCopy {
+        op: capture,
+        prepared: full.as_ref(),
+        table: DeviceBufferSpanV1::new(span(TABLE, 0).buffer, 8, 4096),
+    };
+    assert!(
+        table
+            .kernel_actions(&good, &pages, true, HeaderAction::None, &aligned)
+            .is_ok()
+    );
     // The table may not lie on the pages either, nor the pages differ in
     // size from the table's.
     let on_pool = KernelCopy {

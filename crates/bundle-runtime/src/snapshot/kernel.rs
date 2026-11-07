@@ -12,7 +12,7 @@
 use kernel_core::backend::{Counts, Launch, PreparedOp, View};
 use kernel_core::contract::Refusal;
 use kernel_core::snapshot_copy::{
-    Direction, MAX_VIEWS, Segment, SnapshotCopy, SnapshotCopyBuffers,
+    Direction, MAX_VIEWS, Segment, SnapshotCopy, SnapshotCopyBuffers, TABLE_ALIGNMENT,
 };
 use runtime_bundle_abi::{
     BundleCudaSymbolHandleV1, BundleStreamHandleV1, DeviceBufferSpanV1, HostServicesV1,
@@ -28,7 +28,9 @@ pub struct KernelCopy<'a> {
     pub op: SnapshotCopy,
     pub prepared: &'a dyn PreparedOp<SnapshotCopyBuffers<View>>,
     /// The rank's table buffer: at least the op's page IDs and the most
-    /// segments it was prepared for.
+    /// segments it was prepared for, starting at an eight-byte boundary
+    /// of its buffer ([`TABLE_ALIGNMENT`]), whose base a host allocates at
+    /// least that aligned.
     pub table: DeviceBufferSpanV1,
 }
 
@@ -114,8 +116,9 @@ impl Table {
     /// snapshot's (`Pages::check`). Refuses, with nothing to submit, a
     /// kernel prepared for another direction, page size, page count or view
     /// count; a piece outside its buffer; a table past the kernel's
-    /// capacity or its buffer; and any overlap between the pieces' bytes,
-    /// the snapshot's pages and the table.
+    /// capacity or its buffer, or off an eight-byte boundary; and any
+    /// overlap between the pieces' bytes, the snapshot's pages and the
+    /// table.
     pub fn kernel_actions(
         &self,
         held: &HeldBuffers,
@@ -152,6 +155,11 @@ impl Table {
         let bytes = op.encode(pages.ids, &segments)?;
         if bytes.len() as u64 > kernel.table.length {
             return Err(Refusal("a snapshot copy table exceeds its buffer"));
+        }
+        if !kernel.table.offset.is_multiple_of(TABLE_ALIGNMENT) {
+            return Err(Refusal(
+                "a snapshot copy table starts at an eight-byte boundary",
+            ));
         }
         let table =
             DeviceBufferSpanV1::new(kernel.table.buffer, kernel.table.offset, bytes.len() as u64);

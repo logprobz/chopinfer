@@ -36,6 +36,9 @@ pub const MAX_VIEWS: u32 = 8;
 pub const PAGE_ID_BYTES: u64 = 8;
 /// Bytes of one segment in the table.
 pub const SEGMENT_BYTES: u64 = 32;
+/// The alignment of the table's start: a backend reads it as
+/// little-endian `u64` words.
+pub const TABLE_ALIGNMENT: u64 = 8;
 
 /// Which way a snapshot copy moves bytes.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]

@@ -24,8 +24,10 @@ pub(super) const BOUNDARIES: &[(u32, &[u32])] = &[
 
 /// A served TP4 DSpark instance for `items` sequences, on the prefill API
 /// with upper skip and step logs, and the `dspark_main_short_rows`
-/// candidate on when `short`.
-fn served(items: u32, short: bool) -> (Rc<Host>, BundleInstanceV1) {
+/// candidate on when `short`. With `anchors` it also takes the served
+/// cuts, device results and prefill anchors APIs, so an item may keep a
+/// prompt-end anchor.
+fn served(items: u32, short: bool, anchors: bool) -> (Rc<Host>, BundleInstanceV1) {
     let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
     let host = FakeHost::new(shape, KV_LAYOUTS[0]);
     host.kv_pages.set(32 * 4200);
@@ -43,9 +45,19 @@ fn served(items: u32, short: bool) -> (Rc<Host>, BundleInstanceV1) {
     let services = HostServicesTableV1::new(Rc::new(super::dspark::host::MappedHost::new(
         Rc::clone(&host),
     )));
-    let instance = api()
+    let mut api = api()
         .with_prefill_api(crate::api::BUNDLE_DEEPSEEK41_PREFILL_API_V1)
-        .unwrap()
+        .unwrap();
+    if anchors {
+        api = api
+            .with_prefill_cuts_api(crate::instance::prefill::PREFILL_CUTS_API)
+            .unwrap()
+            .with_device_results_api(crate::api::BUNDLE_DEEPSEEK41_DEVICE_RESULTS_API_V1)
+            .unwrap()
+            .with_prefill_anchors_api(crate::api::BUNDLE_DEEPSEEK41_PREFILL_ANCHORS_API_V2)
+            .unwrap();
+    }
+    let instance = api
         .create(services, &record)
         .unwrap_or_else(|error| panic!("create: {error:?} {:?}", host.logs.borrow()));
     (host, instance)
@@ -61,7 +73,7 @@ fn served_main_projection_uses_every_qualified_inner_boundary() {
             .map(move |&(rows, lengths)| (short, rows, lengths))
     });
     for (short, inner_rows, lengths) in cases {
-        let (host, mut instance) = served(lengths.len() as u32, short);
+        let (host, mut instance) = served(lengths.len() as u32, short, false);
         let first = host.device.journal.borrow().len();
         let tokens: Vec<Vec<u32>> = lengths.iter().map(|&n| vec![7; n as usize]).collect();
         let items: Vec<_> = tokens
@@ -141,6 +153,8 @@ struct MainLaunches {
     /// The exact-row small path's admission and compute.
     small_admissions: Vec<(u32, u32)>,
     small_computes: Vec<(u32, u32)>,
+    /// The stream entry of a batched projection of deferred rows.
+    streams: Vec<(u32, u32)>,
 }
 
 fn main_launches(lines: &[String]) -> MainLaunches {
@@ -165,6 +179,8 @@ fn main_launches(lines: &[String]) -> MainLaunches {
             } else {
                 &mut launches.small_computes
             }
+        } else if symbol.starts_with("chop_deepseek41_mxfp8_stream_") {
+            &mut launches.streams
         } else {
             panic!("unexpected main projection launch {line}");
         };
@@ -177,13 +193,14 @@ fn main_launches(lines: &[String]) -> MainLaunches {
 }
 
 impl MainLaunches {
-    fn kinds(&mut self) -> [&mut Vec<(u32, u32)>; 5] {
+    fn kinds(&mut self) -> [&mut Vec<(u32, u32)>; 6] {
         [
             &mut self.admissions,
             &mut self.computes,
             &mut self.generic,
             &mut self.small_admissions,
             &mut self.small_computes,
+            &mut self.streams,
         ]
     }
 }
@@ -212,21 +229,26 @@ fn expected(chunks: &[u32], repeats: usize, short: bool) -> MainLaunches {
     launches
 }
 
-/// Short cold prompts and a restored window reach the main projection
-/// through the bulk catch-up of their next step, one pass per stage on
-/// each rank, which the route sweep never runs: it retires each prefill
-/// case and starts decode and verify from five-token prefixes. Each pass of
-/// 64 rows or fewer runs the small path, and each of 65 to 128 rows the
-/// stage-3 compact pair with the `dspark_main_short_rows` candidate on, or
-/// the generic fold with it off.
+/// A restored window and a short prompt committed whole, with no prefix
+/// capture after it, reach the main projection through the bulk catch-up
+/// of their next step, one pass per stage on each rank, which the route
+/// sweep never runs: it retires each prefill case and starts decode and
+/// verify from five-token prefixes. Each pass of 64 rows or fewer runs the
+/// small path, and each of 65 to 128 rows the stage-3 compact pair with the
+/// `dspark_main_short_rows` candidate on, or the generic fold with it off.
+/// Served with the prefix cache, the restored window catches up here as
+/// it does; a cold prompt keeps an anchor or catches up at its capture
+/// instead (`served_cold_prompts_catch_up_at_commit_and_capture`), so the
+/// cold cases here stand for a prompt served without one.
 #[test]
-fn served_bulk_catch_up_projects_short_rows_through_the_compact_pair() {
+fn bulk_catch_up_projects_short_commits_and_restored_windows() {
     use bundle_runtime::fake_host::conformance::Phase;
     let token = |request: u64, position: u64| ((position * 7 + request) % 1000) as u32;
-    // (request, restored prefix, prompt rows, bulk chunks): cold prompts
-    // project their rows at their first drafting step; a 93,184-token
-    // prefix restores its 128-row window, which the 134-row history splits
-    // into 74 and 54 rows, at the step that continues its prompt.
+    // (request, restored prefix, prompt rows, bulk chunks): cold prompts,
+    // each committed as one item, project their rows at their next step,
+    // here their first drafting step; a 93,184-token prefix restores its
+    // 128-row window, which the 134-row history splits into 74 and 54 rows,
+    // at the step that continues its prompt.
     let cases = [
         (1, 0, 64, &[64][..]),
         (2, 0, 65, &[65][..]),
@@ -239,7 +261,7 @@ fn served_bulk_catch_up_projects_short_rows_through_the_compact_pair() {
         .into_iter()
         .flat_map(|short| cases.map(|case| (short, case)))
     {
-        let (host, mut instance) = served(1, short);
+        let (host, mut instance) = served(1, short, false);
         if prefix > 0 {
             let tokens: Vec<u32> = (0..prefix).map(|at| token(request, at)).collect();
             crate::instance::execute::plan_timing::restore_without_snapshot(
@@ -318,5 +340,120 @@ fn served_bulk_catch_up_projects_short_rows_through_the_compact_pair() {
         instance.retire_request(request).unwrap();
         instance.destroy().unwrap();
         assert_eq!(host.acquired.get(), host.released.get());
+    }
+}
+
+/// Served cold prompts with the prefix cache. The scheduler captures each
+/// prompt's state at its last multiple of 64 tokens, and the capture
+/// catches the drafter up (`capture_prefix_state`), where no step-shape
+/// record or route counter sees it. A prompt of 65 to 127 tokens keeps an
+/// anchor there inside its one item: the step's commit catches up the
+/// 64-row head on the small path and the capture the tail, on the small
+/// path or, for a tail of a row or two, the batched stream entry. A
+/// 64-token or 128-token prompt ends on the granule and keeps no anchor,
+/// so its capture runs all its rows: three passes of 128 rows for the
+/// latter, through the compact pair with the `dspark_main_short_rows`
+/// candidate on. The first verify step catches up nothing.
+#[test]
+fn served_cold_prompts_catch_up_at_commit_and_capture() {
+    use bundle_runtime::fake_host::conformance::Phase;
+    use runtime_bundle_sdk::prefill::encode_with_cuts;
+    use runtime_bundle_sdk::{BatchAppendV1, BatchItemV1, BatchRequestV1, BatchWireVersionV1};
+    let small = |rows| expected(&[rows], 12, false);
+    for short in [false, true] {
+        // (prompt rows, main launches of the prefill step, of the capture)
+        let streamed = MainLaunches {
+            streams: vec![(80, 1); 4],
+            ..MainLaunches::default()
+        };
+        let cases = [
+            (64, MainLaunches::default(), small(64)),
+            (65, small(64), streamed),
+            (97, small(64), small(33)),
+            (127, small(64), small(63)),
+            (128, MainLaunches::default(), expected(&[128], 12, short)),
+        ];
+        for (rows, at_commit, at_capture) in cases {
+            let (host, mut instance) = served(1, short, true);
+            let tokens: Vec<u32> = (0..rows).map(|at| (at * 7 + rows) % 1000).collect();
+            let capture = u64::from(rows / 64 * 64);
+            let batch = BatchRequestV1::new(
+                BatchWireVersionV1::V3,
+                vec![
+                    BatchItemV1::new(1, false, rows, true, tokens)
+                        .with_anchor(capture < u64::from(rows)),
+                ],
+                vec![BatchAppendV1::new(
+                    0,
+                    u64::from(rows),
+                    u64::from(rows),
+                    (0..u64::from(rows).div_ceil(64)).collect(),
+                    None,
+                )],
+            )
+            .with_state_slots(vec![0]);
+            let prefill = encode_with_cuts(
+                &batch.encode().unwrap(),
+                &[Boundary {
+                    request_id: 1,
+                    prompt_tokens: u64::from(rows),
+                    chunk_end: u64::from(rows),
+                    chunk_tokens: 8192,
+                }],
+            )
+            .unwrap();
+            let begin = host.device.journal.borrow().len();
+            instance
+                .execute_prefill_cuts(&prefill, &mut Sink::default())
+                .unwrap_or_else(|error| panic!("prefill: {error:?} {:?}", host.logs.borrow()));
+            instance.commit().unwrap();
+            let committed = host.device.journal.borrow().len();
+            let pages: Vec<_> = (130..130 + instance.describe_prefix_state().unwrap()).collect();
+            instance.capture_prefix_state(1, capture, &pages).unwrap();
+            let captured = host.device.journal.borrow().len();
+            let verify = encode(
+                &super::conformance::step(&[(1, 0, u64::from(rows), &[7; 6], Phase::Verify)], true),
+                &[],
+            )
+            .unwrap();
+            instance
+                .execute_prefill(&verify, &mut Sink::default())
+                .unwrap_or_else(|error| panic!("verify: {error:?} {:?}", host.logs.borrow()));
+            instance
+                .commit_accepted(&[BundleKeptRowsV1 {
+                    struct_size: std::mem::size_of::<BundleKeptRowsV1>() as u32,
+                    reserved: 0,
+                    request_id: 1,
+                    kept_rows: 1,
+                    reserved_tail: 0,
+                }])
+                .unwrap();
+            let lines = host.device.journal.borrow();
+            let case = format!("prompt rows {rows}, short rows {short}");
+            assert_eq!(main_launches(&lines[begin..committed]), at_commit, "{case}");
+            assert_eq!(
+                main_launches(&lines[committed..captured]),
+                at_capture,
+                "{case}"
+            );
+            assert_eq!(
+                main_launches(&lines[captured..]),
+                MainLaunches::default(),
+                "{case}"
+            );
+            drop(lines);
+            let passes: Vec<_> = host
+                .logs
+                .borrow()
+                .iter()
+                .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+                .filter(|row| row["schema"] == "chopinfer.deepseek41.step-shape.v1")
+                .filter_map(|row| row["bulk_passes"].as_u64())
+                .collect();
+            assert_eq!(passes, [0, 0], "{case}");
+            instance.retire_request(1).unwrap();
+            instance.destroy().unwrap();
+            assert_eq!(host.acquired.get(), host.released.get());
+        }
     }
 }

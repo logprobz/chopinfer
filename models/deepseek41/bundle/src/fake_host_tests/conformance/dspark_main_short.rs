@@ -4,8 +4,9 @@
 //! the profile's own and every main projection pass of 65 to 128 inner rows
 //! it reaches runs the compact pair. A separate name keeps its allowlist
 //! entries apart from the default profile's. The sweep reaches those rows
-//! at commit (`main-inner-128`); the bulk catch-up of short prompts and
-//! restored windows is `dspark_main_compact`'s to check.
+//! at commit (`main-inner-128`); the catch-up of restored windows, of short
+//! prompts committed whole and of a cold prompt at its prefix capture is
+//! `dspark_main_compact`'s to check.
 use super::*;
 use bundle_runtime::fake_host::conformance::route_guard;
 use conformance::Startup;

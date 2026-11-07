@@ -811,6 +811,22 @@ Step and request logs are not replay inputs; they omit token contents.
   after execute, so it is not wholly contained in `commit_us`.
   The new scopes read clocks only while step tracing is enabled. They add
   no device synchronization and do not change tokens or event order.
+- Within `host.outside_us`, the serving loop's phases since the previous
+  step returned: `idle_us` waits for a command while no request is active
+  (an idle heap trim included), `delivery_us` delivers the previous step's
+  events, and `admit_us` admits the `admitted_requests` new requests. Within
+  `admit_us`, summed over the requests: `admit_prepare_us` validates or
+  tokenizes the prompt and converts its media, `admit_decoder_us` builds and
+  primes the completion decoder, `admit_submit_us` builds the engine request
+  and submits it, including `admit_prefix_hash_us`, which hashes the
+  prompt's prefix chain, `admit_echo_us` builds and queues the prompt echo
+  a request with returned token IDs or prompt logprobs asks for, and
+  `admit_share_us` shares prompt prefixes within each admitted group. The
+  rest of `outside_us` is control commands, cancellations and queue expiry.
+  A step that does not execute writes no line, and its phases are dropped
+  with its `outside_us`. These scopes follow the same rules: clocks only
+  while step tracing is enabled, no device synchronization, and no change to
+  tokens or event order.
 - `host.mapped_gather_us` is the host time of synchronous mapped-row
   gathers. `host.mapped_gather_exposed_us` is the device-measured wait on
   prepared ones: for each prepared gather the step's execution completed,

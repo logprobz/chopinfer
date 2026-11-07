@@ -1173,6 +1173,8 @@ fn admitted_ignored_eos(
         65536,
         &policy,
         Delivery::Immediate,
+        false,
+        &mut OutsideTiming::default(),
     );
     assert_eq!(active.len(), 1, "request must reach engine admission");
     let mut tokens = Vec::new();
@@ -1930,6 +1932,8 @@ fn a_client_gone_before_its_prompt_echo_leaves_nothing_behind() {
             65536,
             &policy,
             Delivery::Immediate,
+            false,
+            &mut OutsideTiming::default(),
         ));
         assert!(matches!(
             admission.try_recv(),
@@ -1942,4 +1946,99 @@ fn a_client_gone_before_its_prompt_echo_leaves_nothing_behind() {
     assert_eq!(engine.metrics().live_request_records(), 0);
     assert_eq!(engine.metrics().snapshot().requests_active, 0);
     assert_eq!(engine.metrics().snapshot().cancellations, 3);
+}
+
+/// Admits one request with prompt echo when `echo`, runs it to its finish
+/// and returns the events its client received, with the admission phases.
+fn admitted_events(echo: bool, tracing: bool) -> (Vec<String>, OutsideTiming) {
+    let tokenizer = tokenizer();
+    let mut descriptor =
+        FrontendDescriptorV1::from_component_bytes(declarations::KEY_VALUE.as_bytes()).unwrap();
+    descriptor.vocabulary.size = 259;
+    descriptor.vocabulary.eos_token_id = EOS;
+    descriptor.vocabulary.stop_token_ids = vec![EOS];
+    let policy = EngineModelPolicyV1::from_declaration(&descriptor);
+    let mut engine = engine(vec![X, X, X, EOS], false, false);
+    let mut active = BTreeMap::new();
+    let request = PreparedRequest {
+        request_id: "timed".into(),
+        client_request_id: None,
+        model: "fixture/alpha-1".into(),
+        prompt: PreparedPrompt::TokenIds(vec![X; 32]),
+        max_new_tokens: 8,
+        stop: vec![],
+        decoding: runtime_server::DecodingOptions::default(),
+        sampling: SamplingParameters::new(0.0).unwrap(),
+        seed: 7,
+        logprobs: runtime_server::RequestedLogprobs {
+            enabled: false,
+            top: 0,
+            echo: false,
+            prompt_top: None,
+            return_token_ids: echo,
+        },
+        chat: None,
+        constraint: None,
+        cache_salt: None,
+        cancellation: CancellationSignal::new(),
+    };
+    let (sender, mut receiver) = tokio::sync::mpsc::channel(128);
+    let (response, _admission) = oneshot::channel();
+    let mut timing = OutsideTiming::default();
+    assert!(admit(
+        &tokenizer,
+        &mut engine,
+        &mut active,
+        RequestId::new(1),
+        request,
+        None,
+        EventSender::new(sender),
+        response,
+        65536,
+        &policy,
+        Delivery::Immediate,
+        tracing,
+        &mut timing,
+    ));
+    while !active.is_empty() {
+        engine.step().unwrap();
+        for event in engine.drain_events() {
+            assert!(handle_engine_event(
+                &tokenizer,
+                &mut engine,
+                &mut active,
+                event
+            ));
+        }
+    }
+    let mut events = Vec::new();
+    while let Ok(event) = receiver.try_recv() {
+        events.push(format!("{event:?}"));
+    }
+    (events, timing)
+}
+
+#[test]
+fn admission_phases_are_timed_only_while_tracing_and_change_no_event() {
+    for echo in [false, true] {
+        let (untimed, idle) = admitted_events(echo, false);
+        assert_eq!(idle, OutsideTiming::default());
+        let (timed, timing) = admitted_events(echo, true);
+        assert_eq!(timed, untimed);
+        assert_eq!(timed[0].starts_with("Prompt {"), echo, "{timed:?}");
+        assert!(timed.last().unwrap().starts_with("Finished {"), "{timed:?}");
+        for (phase, elapsed) in [
+            ("prepare", timing.prepare),
+            ("decoder", timing.decoder),
+            ("submit", timing.submit),
+        ] {
+            assert!(elapsed > Duration::ZERO, "{phase}: {timing:?}");
+        }
+        assert_eq!(timing.echo > Duration::ZERO, echo, "{timing:?}");
+        // The serving loop, not admission, counts requests and the rest.
+        assert_eq!(
+            (timing.admitted, timing.admit, timing.share, timing.delivery),
+            (0, Duration::ZERO, Duration::ZERO, Duration::ZERO)
+        );
+    }
 }

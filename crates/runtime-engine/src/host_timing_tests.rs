@@ -256,6 +256,107 @@ fn traced_steps_bound_device_idle_between_their_device_waits() {
 }
 
 #[test]
+fn serving_loop_phases_reach_only_the_next_traced_step() {
+    let phases = OutsideTiming {
+        idle: Duration::from_micros(40),
+        delivery: Duration::from_micros(300),
+        admit: Duration::from_micros(9_000),
+        admitted: 2,
+        prepare: Duration::from_micros(100),
+        decoder: Duration::from_micros(2_000),
+        submit: Duration::from_micros(1_500),
+        prefix_hash: Duration::from_micros(1_000),
+        echo: Duration::from_micros(4_000),
+        share: Duration::from_micros(200),
+    };
+    for trace in [false, true] {
+        let mut engine = engine(1, 0, trace);
+        assert_eq!(engine.traces_steps(), trace);
+        // Two calls in one gap add up.
+        engine.trace_outside(&phases);
+        engine.trace_outside(&OutsideTiming {
+            admitted: 1,
+            echo: Duration::from_micros(1_000),
+            ..OutsideTiming::default()
+        });
+        let mut recorded = Vec::new();
+        for _ in 0..2 {
+            let _totals = profile::TraceTotals::begin();
+            engine.host_clock.step_entered();
+            assert_eq!(
+                engine.step_scheduled_batch(&mut |_| {}).unwrap(),
+                StepStatus::Progressed
+            );
+            if trace {
+                recorded.push(
+                    engine
+                        .pending_step_trace
+                        .take()
+                        .unwrap()
+                        .host
+                        .outside_phases,
+                );
+            }
+            assert!(!engine.drain_events().is_empty());
+        }
+        if trace {
+            let expected = OutsideTiming {
+                admitted: 3,
+                echo: Duration::from_micros(5_000),
+                ..phases
+            };
+            assert_eq!(recorded, [expected, OutsideTiming::default()]);
+        } else {
+            assert!(engine.pending_step_trace.is_none());
+            assert_eq!(
+                engine.host_clock.clone().executed().outside_phases,
+                OutsideTiming::default()
+            );
+        }
+    }
+}
+
+#[test]
+fn submission_times_prefix_hashing_only_while_tracing() {
+    let geometry = KvGeometry::new(64, 2048).unwrap();
+    let config = EngineConfig::new(
+        SchedulerConfig::new(1, 1, 2048, 2048, 1).unwrap(),
+        geometry,
+        ModelVocabulary::new(128).unwrap(),
+        geometry.token_capacity(),
+        32,
+    )
+    .unwrap()
+    .with_prefix_cache(1);
+    for trace in [false, true] {
+        let mut engine = Engine::new(config, SampledExecutor::default()).unwrap();
+        engine.step_trace = trace;
+        engine
+            .submit(
+                EngineRequest::new(
+                    RequestId::new(1),
+                    vec![1; 1024],
+                    8,
+                    SamplingParameters::new(0.0).unwrap(),
+                    1,
+                    Vec::new(),
+                    ModelVocabulary::new(128).unwrap(),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        engine.host_clock.step_entered();
+        let hashed = engine
+            .host_clock
+            .clone()
+            .executed()
+            .outside_phases
+            .prefix_hash;
+        assert_eq!(hashed > Duration::ZERO, trace);
+    }
+}
+
+#[test]
 #[ignore = "release CPU host timing microbenchmark"]
 fn release_host_phase_costs() {
     assert!(!cfg!(debug_assertions), "run with --release");

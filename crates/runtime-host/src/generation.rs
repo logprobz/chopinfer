@@ -14,7 +14,7 @@ use runtime_engine::{
     Engine, EngineError, EngineEvent, EngineEventKind, EngineMetrics, EngineRequest,
     FinishReason as EngineFinishReason, MediaInputV1 as EngineMediaInputV1,
     MediaPayloadV1 as EngineMediaPayloadV1, MediaSpanV1 as EngineMediaSpanV1, ModelExecutor,
-    PositionSpanV1 as EnginePositionSpanV1, RequestId, StepStatus,
+    OutsideTiming, PositionSpanV1 as EnginePositionSpanV1, RequestId, StepStatus,
 };
 use runtime_frontend::{
     AUDIO_MAXIMUM_SECONDS_V1, AUDIO_SAMPLE_RATE_V1, BundleChatStateV1, BundleParserSourceV1,
@@ -2163,6 +2163,9 @@ where
     let mut active = BTreeMap::new();
     let mut submissions = Vec::new();
     let mut idle_heap = heap::IdleHeap::default();
+    // The phases between steps, for the next step's trace line.
+    let tracing = engine.traces_steps();
+    let mut outside = OutsideTiming::default();
     loop {
         progress.mark(WorkerPhase::Decode);
         if active.is_empty() {
@@ -2177,18 +2180,21 @@ where
             };
             update_transfer_readiness(&engine, state);
             progress.idle();
-            let received = if pending {
-                receiver.recv_timeout(Duration::from_millis(1))
-            } else {
-                // A waiting command takes priority over allocator maintenance.
-                // Reclaim only after request, deferred-event and transfer drain.
-                match receiver.try_recv() {
-                    Ok(command) => Ok(command),
-                    Err(TryRecvError::Disconnected) => Err(RecvTimeoutError::Disconnected),
-                    Err(TryRecvError::Empty) => match idle_heap.idle(Instant::now()) {
-                        Some(wait) => receiver.recv_timeout(wait),
-                        None => receiver.recv().map_err(|_| RecvTimeoutError::Disconnected),
-                    },
+            let received = {
+                let _idle = Lap::new(tracing, &mut outside.idle);
+                if pending {
+                    receiver.recv_timeout(Duration::from_millis(1))
+                } else {
+                    // A waiting command takes priority over allocator maintenance.
+                    // Reclaim only after request, deferred-event and transfer drain.
+                    match receiver.try_recv() {
+                        Ok(command) => Ok(command),
+                        Err(TryRecvError::Disconnected) => Err(RecvTimeoutError::Disconnected),
+                        Err(TryRecvError::Empty) => match idle_heap.idle(Instant::now()) {
+                            Some(wait) => receiver.recv_timeout(wait),
+                            None => receiver.recv().map_err(|_| RecvTimeoutError::Disconnected),
+                        },
+                    }
                 }
             };
             match received {
@@ -2269,6 +2275,7 @@ where
             }
             let _ = engine.drain_events();
         }
+        let admitting = (tracing && !submissions.is_empty()).then(Instant::now);
         for batch in submissions.drain(..) {
             let group_admitted = Rc::new(Cell::new(false));
             let queued_since = Instant::now();
@@ -2300,6 +2307,8 @@ where
                     tokenizer_input_bytes,
                     &policy,
                     deliver,
+                    tracing,
+                    &mut outside,
                 ) {
                     state.store(FAILED, Ordering::Release);
                     fail_all(&mut engine, &mut active);
@@ -2315,13 +2324,21 @@ where
                     generation.group_admitted = Rc::clone(&group_admitted);
                     generation.queued_since = queued_since;
                     ids.push(id);
+                    outside.admitted += 1;
                 }
             }
-            if engine.share_prompt_prefixes(&ids).is_err() {
+            let shared = {
+                let _share = Lap::new(tracing, &mut outside.share);
+                engine.share_prompt_prefixes(&ids)
+            };
+            if shared.is_err() {
                 state.store(FAILED, Ordering::Release);
                 fail_all(&mut engine, &mut active);
                 return WorkerExit::Fatal;
             }
+        }
+        if let Some(started) = admitting {
+            outside.admit += started.elapsed();
         }
         let expired = active
             .iter()
@@ -2364,6 +2381,7 @@ where
                 WorkerPhase::Decode
             },
         );
+        engine.trace_outside(&std::mem::take(&mut outside));
         let step = engine.step_with_admission(|id| {
             if progress.is_stalled() {
                 return;
@@ -2375,6 +2393,7 @@ where
                 let _ = response.send(Ok(()));
             }
         });
+        let delivering = tracing.then(Instant::now);
         if progress.is_stalled() {
             // The watchdog has already failed this worker; a step that
             // returned late does not make it trusted again.
@@ -2405,6 +2424,9 @@ where
                 return WorkerExit::Fatal;
             }
         }
+        if let Some(started) = delivering {
+            outside.delivery += started.elapsed();
+        }
         match step {
             Ok(StepStatus::Progressed) => {}
             Ok(StepStatus::Idle) if active.is_empty() => {}
@@ -2421,6 +2443,30 @@ where
                 fail_all(&mut engine, &mut active);
                 return WorkerExit::Fatal;
             }
+        }
+    }
+}
+
+/// Adds a scope's wall time to `total` when it ends, reading clocks only
+/// while the step trace is enabled.
+struct Lap<'a> {
+    started: Option<Instant>,
+    total: &'a mut Duration,
+}
+
+impl<'a> Lap<'a> {
+    fn new(tracing: bool, total: &'a mut Duration) -> Self {
+        Self {
+            started: tracing.then(Instant::now),
+            total,
+        }
+    }
+}
+
+impl Drop for Lap<'_> {
+    fn drop(&mut self) {
+        if let Some(started) = self.started {
+            *self.total += started.elapsed();
         }
     }
 }
@@ -2452,8 +2498,11 @@ fn admit<E: ModelExecutor>(
     tokenizer_input_bytes: usize,
     policy: &EngineModelPolicyV1,
     deliver: Delivery,
+    tracing: bool,
+    timing: &mut OutsideTiming,
 ) -> bool {
     let prepared = std::mem::replace(&mut request.prompt, PreparedPrompt::TokenIds(Vec::new()));
+    let preparing = Lap::new(tracing, &mut timing.prepare);
     let (prompt, media, spans, positions) = match prepared {
         PreparedPrompt::MediaTokens {
             tokens,
@@ -2504,6 +2553,7 @@ fn admit<E: ModelExecutor>(
             }
         },
     };
+    drop(preparing);
     if request.logprobs.prompt_top.is_some() && !policy.prompt_rows {
         let _ = response.send(Err(AdmissionError::Rejected(
             "bundle does not support prompt logprobs".to_owned(),
@@ -2511,13 +2561,20 @@ fn admit<E: ModelExecutor>(
         return true;
     }
     let prompt_echo = (request.logprobs.prompt_top.is_some() || request.logprobs.return_token_ids)
-        .then(|| prompt.clone());
+        .then(|| {
+            let _echo = Lap::new(tracing, &mut timing.echo);
+            prompt.clone()
+        });
     if request.sampling.top_logprobs() != request.logprobs.top {
         let _ = response.send(Err(AdmissionError::InvalidRequest));
         return true;
     }
     let declaration = policy.declaration();
-    let decoder = match completion_decoder_v1(tokenizer, policy, &request, &prompt) {
+    let decoder = {
+        let _decoder = Lap::new(tracing, &mut timing.decoder);
+        completion_decoder_v1(tokenizer, policy, &request, &prompt)
+    };
+    let decoder = match decoder {
         Ok(decoder) => decoder,
         Err(error) => {
             let _ = response.send(Err(error));
@@ -2552,6 +2609,7 @@ fn admit<E: ModelExecutor>(
             return true;
         }
     };
+    let submitting = Lap::new(tracing, &mut timing.submit);
     let engine_request = match EngineRequest::new(
         id,
         prompt,
@@ -2601,6 +2659,7 @@ fn admit<E: ModelExecutor>(
         let _ = response.send(Err(refusal));
         return true;
     }
+    drop(submitting);
     engine.metrics().set_request_trace_id(
         id,
         request
@@ -2610,6 +2669,7 @@ fn admit<E: ModelExecutor>(
     );
     engine.defer_completion_metrics(id);
     if let Some(ids) = prompt_echo {
+        let _echo = Lap::new(tracing, &mut timing.echo);
         let tokens = ids
             .iter()
             .map(|id| {

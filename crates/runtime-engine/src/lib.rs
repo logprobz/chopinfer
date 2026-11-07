@@ -18,7 +18,7 @@ mod speculation;
 mod step_rows;
 pub mod warmup;
 
-pub use compatibility::{LatencyHistogram, RequestSummary};
+pub use compatibility::{LatencyHistogram, OutsideTiming, RequestSummary};
 pub use media::{
     MAX_MEDIA_ENCODERS, MediaArenaV1, MediaConfigError, MediaConfigV1, MediaEncodeV1,
     MediaInjectV1, MediaInputV1, MediaPayloadSourceV1, MediaPayloadV1, MediaRequestError,
@@ -2216,10 +2216,15 @@ impl<E: ModelExecutor> Engine<E> {
         } else {
             spec
         };
+        let hashing =
+            (self.step_trace && self.prefix_block_tokens.is_some()).then(std::time::Instant::now);
         let prefix_chain = match self.prefix_block_tokens {
             Some(block_tokens) => Some(Arc::new(prefix_request(block_tokens, &request)?)),
             None => None,
         };
+        if let Some(started) = hashing {
+            self.host_clock.prefix_hashed(started.elapsed());
+        }
         let prefix = prefix_chain.as_ref().map(|chain| {
             PrefixRequestV1::new(Arc::clone(chain), request.prompt_logprobs.is_none())
         });
@@ -2267,7 +2272,12 @@ impl<E: ModelExecutor> Engine<E> {
                     )
                     .saturating_add(4096);
                 if observer.reserve_temporary(temporary) {
-                    if let Ok(chain) = prefix_request(block, &request) {
+                    let hashing = self.step_trace.then(std::time::Instant::now);
+                    let chain = prefix_request(block, &request);
+                    if let Some(started) = hashing {
+                        self.host_clock.prefix_hashed(started.elapsed());
+                    }
+                    if let Ok(chain) = chain {
                         observer.submit(request.id, &chain, request.maximum_new_tokens);
                     } else {
                         observer.unsupported();
@@ -2327,6 +2337,21 @@ impl<E: ModelExecutor> Engine<E> {
             )
         });
         Ok(())
+    }
+
+    /// Whether step tracing reads host clocks (`CHOPINFER_STEP_TRACE=1`), so
+    /// a serving loop times its phases only then.
+    #[must_use]
+    pub const fn traces_steps(&self) -> bool {
+        self.step_trace
+    }
+
+    /// Adds the serving loop's phases to the next traced step's line. Does
+    /// nothing unless [`Self::traces_steps`].
+    pub fn trace_outside(&mut self, timing: &OutsideTiming) {
+        if self.step_trace {
+            self.host_clock.outside(timing);
+        }
     }
 
     /// Runs one scheduled batch, then publishes what the KV pool now holds.

@@ -1,7 +1,7 @@
 //! Reference metric names backed by engine lifecycle observations.
 use std::collections::BTreeMap;
 use std::fmt::Write;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use crate::{FinishReason, RequestId};
 
@@ -927,6 +927,48 @@ pub(crate) struct VerifiedTokens {
     pub(crate) emitted: usize,
 }
 
+/// Host time the serving loop spent between two steps, by phase, which the
+/// next traced step reports. `admit` contains the other admission phases;
+/// `submit` contains `prefix_hash`, which the engine records itself.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct OutsideTiming {
+    /// Waiting for a command while no request was active.
+    pub idle: Duration,
+    /// Delivering the previous step's events after it returned.
+    pub delivery: Duration,
+    /// Admitting new requests, every admission phase below included.
+    pub admit: Duration,
+    /// Requests admitted into the engine.
+    pub admitted: u64,
+    /// Validating or tokenizing a prompt and converting its media.
+    pub prepare: Duration,
+    /// Building and priming the completion decoder.
+    pub decoder: Duration,
+    /// Building the engine request and submitting it.
+    pub submit: Duration,
+    /// Hashing the prompt's prefix chain, inside `submit`.
+    pub prefix_hash: Duration,
+    /// Building and queueing the prompt echo event.
+    pub echo: Duration,
+    /// Sharing prompt prefixes within each admitted group.
+    pub share: Duration,
+}
+
+impl OutsideTiming {
+    fn add(&mut self, other: &Self) {
+        self.idle += other.idle;
+        self.delivery += other.delivery;
+        self.admit += other.admit;
+        self.admitted += other.admitted;
+        self.prepare += other.prepare;
+        self.decoder += other.decoder;
+        self.submit += other.submit;
+        self.prefix_hash += other.prefix_hash;
+        self.echo += other.echo;
+        self.share += other.share;
+    }
+}
+
 /// Host time of one executed step on the engine thread, in microseconds.
 ///
 /// `boundary_us` is the host-side step boundary: from the previous step's
@@ -939,6 +981,8 @@ pub(crate) struct HostTiming {
     /// Outside `Engine::step` since the previous call returned: the serving
     /// loop's event delivery, control commands and admission.
     pub(crate) outside: Option<u64>,
+    /// The serving loop's phases within `outside`.
+    pub(crate) outside_phases: OutsideTiming,
     /// Retirement, preemption, scheduling, drafting and items.
     pub(crate) schedule: u64,
     /// The executor call, device waits and in-execute sampling included.
@@ -986,6 +1030,16 @@ impl HostTiming {
     fn record(&self) -> serde_json::Value {
         serde_json::json!({
             "outside_us": self.outside,
+            "idle_us": micros(self.outside_phases.idle),
+            "delivery_us": micros(self.outside_phases.delivery),
+            "admit_us": micros(self.outside_phases.admit),
+            "admitted_requests": self.outside_phases.admitted,
+            "admit_prepare_us": micros(self.outside_phases.prepare),
+            "admit_decoder_us": micros(self.outside_phases.decoder),
+            "admit_submit_us": micros(self.outside_phases.submit),
+            "admit_prefix_hash_us": micros(self.outside_phases.prefix_hash),
+            "admit_echo_us": micros(self.outside_phases.echo),
+            "admit_share_us": micros(self.outside_phases.share),
             "schedule_us": self.schedule,
             "execute_us": self.execute,
             "bundle_execute_us": self.bundle_execute,
@@ -1013,7 +1067,7 @@ impl HostTiming {
     }
 }
 
-fn micros(duration: std::time::Duration) -> u64 {
+fn micros(duration: Duration) -> u64 {
     duration.as_micros().min(u128::from(u64::MAX)) as u64
 }
 
@@ -1028,12 +1082,16 @@ pub(crate) struct HostClock {
     previous_execute_returned: Option<Instant>,
     previous_wait_ended: Option<Instant>,
     outside: Option<u64>,
+    /// Phases recorded since the previous step returned.
+    pending_outside: OutsideTiming,
+    outside_phases: OutsideTiming,
 }
 
 impl HostClock {
     pub(crate) fn step_entered(&mut self) {
         let now = Instant::now();
         self.outside = self.step_returned.map(|returned| micros(now - returned));
+        self.outside_phases = std::mem::take(&mut self.pending_outside);
         self.step_entered = Some(now);
         self.execute_started = None;
         self.execute_returned = None;
@@ -1041,6 +1099,16 @@ impl HostClock {
 
     pub(crate) fn step_returned(&mut self) {
         self.step_returned = Some(Instant::now());
+    }
+
+    /// Adds serving-loop phases to the gap before the next step.
+    pub(crate) fn outside(&mut self, timing: &OutsideTiming) {
+        self.pending_outside.add(timing);
+    }
+
+    /// Adds prefix chain hashing to the gap before the next step.
+    pub(crate) fn prefix_hashed(&mut self, elapsed: Duration) {
+        self.pending_outside.prefix_hash += elapsed;
     }
 
     pub(crate) fn execute_started(&mut self) {
@@ -1065,6 +1133,7 @@ impl HostClock {
             prefix_capture: 0,
             bundle_log: phases.totals[crate::profile::StepPhase::BundleLog as usize],
             outside: self.outside,
+            outside_phases: self.outside_phases,
             schedule: micros(started.saturating_duration_since(entered)),
             execute: micros(returned.saturating_duration_since(started)),
             commit: micros(now.saturating_duration_since(returned)),
@@ -1228,6 +1297,18 @@ mod tests {
                 mapped_gather_exposed: 640,
                 upload_copy: 20,
                 upload_backpressure: 10,
+                outside_phases: OutsideTiming {
+                    delivery: Duration::from_nanos(7_900),
+                    admit: Duration::from_micros(33),
+                    admitted: 2,
+                    prepare: Duration::from_micros(1),
+                    decoder: Duration::from_micros(4),
+                    submit: Duration::from_micros(9),
+                    prefix_hash: Duration::from_micros(6),
+                    echo: Duration::from_micros(12),
+                    share: Duration::from_micros(3),
+                    ..OutsideTiming::default()
+                },
                 ..HostTiming::default()
             },
         };
@@ -1266,7 +1347,21 @@ mod tests {
         }
         assert_eq!(parsed["host"]["mapped_gather_exposed_us"], 640);
         assert!(parsed["host"]["period_us"].is_null());
-        assert_eq!(parsed["host"].as_object().unwrap().len(), 24);
+        for (field, expected) in [
+            ("idle_us", 0),
+            ("delivery_us", 7),
+            ("admit_us", 33),
+            ("admitted_requests", 2),
+            ("admit_prepare_us", 1),
+            ("admit_decoder_us", 4),
+            ("admit_submit_us", 9),
+            ("admit_prefix_hash_us", 6),
+            ("admit_echo_us", 12),
+            ("admit_share_us", 3),
+        ] {
+            assert_eq!(parsed["host"][field], expected, "{field}");
+        }
+        assert_eq!(parsed["host"].as_object().unwrap().len(), 34);
         assert_eq!(parsed["live_rows"], 31);
         assert_eq!(parsed["verify_rows"], 0);
         assert!(parsed["row_capacity"].is_null());

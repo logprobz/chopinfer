@@ -7614,6 +7614,9 @@ mod overlap_bench;
 #[path = "generation/overlap_tests.rs"]
 mod overlap_tests;
 #[cfg(test)]
+#[path = "generation/scaling_bench.rs"]
+mod scaling_bench;
+#[cfg(test)]
 #[path = "generation/stop_tests.rs"]
 pub(crate) mod stop_tests;
 

@@ -752,10 +752,16 @@ impl DeviceSamplingSession {
             .and_then(|bytes| bytes.checked_add(usize::try_from(view.buffer.offset).ok()?))
             .ok_or(BundleStatusV1::InvalidArgument)?;
         let mut pinned = PinnedHostBuffer::new(&self.context, element_bytes).map_err(host_error)?;
-        logits
-            .copy_to_pinned_at_async(offset, &mut pinned, 0, element_bytes, &self.stream)
-            .map_err(host_error)?
-            .finish();
+        {
+            // The read returns once the stream's earlier work has finished.
+            let _wait = runtime_engine::profile::PhaseTimer::new(
+                runtime_engine::profile::StepPhase::DeviceWait,
+            );
+            logits
+                .copy_to_pinned_at_async(offset, &mut pinned, 0, element_bytes, &self.stream)
+                .map_err(host_error)?
+                .finish();
+        }
         let bytes = pinned.as_slice();
         let value = if element_bytes == 4 {
             f32::from_le_bytes(bytes[..4].try_into().expect("four bytes allocated"))
@@ -1734,7 +1740,12 @@ impl DeviceSamplingSession {
         if self.pending.is_some() || !self.device_submissions.is_empty() {
             // This stream is private. Service validation excludes capture events,
             // so neither explicit capture nor an event join can capture it.
-            self.stream.synchronize().map_err(host_error)?;
+            {
+                let _wait = runtime_engine::profile::PhaseTimer::new(
+                    runtime_engine::profile::StepPhase::DeviceWait,
+                );
+                self.stream.synchronize().map_err(host_error)?;
+            }
             self.pending = None;
             self.device_submissions.clear();
         }
@@ -2863,5 +2874,86 @@ mod device_wait_tests {
             assert_eq!(sampler.ordered_inputs.is_some(), ordered);
         }
         logits.release().unwrap();
+    }
+
+    /// A prompt logprob whose target the sampler did not choose reads that
+    /// logit back, and the read is a device wait of the traced step.
+    #[test]
+    fn a_prompt_logit_read_is_a_device_wait() {
+        fake_driver::reset();
+        let context = Driver::initialize()
+            .unwrap()
+            .retain_primary_context(0)
+            .unwrap();
+        let owner = context.stream().unwrap();
+        let pool = context.default_memory_pool().unwrap();
+        let logits = pool.allocate(&owner, 8 * 4).unwrap();
+        owner.synchronize().unwrap();
+        let mut view = runtime_bundle_abi::BundleLogitsViewV1::empty();
+        view.element_type = runtime_bundle_abi::BUNDLE_LOGITS_ELEMENT_V1_F32;
+        view.buffer.length = 8 * 4;
+        view.row_stride_elements = 8;
+        view.row_count = 1;
+        view.live_width = 8;
+        let sampler = DeviceSamplingSession::new(context).unwrap();
+        let step = runtime_engine::profile::TraceTotals::begin();
+        let called = std::time::Instant::now();
+        // The synthetic driver keeps no device bytes, so the value read is
+        // not checked; only the wait is.
+        let _ = sampler.read_logit(&logits, view, 0, 3, 4);
+        let returned = std::time::Instant::now();
+        let waits = runtime_engine::profile::device_waits();
+        drop(step);
+        for instant in [waits.first_started, waits.last_ended] {
+            let instant = instant.expect("the read waited");
+            assert!(called <= instant && instant <= returned);
+        }
+        logits.release().unwrap();
+    }
+
+    /// Retiring a view the session issued but never collected, or the device
+    /// results it still holds, waits for its private stream, and that wait
+    /// is a device wait of the traced step.
+    #[test]
+    fn retiring_held_sampler_work_is_a_device_wait() {
+        fake_driver::reset();
+        let context = Driver::initialize()
+            .unwrap()
+            .retain_primary_context(0)
+            .unwrap();
+        let owner = context.stream().unwrap();
+        let pool = context.default_memory_pool().unwrap();
+        let logits = pool.allocate(&owner, 32).unwrap();
+        let output = pool.allocate(&owner, 256).unwrap();
+        owner.synchronize().unwrap();
+        let mut sampler = DeviceSamplingSession::new(context.clone()).unwrap();
+        let step = runtime_engine::profile::TraceTotals::begin();
+        sampler.retire_pending().unwrap();
+        assert_eq!(
+            runtime_engine::profile::device_waits().first_started,
+            None,
+            "nothing held, nothing waited for"
+        );
+        drop(step);
+        sampler.device_submissions.push_back(DeviceSubmission {
+            serial: 1,
+            done: None,
+            _logits: logits.clone(),
+            _output: output.clone(),
+            _row_indices: None,
+        });
+        let step = runtime_engine::profile::TraceTotals::begin();
+        let called = std::time::Instant::now();
+        sampler.retire_pending().unwrap();
+        let returned = std::time::Instant::now();
+        let waits = runtime_engine::profile::device_waits();
+        drop(step);
+        assert!(sampler.device_submissions.is_empty());
+        for instant in [waits.first_started, waits.last_ended] {
+            let instant = instant.expect("the retirement waited");
+            assert!(called <= instant && instant <= returned);
+        }
+        logits.release().unwrap();
+        output.release().unwrap();
     }
 }

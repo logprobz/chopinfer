@@ -445,10 +445,7 @@ pub(super) fn observed_engine(
 fn active(
     minimum: usize,
     stop: &[String],
-) -> (
-    ActiveGeneration,
-    tokio::sync::mpsc::Receiver<GenerationEvent>,
-) {
+) -> (ActiveGeneration, tokio::sync::mpsc::Receiver<WorkerEvent>) {
     let descriptor = Arc::new(
         FrontendDescriptorV1::from_component_bytes(declarations::KEY_VALUE.as_bytes()).unwrap(),
     );
@@ -478,7 +475,7 @@ fn active(
     (
         ActiveGeneration {
             request_id: String::new(),
-            events: Outbox::new(EventSender::new(sender), CancellationSignal::new(), false),
+            events: Outbox::new(WorkerEvents(sender), CancellationSignal::new(), false),
             cancellation: CancellationSignal::new(),
             decoder,
             prompt_tokens: 1,
@@ -571,7 +568,7 @@ fn grammar_stop_before_minimum_finishes_greedy_and_speculative_completions() {
                 }
                 let mut finished = Vec::new();
                 let mut text = String::new();
-                while let Ok(event) = receiver.try_recv() {
+                while let Ok(event) = receiver.try_recv().map(WorkerEvent::into_event) {
                     match event {
                         GenerationEvent::Content(content) => text.push_str(&content.delta),
                         GenerationEvent::Finished { reason, usage } => {
@@ -655,7 +652,7 @@ fn ignored_eos_does_not_become_an_engine_confirmed_stop() {
             }
         }
         let mut finished = Vec::new();
-        while let Ok(event) = receiver.try_recv() {
+        while let Ok(event) = receiver.try_recv().map(WorkerEvent::into_event) {
             match event {
                 GenerationEvent::Finished { reason, usage } => {
                     finished.push((reason, usage.completion_tokens))
@@ -721,7 +718,7 @@ fn ignored_eos_keeps_reserved_markup_as_answer_text() {
             assert!(active.is_empty());
             let mut content = String::new();
             let mut finished = Vec::new();
-            while let Ok(event) = receiver.try_recv() {
+            while let Ok(event) = receiver.try_recv().map(WorkerEvent::into_event) {
                 match event {
                     GenerationEvent::Content(part) => content.push_str(&part.delta),
                     GenerationEvent::Finished { reason, usage } => {
@@ -784,7 +781,7 @@ fn a_refused_token_names_the_decoder_reason_ordinal_and_id() {
             }
             assert!(active.is_empty());
             let mut failures = Vec::new();
-            while let Ok(event) = receiver.try_recv() {
+            while let Ok(event) = receiver.try_recv().map(WorkerEvent::into_event) {
                 match event {
                     GenerationEvent::Failed {
                         message,
@@ -1036,7 +1033,7 @@ fn client_stop_observer_metrics(maximum: usize, observed: bool) {
                         event
                     ));
                     if streamed {
-                        while let Ok(event) = receiver.try_recv() {
+                        while let Ok(event) = receiver.try_recv().map(WorkerEvent::into_event) {
                             delivered.push(event);
                         }
                     }
@@ -1045,7 +1042,7 @@ fn client_stop_observer_metrics(maximum: usize, observed: bool) {
                     break;
                 }
             }
-            while let Ok(event) = receiver.try_recv() {
+            while let Ok(event) = receiver.try_recv().map(WorkerEvent::into_event) {
                 delivered.push(event);
             }
             let mut text = String::new();
@@ -1168,7 +1165,7 @@ fn admitted_ignored_eos(
         RequestId::new(1),
         request,
         grammar,
-        EventSender::new(sender),
+        WorkerEvents(sender),
         response,
         65536,
         &policy,
@@ -1206,7 +1203,7 @@ fn admitted_ignored_eos(
     }
     assert!(admission.try_recv().unwrap().is_ok());
     let mut delivered_finish = false;
-    while let Ok(event) = receiver.try_recv() {
+    while let Ok(event) = receiver.try_recv().map(WorkerEvent::into_event) {
         match event {
             GenerationEvent::Finished { usage, .. } => {
                 assert_eq!(usage.completion_tokens as usize, tokens.len());
@@ -1334,7 +1331,7 @@ fn textual_eos_stays_literal_in_gathered_owned_and_verify_outputs() {
                 for (row, receiver) in receivers.iter_mut().enumerate() {
                     let mut finished = Vec::new();
                     let mut content = String::new();
-                    while let Ok(event) = receiver.try_recv() {
+                    while let Ok(event) = receiver.try_recv().map(WorkerEvent::into_event) {
                         match event {
                             GenerationEvent::Content(part) => content.push_str(&part.delta),
                             GenerationEvent::Finished { reason, usage } => {
@@ -1517,7 +1514,7 @@ fn idle_worker_prefills_grouped_prompts_and_finishes_a_slow_copy_without_new_com
                 id: RequestId::new(index + 2),
                 request: Box::new(choice),
                 constraint: None,
-                events: EventSender::new(events),
+                events: WorkerEvents(events),
                 response,
             });
             admissions.push(admission);
@@ -1927,7 +1924,7 @@ fn a_client_gone_before_its_prompt_echo_leaves_nothing_behind() {
             RequestId::new(id),
             request,
             None,
-            EventSender::new(sender),
+            WorkerEvents(sender),
             response,
             65536,
             &policy,
@@ -1992,7 +1989,7 @@ fn admitted_events(echo: bool, tracing: bool) -> (Vec<String>, OutsideTiming) {
         RequestId::new(1),
         request,
         None,
-        EventSender::new(sender),
+        WorkerEvents(sender),
         response,
         65536,
         &policy,
@@ -2013,7 +2010,7 @@ fn admitted_events(echo: bool, tracing: bool) -> (Vec<String>, OutsideTiming) {
     }
     let mut events = Vec::new();
     while let Ok(event) = receiver.try_recv() {
-        events.push(format!("{event:?}"));
+        events.push(format!("{:?}", relayed(event, &tokenizer)));
     }
     (events, timing)
 }

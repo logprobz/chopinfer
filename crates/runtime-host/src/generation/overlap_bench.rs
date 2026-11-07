@@ -168,7 +168,7 @@ fn run(
             id,
             ActiveGeneration {
                 request_id: String::new(),
-                events: Outbox::new(EventSender::new(sender), cancellation.clone(), overlap),
+                events: Outbox::new(WorkerEvents(sender), cancellation.clone(), overlap),
                 cancellation,
                 decoder,
                 prompt_tokens: prompt as u64,

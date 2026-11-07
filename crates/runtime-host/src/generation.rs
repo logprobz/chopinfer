@@ -1544,6 +1544,7 @@ impl GenerationBackend for EngineGenerationBackend {
                 events,
                 request.cancellation.clone(),
                 receipt,
+                Arc::clone(&self.tokenizer),
             ));
             let (response, admitted) = oneshot::channel();
             submissions.push(WorkerSubmission {
@@ -1552,7 +1553,7 @@ impl GenerationBackend for EngineGenerationBackend {
                 id,
                 request: Box::new(request),
                 constraint: None,
-                events: EventSender::new(forward_sender),
+                events: WorkerEvents(forward_sender),
                 response,
             });
             results.push(Box::pin(async move {
@@ -1676,18 +1677,20 @@ impl Drop for EngineGenerationBackend {
 /// still go out one at a time, in the order the worker queued them.
 #[cfg(test)]
 async fn forward_events(
-    forward_receiver: tokio::sync::mpsc::Receiver<GenerationEvent>,
+    forward_receiver: tokio::sync::mpsc::Receiver<WorkerEvent>,
     events: EventSender,
     cancellation: CancellationSignal,
+    tokenizer: Arc<Tokenizer>,
 ) {
-    forward_events_observed(forward_receiver, events, cancellation, None).await;
+    forward_events_observed(forward_receiver, events, cancellation, None, tokenizer).await;
 }
 
 async fn forward_events_observed(
-    mut forward_receiver: tokio::sync::mpsc::Receiver<GenerationEvent>,
+    mut forward_receiver: tokio::sync::mpsc::Receiver<WorkerEvent>,
     events: EventSender,
     cancellation: CancellationSignal,
     mut observation: Option<runtime_engine::ReplyHistoryDelivery>,
+    tokenizer: Arc<Tokenizer>,
 ) {
     loop {
         let event = tokio::select! {
@@ -1695,8 +1698,27 @@ async fn forward_events_observed(
             () = cancellation.cancelled() => return,
             event = forward_receiver.recv() => event,
         };
-        let Some(event) = event else {
-            return;
+        let event = match event {
+            None => return,
+            Some(WorkerEvent::Event(event)) => event,
+            // The echo is built here, off the engine thread, before any
+            // later event is relayed.
+            Some(WorkerEvent::PromptEcho(token_ids)) => {
+                let tokenizer = Arc::clone(&tokenizer);
+                let built =
+                    tokio::task::spawn_blocking(move || prompt_echo_v1(&tokenizer, token_ids));
+                match tokio::select! {
+                    biased;
+                    () = cancellation.cancelled() => return,
+                    built = built => built,
+                } {
+                    Ok(event) => event,
+                    Err(_) => {
+                        cancellation.cancel();
+                        return;
+                    }
+                }
+            }
         };
         let terminal = matches!(&event, GenerationEvent::Finished { .. });
         let sent = tokio::select! {
@@ -1711,6 +1733,26 @@ async fn forward_events_observed(
         if terminal && let Some(observation) = observation.take() {
             observation.succeeded();
         }
+    }
+}
+
+/// The prompt echo event of `token_ids`: each token's text and the prompt's,
+/// as the tokenizer decodes them.
+fn prompt_echo_v1(tokenizer: &Tokenizer, token_ids: Vec<u32>) -> GenerationEvent {
+    let tokens = token_ids
+        .iter()
+        .map(|id| {
+            String::from_utf8_lossy(tokenizer.token_bytes(*id).expect("validated token"))
+                .into_owned()
+        })
+        .collect::<Vec<_>>();
+    let text = tokenizer
+        .decode_utf8(&token_ids)
+        .unwrap_or_else(|_| tokens.concat());
+    GenerationEvent::Prompt {
+        token_ids,
+        text,
+        tokens,
     }
 }
 
@@ -1963,8 +2005,62 @@ struct WorkerSubmission {
     id: RequestId,
     request: Box<PreparedRequest>,
     constraint: Option<Arc<CompiledGrammar>>,
-    events: EventSender,
+    events: WorkerEvents,
     response: oneshot::Sender<Result<(), AdmissionError>>,
+}
+
+/// What the worker sends one request's relay, in order.
+enum WorkerEvent {
+    Event(GenerationEvent),
+    /// The prompt's token IDs, from which the relay builds the prompt echo
+    /// event the client receives in this one's place.
+    PromptEcho(Vec<u32>),
+}
+
+#[cfg(test)]
+impl WorkerEvent {
+    /// The event this message carries, for a test that reads the worker's
+    /// channel; the relay builds an echo's event.
+    fn into_event(self) -> GenerationEvent {
+        match self {
+            Self::Event(event) => event,
+            Self::PromptEcho(_) => panic!("the relay builds the prompt echo"),
+        }
+    }
+}
+
+/// The event the relay delivers for one message, for a test that reads the
+/// worker's channel without a relay.
+#[cfg(test)]
+fn relayed(event: WorkerEvent, tokenizer: &Tokenizer) -> GenerationEvent {
+    match event {
+        WorkerEvent::Event(event) => event,
+        WorkerEvent::PromptEcho(token_ids) => prompt_echo_v1(tokenizer, token_ids),
+    }
+}
+
+/// The worker's end of one request's bounded channel to its relay. Every
+/// message takes one slot, an echo's IDs as the echo would.
+struct WorkerEvents(tokio::sync::mpsc::Sender<WorkerEvent>);
+
+impl WorkerEvents {
+    fn try_emit(&self, event: GenerationEvent) -> Result<(), ()> {
+        self.0.try_send(WorkerEvent::Event(event)).map_err(drop)
+    }
+
+    fn try_emit_prompt_echo(&self, token_ids: Vec<u32>) -> Result<(), ()> {
+        self.0
+            .try_send(WorkerEvent::PromptEcho(token_ids))
+            .map_err(drop)
+    }
+
+    fn capacity(&self) -> usize {
+        self.0.capacity()
+    }
+
+    fn is_closed(&self) -> bool {
+        self.0.is_closed()
+    }
 }
 
 enum WorkerCommand {
@@ -2014,7 +2110,7 @@ pub(crate) struct TokenAccounting {
 /// the reader leaves first; the job then drops the generation's later events
 /// and cancels it.
 struct Outbox {
-    sender: Rc<EventSender>,
+    sender: Rc<WorkerEvents>,
     deferred: Option<Rc<Queued>>,
     cancellation: CancellationSignal,
 }
@@ -2027,7 +2123,7 @@ struct Queued {
 }
 
 impl Outbox {
-    fn new(sender: EventSender, cancellation: CancellationSignal, deferred: bool) -> Self {
+    fn new(sender: WorkerEvents, cancellation: CancellationSignal, deferred: bool) -> Self {
         Self {
             sender: Rc::new(sender),
             deferred: deferred.then(Rc::default),
@@ -2037,7 +2133,7 @@ impl Outbox {
 
     fn try_emit(&self, event: GenerationEvent) -> Result<(), ()> {
         let Some(queued) = &self.deferred else {
-            return self.sender.try_emit(event).map_err(drop);
+            return self.sender.try_emit(event);
         };
         if queued.refused.get() || self.sender.is_closed() {
             return Err(());
@@ -2493,7 +2589,7 @@ fn admit<E: ModelExecutor>(
     id: RequestId,
     mut request: PreparedRequest,
     constraint: Option<Arc<CompiledGrammar>>,
-    events: EventSender,
+    events: WorkerEvents,
     response: oneshot::Sender<Result<(), AdmissionError>>,
     tokenizer_input_bytes: usize,
     policy: &EngineModelPolicyV1,
@@ -2670,24 +2766,7 @@ fn admit<E: ModelExecutor>(
     engine.defer_completion_metrics(id);
     if let Some(ids) = prompt_echo {
         let _echo = Lap::new(tracing, &mut timing.echo);
-        let tokens = ids
-            .iter()
-            .map(|id| {
-                String::from_utf8_lossy(tokenizer.token_bytes(*id).expect("validated token"))
-                    .into_owned()
-            })
-            .collect::<Vec<_>>();
-        let text = tokenizer
-            .decode_utf8(&ids)
-            .unwrap_or_else(|_| tokens.concat());
-        if events
-            .try_emit(GenerationEvent::Prompt {
-                token_ids: ids,
-                text,
-                tokens,
-            })
-            .is_err()
-        {
+        if events.try_emit_prompt_echo(ids).is_err() {
             // The client is gone before its first event. Its completion
             // metrics were deferred to this host, so they are finished here
             // with the request, as every other host cancel does.
@@ -7654,10 +7733,13 @@ mod tests {
                 forward,
                 EventSender::new(client),
                 cancellation.clone(),
+                Arc::new(stop_tests::tokenizer()),
             ));
             for tokens in [vec![1], vec![2], vec![3]] {
                 worker
-                    .send(GenerationEvent::GeneratedTokenIds(tokens))
+                    .send(WorkerEvent::Event(GenerationEvent::GeneratedTokenIds(
+                        tokens,
+                    )))
                     .await
                     .unwrap();
             }
@@ -7699,10 +7781,13 @@ mod tests {
                 forward,
                 EventSender::new(client),
                 CancellationSignal::new(),
+                Arc::new(stop_tests::tokenizer()),
             ));
             for token in 0..32 {
                 worker
-                    .send(GenerationEvent::GeneratedTokenIds(vec![token]))
+                    .send(WorkerEvent::Event(GenerationEvent::GeneratedTokenIds(
+                        vec![token],
+                    )))
                     .await
                     .unwrap();
             }
@@ -7718,6 +7803,73 @@ mod tests {
             relay.await.unwrap();
             assert_eq!(received, (0..32).collect::<Vec<_>>());
         });
+    }
+
+    /// The relay turns a prompt's IDs into the echo the worker used to
+    /// build, each token's lossy text and the prompt's decoded text, or the
+    /// tokens' text when the prompt is not UTF-8, and delivers it before
+    /// the events queued after it.
+    #[test]
+    fn the_relay_builds_the_prompt_echo_before_later_events() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let byte = |value: u8| u32::from(value) + 3;
+        let replacement = "\u{fffd}".to_owned();
+        let whole = vec![byte(b'a'), byte(0xe4), byte(0xb8), byte(0xad), 1];
+        let split = vec![byte(b'a'), byte(0xe4), byte(0xb8)];
+        for (ids, text, tokens) in [
+            (
+                whole,
+                "a\u{4e2d}[EOS]".to_owned(),
+                vec![
+                    "a".to_owned(),
+                    replacement.clone(),
+                    replacement.clone(),
+                    replacement.clone(),
+                    "[EOS]".to_owned(),
+                ],
+            ),
+            (
+                split,
+                "a\u{fffd}\u{fffd}".to_owned(),
+                vec!["a".to_owned(), replacement.clone(), replacement.clone()],
+            ),
+        ] {
+            let received = runtime.block_on(async {
+                let (client, mut reader) = tokio::sync::mpsc::channel(8);
+                let (worker, forward) = tokio::sync::mpsc::channel(8);
+                let events = WorkerEvents(worker);
+                events.try_emit_prompt_echo(ids.clone()).unwrap();
+                for token in [7, 8] {
+                    events
+                        .try_emit(GenerationEvent::GeneratedTokenIds(vec![token]))
+                        .unwrap();
+                }
+                drop(events);
+                forward_events(
+                    forward,
+                    EventSender::new(client),
+                    CancellationSignal::new(),
+                    Arc::new(stop_tests::tokenizer()),
+                )
+                .await;
+                std::iter::from_fn(|| reader.try_recv().ok()).collect::<Vec<_>>()
+            });
+            assert_eq!(
+                received,
+                [
+                    GenerationEvent::Prompt {
+                        token_ids: ids,
+                        text,
+                        tokens,
+                    },
+                    GenerationEvent::GeneratedTokenIds(vec![7]),
+                    GenerationEvent::GeneratedTokenIds(vec![8]),
+                ]
+            );
+        }
     }
 }
 

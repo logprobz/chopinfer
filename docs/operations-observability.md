@@ -819,9 +819,11 @@ Step and request logs are not replay inputs; they omit token contents.
   tokenizes the prompt and converts its media, `admit_decoder_us` builds and
   primes the completion decoder, `admit_submit_us` builds the engine request
   and submits it, including `admit_prefix_hash_us`, which hashes the
-  prompt's prefix chain, `admit_echo_us` builds and queues the prompt echo
-  a request with returned token IDs or prompt logprobs asks for, and
-  `admit_share_us` shares prompt prefixes within each admitted group. The
+  prompt's prefix chain, `admit_echo_us` copies and queues the prompt's
+  token IDs for the echo a request with returned token IDs or prompt
+  logprobs asks for (the request's relay builds the echo's text off the
+  engine thread, before it relays any later event), and `admit_share_us`
+  shares prompt prefixes within each admitted group. The
   rest of `outside_us` is control commands, cancellations and queue expiry.
   A step that does not execute writes no line, and its phases are dropped
   with its `outside_us`. These scopes follow the same rules: clocks only

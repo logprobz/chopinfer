@@ -119,7 +119,7 @@ struct ScriptedExecutor {
     control: SyncSender<WorkerCommand>,
     log: Arc<Mutex<ExecutionLog>>,
     /// The forwarders' channels, when requests are forwarded.
-    forwarding: Vec<tokio::sync::mpsc::WeakSender<GenerationEvent>>,
+    forwarding: Vec<tokio::sync::mpsc::WeakSender<WorkerEvent>>,
 }
 
 impl ScriptedExecutor {
@@ -269,6 +269,7 @@ fn run(scenario: &Scenario, overlap: bool) -> Run {
         .build()
         .unwrap();
     let mut forwarding = Vec::new();
+    let tokenizer = Arc::new(super::stop_tests::tokenizer());
     for (index, planned) in scenario.requests.iter().enumerate() {
         let id = RequestId::new(index as u64 + 1);
         scripts.insert(id, planned.script.clone());
@@ -313,10 +314,12 @@ fn run(scenario: &Scenario, overlap: bool) -> Run {
                 forward,
                 EventSender::new(client),
                 request.cancellation.clone(),
+                Arc::clone(&tokenizer),
             ));
-            (sender, events)
+            (sender, Ok(events))
         } else {
-            tokio::sync::mpsc::channel(planned.capacity)
+            let (sender, events) = tokio::sync::mpsc::channel(planned.capacity);
+            (sender, Err(events))
         };
         let (response, admitted) = oneshot::channel();
         streams.push(events);
@@ -327,7 +330,7 @@ fn run(scenario: &Scenario, overlap: bool) -> Run {
             id,
             request: Box::new(request),
             constraint: planned.grammar.map(grammar),
-            events: EventSender::new(sender),
+            events: WorkerEvents(sender),
             response,
         }]);
         if planned.arrive == 0 {
@@ -373,11 +376,11 @@ fn run(scenario: &Scenario, overlap: bool) -> Run {
     let engine = Engine::new(config, executor).unwrap();
     let metrics = engine.metrics();
     let backend = EngineBackendConfig::default().with_step_overlap(overlap);
-    let tokenizer = Arc::new(super::stop_tests::tokenizer());
+    let worker_tokenizer = Arc::clone(&tokenizer);
     let worker = thread::spawn(move || {
         let state = AtomicU8::new(READY);
         worker_loop(
-            tokenizer,
+            worker_tokenizer,
             engine,
             receiver,
             backend,
@@ -398,18 +401,23 @@ fn run(scenario: &Scenario, overlap: bool) -> Run {
     }
     control.send(WorkerCommand::Shutdown).unwrap();
     worker.join().expect("the worker ran the scenario");
-    // A forwarder ends once the worker's side of its channel is gone.
+    // A forwarder ends once the worker's side of its channel is gone; a
+    // stream without one is read as its relay would deliver it.
     let streams = streams
         .into_iter()
-        .map(|mut events| {
+        .map(|events| {
             let mut seen = Vec::new();
-            if scenario.forwarded {
-                while let Some(event) = events.blocking_recv() {
-                    seen.push(event);
+            match events {
+                Ok(mut events) => {
+                    while let Some(event) = events.blocking_recv() {
+                        seen.push(event);
+                    }
                 }
-            }
-            while let Ok(event) = events.try_recv() {
-                seen.push(event);
+                Err(mut events) => {
+                    while let Ok(event) = events.try_recv() {
+                        seen.push(relayed(event, &tokenizer));
+                    }
+                }
             }
             seen
         })
@@ -717,9 +725,9 @@ fn a_reader_that_keeps_up_sees_the_same_stream_through_the_forwarder() {
     }
 }
 
-fn deferred_outbox(capacity: usize) -> (Outbox, tokio::sync::mpsc::Receiver<GenerationEvent>) {
+fn deferred_outbox(capacity: usize) -> (Outbox, tokio::sync::mpsc::Receiver<WorkerEvent>) {
     let (sender, receiver) = tokio::sync::mpsc::channel(capacity);
-    let outbox = Outbox::new(EventSender::new(sender), CancellationSignal::new(), true);
+    let outbox = Outbox::new(WorkerEvents(sender), CancellationSignal::new(), true);
     (outbox, receiver)
 }
 
@@ -749,7 +757,8 @@ fn a_deferred_event_is_refused_only_while_the_channel_is_full_with_everything_se
     // queued three were sent, as an immediate send of all four would be.
     assert!(outbox.try_emit(finish()).is_err());
     assert_eq!(crate::overlap::pending(), 0, "the queue was sent first");
-    let delivered: Vec<_> = std::iter::from_fn(|| receiver.try_recv().ok()).collect();
+    let delivered: Vec<_> =
+        std::iter::from_fn(|| receiver.try_recv().ok().map(WorkerEvent::into_event)).collect();
     assert_eq!(delivered, [token(0), token(1), token(2)]);
 }
 
@@ -763,7 +772,7 @@ fn a_finish_is_accepted_when_the_reader_makes_room_while_the_queue_is_sent() {
     let (reader, seen) = (Rc::clone(&receiver), Rc::clone(&read));
     crate::overlap::defer(move || {
         while let Ok(event) = reader.borrow_mut().try_recv() {
-            seen.borrow_mut().push(event);
+            seen.borrow_mut().push(event.into_event());
         }
     });
     assert!(outbox.try_emit(token(8)).is_ok());
@@ -772,8 +781,9 @@ fn a_finish_is_accepted_when_the_reader_makes_room_while_the_queue_is_sent() {
     assert!(outbox.try_emit(finish()).is_ok());
     crate::overlap::run_pending();
     let mut receiver = receiver.borrow_mut();
-    read.borrow_mut()
-        .extend(std::iter::from_fn(|| receiver.try_recv().ok()));
+    read.borrow_mut().extend(std::iter::from_fn(|| {
+        receiver.try_recv().ok().map(WorkerEvent::into_event)
+    }));
     assert_eq!(*read.borrow(), [token(7), token(8), finish()]);
 }
 
@@ -786,7 +796,7 @@ fn deferred_backpressure_can_refuse_what_immediate_delivery_fits() {
     // when no reader runs meanwhile.
     for overlap in [false, true] {
         let (sender, mut receiver) = tokio::sync::mpsc::channel(2);
-        let outbox = Outbox::new(EventSender::new(sender), CancellationSignal::new(), overlap);
+        let outbox = Outbox::new(WorkerEvents(sender), CancellationSignal::new(), overlap);
         let mut accepted = Vec::new();
         for event in [token(1), token(2), finish()] {
             accepted.push(outbox.try_emit(event).is_ok());
@@ -836,7 +846,7 @@ fn reply_history_waits_for_the_real_terminal_relay_handoff() {
             let mut reader = Some(reader);
             let (worker, forward) = tokio::sync::mpsc::channel(2);
             let cancellation = CancellationSignal::new();
-            let outbox = Outbox::new(EventSender::new(worker), cancellation.clone(), true);
+            let outbox = Outbox::new(WorkerEvents(worker), cancellation.clone(), true);
             let receipt = engine
                 .reply_history_observer()
                 .unwrap()
@@ -847,6 +857,7 @@ fn reply_history_waits_for_the_real_terminal_relay_handoff() {
                 EventSender::new(client),
                 cancellation,
                 Some(receipt),
+                Arc::new(super::stop_tests::tokenizer()),
             ));
             outbox.try_emit(finish()).unwrap();
             if !succeeds {

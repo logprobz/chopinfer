@@ -15,11 +15,13 @@ license.workspace = true
 
 [dev-dependencies]
 bundle-deepseek41 = { path = "../bundle" }
+bundle-runtime = { workspace = true, features = ["test-support"] }
 kernel-build.workspace = true
 kernel-core.workspace = true
 kernel-harness.workspace = true
 kernels-sm120.workspace = true
 model-deepseek41-contract.workspace = true
+runtime-bundle-abi.workspace = true
 runtime-cuda.workspace = true
 serde_json.workspace = true
 
@@ -123,3 +125,7 @@ path = "tests/sm120/prefill_tail_folds.rs"
 [[test]]
 name = "norm_prefill_rows"
 path = "tests/sm120/norm_prefill_rows.rs"
+
+[[test]]
+name = "snapshot_copy"
+path = "tests/sm120/snapshot_copy/main.rs"

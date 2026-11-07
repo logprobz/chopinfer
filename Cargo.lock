@@ -870,11 +870,13 @@ name = "model-deepseek41-lab"
 version = "0.1.0-alpha.4"
 dependencies = [
  "bundle-deepseek41",
+ "bundle-runtime",
  "kernel-build",
  "kernel-core",
  "kernel-harness",
  "kernels-sm120",
  "model-deepseek41-contract",
+ "runtime-bundle-abi",
  "runtime-cuda",
  "serde_json",
 ]

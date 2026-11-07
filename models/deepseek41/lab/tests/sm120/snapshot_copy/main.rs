@@ -3,9 +3,13 @@
 //! snapshot tables. Both arms plan from the bundle's table
 //! (`bundle_runtime::snapshot`): the copies arm issues `Table::actions`'
 //! copies as the served host does, one `cuMemcpyDtoDAsync` each, and the
-//! kernel arm `Table::kernel_actions`' table upload (staged and fenced, as
-//! the host's upload is) and launch, through the backend op the bundle
-//! registers and the cubin it embeds and locks.
+//! kernel arm `Table::kernel_actions`' table upload and launch, through the
+//! backend op the bundle registers and the cubin it embeds and locks. The
+//! upload goes through a `PinnedUploadRing`, stream-ordered with no host
+//! wait, as the served host's `copy_host_to_device` service does
+//! (`copy_host_to_device_ordered`); the staged and fenced upload
+//! `DeviceBuffer::copy_from_bytes_at` makes, which allocates page-locked
+//! staging per call and waits for the stream, is timed beside it.
 //!
 //! The per-rank state declaration does not depend on the rank count, so
 //! the cases cover each KV storage, DSpark on and off and anchor spares on
@@ -17,8 +21,12 @@
 //! [`bitwise_gpu`] compares every byte of every destination buffer, and
 //! the sources after, with the destinations poisoned twice, across both
 //! arms and the CPU oracle (`kernel_core::snapshot_copy::snapshot_copy`).
-//! [`pair_gpu`] times both arms with CUDA events and host wall time in a
-//! pair lab with A/A controls (docs/contributing.md#pair-lab-kernel-timing).
+//! [`pair_gpu`] times both arms with CUDA events, host wall time and host
+//! issue time in a pair lab with A/A controls
+//! (docs/contributing.md#pair-lab-kernel-timing), then splits the kernel
+//! arm: each upload alone, the launch alone over a resident table, the
+//! device time of back-to-back launches, and one contiguous device copy of
+//! the snapshot's bytes as a bandwidth reference.
 //! [`inventory`] plans every case on the CPU.
 
 use bundle_deepseek41::sm120::{fold_cubin_for_symbol, snapshot_copy as bundle_kernel};
@@ -38,8 +46,9 @@ use model_deepseek41_contract::geometry::FLASH;
 use model_deepseek41_contract::serving::DECODE_BATCH;
 use model_deepseek41_contract::state::{KvStorage, request_state_with_anchors};
 use runtime_bundle_abi::{BundleDeviceBufferHandleV1, DeviceBufferSpanV1};
-use runtime_cuda::{DeviceBuffer, Function, Stream};
+use runtime_cuda::{DeviceBuffer, Function, PinnedHostBuffer, PinnedUploadRing, Stream};
 use serde_json::{Value, json};
+use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::time::Instant;
 
@@ -54,6 +63,11 @@ const POISONS: [u8; 2] = [0xa5, 0x00];
 const BUDGET_SECONDS: u64 = 240;
 /// The pair lab's bound: its job times one GPU after the other.
 const PAIR_BUDGET_SECONDS: u64 = 120;
+/// The served host's upload ring per stream (runtime-host's
+/// `PINNED_UPLOAD_RING_BYTES`).
+const RING_BYTES: usize = 4 << 20;
+/// Back-to-back launches whose events time the kernel on the device.
+const LAUNCHES: u32 = 32;
 /// Buffer handles of the lab's spans: declared buffer `i` is `BUFFER + i`
 /// and its spare `SPARE + i`.
 const BUFFER: u64 = 1;
@@ -302,11 +316,48 @@ fn plans(bench: &Bench, holder: Holder, order: Order, to_pages: bool) -> LabResu
 }
 
 /// The device side of one bench: an allocation per span, by buffer handle,
-/// and the kernel's function.
+/// the kernel's function, the stream's upload ring and, for the pair lab,
+/// a scratch buffer the bandwidth reference copies into.
 struct Device<'a> {
     session: &'a Session,
     buffers: BTreeMap<u64, DeviceBuffer>,
     function: Function,
+    ring: RefCell<PinnedUploadRing>,
+    scratch: Option<DeviceBuffer>,
+}
+
+/// What one timed or compared run does on the stream.
+#[derive(Clone, Copy, Debug)]
+enum Arm {
+    /// The device copies.
+    Copies,
+    /// The served kernel path: the ring upload, then the launch.
+    Kernel,
+    /// The fenced upload, then the launch: the first pair lab's kernel arm.
+    KernelFenced,
+    /// The launch alone, over the table the last upload left.
+    Launch,
+    UploadRing,
+    UploadFenced,
+    /// Back-to-back launches over a resident table.
+    Launches(u32),
+    /// One device copy of the snapshot's byte count from the pool.
+    Reference,
+}
+
+impl Arm {
+    fn name(self) -> String {
+        match self {
+            Arm::Copies => "copies".into(),
+            Arm::Kernel => "kernel".into(),
+            Arm::KernelFenced => "kernel_fenced".into(),
+            Arm::Launch => "launch_resident".into(),
+            Arm::UploadRing => "upload_ring".into(),
+            Arm::UploadFenced => "upload_fenced".into(),
+            Arm::Launches(count) => format!("launches_{count}"),
+            Arm::Reference => "reference".into(),
+        }
+    }
 }
 
 impl<'a> Device<'a> {
@@ -316,10 +367,14 @@ impl<'a> Device<'a> {
             buffers.insert(span.buffer.raw, session.allocate(span.length as usize)?);
         }
         let function = module.function(SYMBOL).map_err(|e| e.to_string())?;
+        let staging =
+            PinnedHostBuffer::new(&session.context, RING_BYTES).map_err(|e| e.to_string())?;
         Ok(Self {
             session,
             buffers,
             function,
+            ring: RefCell::new(PinnedUploadRing::new(staging)),
+            scratch: None,
         })
     }
 
@@ -345,13 +400,27 @@ impl<'a> Device<'a> {
         Ok(())
     }
 
-    /// The table upload, staged and fenced like the host's, then the
-    /// launch, its views bound to whole allocations.
-    fn kernel(&self, plans: &Plans, stream: &Stream) -> LabResult<()> {
+    /// The table upload as the served host makes it: through the stream's
+    /// pinned ring, ordered after the stream's work, with no host wait.
+    fn upload_ring(&self, plans: &Plans, stream: &Stream) -> LabResult<()> {
+        let (to, bytes) = &plans.upload;
+        self.ring
+            .borrow_mut()
+            .upload(self.buffer(*to)?, to.offset as usize, bytes, stream)
+            .map_err(|e| e.to_string())
+    }
+
+    /// The table upload staged in page-locked memory allocated for the
+    /// call, waited for on the host.
+    fn upload_fenced(&self, plans: &Plans, stream: &Stream) -> LabResult<()> {
         let (to, bytes) = &plans.upload;
         self.buffer(*to)?
             .copy_from_bytes_at(to.offset as usize, bytes, stream)
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| e.to_string())
+    }
+
+    /// The launch, its views bound to whole allocations.
+    fn launch(&self, plans: &Plans, stream: &Stream) -> LabResult<()> {
         let launched = &plans.launch;
         let mut bound = BTreeMap::new();
         for argument in &launched.launch.arguments.0 {
@@ -378,11 +447,40 @@ impl<'a> Device<'a> {
         )
     }
 
-    fn arm(&self, kernel: bool, plans: &Plans, stream: &Stream) -> LabResult<()> {
-        if kernel {
-            self.kernel(plans, stream)
-        } else {
-            self.copies(plans, stream)
+    fn arm(&self, arm: Arm, plans: &Plans, stream: &Stream) -> LabResult<()> {
+        match arm {
+            Arm::Copies => self.copies(plans, stream),
+            Arm::Kernel => {
+                self.upload_ring(plans, stream)?;
+                self.launch(plans, stream)
+            }
+            Arm::KernelFenced => {
+                self.upload_fenced(plans, stream)?;
+                self.launch(plans, stream)
+            }
+            Arm::Launch => self.launch(plans, stream),
+            Arm::UploadRing => self.upload_ring(plans, stream),
+            Arm::UploadFenced => self.upload_fenced(plans, stream),
+            Arm::Launches(count) => {
+                for _ in 0..count {
+                    self.launch(plans, stream)?;
+                }
+                Ok(())
+            }
+            Arm::Reference => {
+                let scratch = self
+                    .scratch
+                    .as_ref()
+                    .ok_or("the reference copy needs scratch")?;
+                let bytes = (plans.table.pages() * plans.table.page_bytes) as usize;
+                let pool = self
+                    .buffers
+                    .get(&POOL)
+                    .ok_or("the reference copy reads the pool")?;
+                scratch
+                    .copy_range_from_async(0, pool, 0, bytes, stream)
+                    .map_err(|e| e.to_string())
+            }
         }
     }
 
@@ -507,11 +605,11 @@ fn compare(
     let mut compared = 0;
     for poison in POISONS {
         let expected = oracle(bench, plans, to_pages, sources, &destinations, poison)?;
-        for kernel in [false, true] {
+        for arm in [Arm::Copies, Arm::Kernel] {
             for span in &destinations {
                 device.fill(*span, poison)?;
             }
-            device.arm(kernel, plans, &device.session.stream)?;
+            device.arm(arm, plans, &device.session.stream)?;
             device
                 .session
                 .stream
@@ -522,7 +620,7 @@ fn compare(
                 if let Some(at) = first_difference(&observed, &expected[&span.buffer.raw]) {
                     return Err(format!(
                         "{} arm differs from the oracle in buffer {} at byte {at} (poison {poison:#04x})",
-                        if kernel { "kernel" } else { "copies" },
+                        arm.name(),
                         span.buffer.raw
                     ));
                 }
@@ -728,49 +826,136 @@ fn median(values: &[f64]) -> f64 {
     values[values.len() / 2]
 }
 
-/// Five interleaved rounds of three samples per arm, each sample one run
-/// of the arm between CUDA events, its host wall time from before the
-/// first event to after the stream drains; `kernel[arm]` names each arm.
-fn pair(device: &Device<'_>, plans: &Plans, kernel: [bool; 2]) -> LabResult<Value> {
+/// One sample of `arm`: its CUDA-event time, its host wall time from before
+/// the first event to after the stream drains, and its host issue time
+/// from before the first event to the arm's return, in ms.
+fn sample(
+    device: &Device<'_>,
+    run: &dyn Fn(&Stream) -> LabResult<()>,
+    events: &(runtime_cuda::Event, runtime_cuda::Event),
+) -> LabResult<[f64; 3]> {
     let s = device.session;
-    let start = s.context.timed_event().map_err(|e| e.to_string())?;
-    let end = s.context.timed_event().map_err(|e| e.to_string())?;
+    let wall = Instant::now();
+    events.0.record(&s.stream).map_err(|e| e.to_string())?;
+    run(&s.stream)?;
+    let issue = wall.elapsed().as_secs_f64() * 1e3;
+    events.1.record(&s.stream).map_err(|e| e.to_string())?;
+    s.stream.synchronize().map_err(|e| e.to_string())?;
+    let host = wall.elapsed().as_secs_f64() * 1e3;
+    let event = f64::from(events.0.elapsed_ms(&events.1).map_err(|e| e.to_string())?);
+    Ok([event, host, issue])
+}
+
+const MEASURES: [&str; 3] = ["event_ms", "host_ms", "issue_ms"];
+
+fn events(device: &Device<'_>) -> LabResult<(runtime_cuda::Event, runtime_cuda::Event)> {
+    let context = &device.session.context;
+    Ok((
+        context.timed_event().map_err(|e| e.to_string())?,
+        context.timed_event().map_err(|e| e.to_string())?,
+    ))
+}
+
+/// Five interleaved rounds of three samples per arm after three warm-up
+/// runs of each; `arms` names each arm.
+fn pair(device: &Device<'_>, plans: &Plans, arms: [Arm; 2]) -> LabResult<Value> {
+    let s = device.session;
+    let events = events(device)?;
     for _ in 0..3 {
-        for arm in kernel {
+        for arm in arms {
             device.arm(arm, plans, &s.stream)?;
         }
     }
     s.stream.synchronize().map_err(|e| e.to_string())?;
     let mut rounds = Vec::new();
-    let mut medians = [[Vec::new(), Vec::new()], [Vec::new(), Vec::new()]];
+    let mut medians = [
+        [Vec::new(), Vec::new()],
+        [Vec::new(), Vec::new()],
+        [Vec::new(), Vec::new()],
+    ];
     for round in 0..5 {
-        let mut values = [[Vec::new(), Vec::new()], [Vec::new(), Vec::new()]];
-        for sample in 0..3 {
+        let mut values = [
+            [Vec::new(), Vec::new()],
+            [Vec::new(), Vec::new()],
+            [Vec::new(), Vec::new()],
+        ];
+        for sample_index in 0..3 {
             for step in 0..2 {
-                let arm = (round + sample + step) % 2;
-                let wall = Instant::now();
-                start.record(&s.stream).map_err(|e| e.to_string())?;
-                device.arm(kernel[arm], plans, &s.stream)?;
-                end.record(&s.stream).map_err(|e| e.to_string())?;
-                s.stream.synchronize().map_err(|e| e.to_string())?;
-                let host = wall.elapsed().as_secs_f64() * 1e3;
-                let event = f64::from(start.elapsed_ms(&end).map_err(|e| e.to_string())?);
-                values[0][arm].push(event);
-                values[1][arm].push(host);
+                let arm = (round + sample_index + step) % 2;
+                let run = |stream: &Stream| device.arm(arms[arm], plans, stream);
+                let measured = sample(device, &run, &events)?;
+                for (kind, value) in measured.into_iter().enumerate() {
+                    values[kind][arm].push(value);
+                }
             }
         }
-        for kind in 0..2 {
+        for kind in 0..3 {
             for arm in 0..2 {
                 medians[kind][arm].push(median(&values[kind][arm]));
             }
         }
         rounds.push(values);
     }
-    let summary = |kind: usize| [median(&medians[kind][0]), median(&medians[kind][1])];
-    Ok(
-        json!({"arms": kernel.map(|k| if k { "kernel" } else { "copies" }),
-        "event_ms": summary(0), "host_ms": summary(1), "round_samples_ms": rounds}),
-    )
+    let mut record = json!({"arms": arms.map(Arm::name), "round_samples_ms": rounds});
+    for (kind, name) in MEASURES.into_iter().enumerate() {
+        record[name] = json!([median(&medians[kind][0]), median(&medians[kind][1])]);
+    }
+    Ok(record)
+}
+
+/// Fifteen samples of `run` after three warm-up runs: each measure's
+/// median, minimum and maximum.
+fn series(device: &Device<'_>, run: &dyn Fn(&Stream) -> LabResult<()>) -> LabResult<Value> {
+    let s = device.session;
+    let events = events(device)?;
+    for _ in 0..3 {
+        run(&s.stream)?;
+    }
+    s.stream.synchronize().map_err(|e| e.to_string())?;
+    let mut values = [Vec::new(), Vec::new(), Vec::new()];
+    for _ in 0..15 {
+        let measured = sample(device, run, &events)?;
+        for (kind, value) in measured.into_iter().enumerate() {
+            values[kind].push(value);
+        }
+    }
+    let mut record = json!({});
+    for (kind, name) in MEASURES.into_iter().enumerate() {
+        let min = values[kind].iter().copied().fold(f64::INFINITY, f64::min);
+        let max = values[kind].iter().copied().fold(0.0, f64::max);
+        record[name] = json!({"median": median(&values[kind]), "min": min, "max": max});
+    }
+    Ok(record)
+}
+
+/// The kernel arm split into its parts, each timed alone, and the copies
+/// and the bandwidth reference beside them. The ring upload's series
+/// leaves this case's table resident for the launches'. The launches run
+/// eagerly, where the host may pace them, and replayed from one graph of
+/// [`LAUNCHES`], which times the device alone.
+fn split(device: &Device<'_>, plans: &Plans) -> LabResult<Value> {
+    let mut record = json!({});
+    for arm in [
+        Arm::UploadFenced,
+        Arm::UploadRing,
+        Arm::Launch,
+        Arm::Launches(LAUNCHES),
+        Arm::KernelFenced,
+        Arm::Kernel,
+        Arm::Copies,
+        Arm::Reference,
+    ] {
+        record[arm.name()] = series(device, &|stream: &Stream| device.arm(arm, plans, stream))?;
+    }
+    let graph = device.session.capture(|stream| {
+        for _ in 0..LAUNCHES {
+            device.launch(plans, stream)?;
+        }
+        Ok(())
+    })?;
+    let replay = |stream: &Stream| graph.launch(stream).map_err(|e| e.to_string());
+    record[format!("graph_{LAUNCHES}")] = series(device, &replay)?;
+    Ok(record)
 }
 
 /// The timed cases: TP4's served states, each a slot at the end of the
@@ -791,7 +976,8 @@ fn timed() -> Vec<(Declared, Holder, bool)> {
 
 /// Pair-lab timing of the device copies against the kernel. Per case,
 /// after a bitwise comparison of both arms: copies A/A, copies against
-/// kernel, kernel A/A and a closing copies A/A, then the comparison again.
+/// kernel, kernel A/A and a closing copies A/A, the split of the kernel arm
+/// ([`split`]), then the comparison again.
 #[test]
 #[ignore = "pair-lab timing; run on an idle GPU through its job"]
 fn pair_gpu() {
@@ -804,21 +990,28 @@ fn pair_gpu() {
                 return Err("the pair lab exceeded its budget; coverage is incomplete".into());
             }
             let bench = Bench::new(declared)?;
-            let device = Device::new(s, &bench, &module)?;
+            let mut device = Device::new(s, &bench, &module)?;
             let plans = plans(&bench, holder, Order::Scattered, to_pages)?;
+            let paged_bytes = plans.table.pages() * plans.table.page_bytes;
+            device.scratch = Some(s.allocate(paged_bytes as usize)?);
             let (sources, _) = sides(&bench, to_pages);
             let seeds = seed(&device, &sources, 7000 + index as u64)?;
             compare(&bench, &device, &plans, to_pages, &seeds)?;
-            let aa_before = pair(&device, &plans, [false, false])?;
-            let ab = pair(&device, &plans, [false, true])?;
-            let bb = pair(&device, &plans, [true, true])?;
-            let aa_after = pair(&device, &plans, [false, false])?;
+            let aa_before = pair(&device, &plans, [Arm::Copies, Arm::Copies])?;
+            let ab = pair(&device, &plans, [Arm::Copies, Arm::Kernel])?;
+            let bb = pair(&device, &plans, [Arm::Kernel, Arm::Kernel])?;
+            let aa_after = pair(&device, &plans, [Arm::Copies, Arm::Copies])?;
+            let split = split(&device, &plans)?;
             compare(&bench, &device, &plans, to_pages, &seeds)?;
+            let plan = plans.launch.launch.plan;
             let record = json!({"state": bench.name(), "holder": holder_name(holder),
                 "direction": if to_pages { "capture" } else { "restore" },
                 "pages": plans.ids.len(), "copies": plans.copies.len(),
-                "snapshot_bytes": plans.table.bytes(), "bitwise": true,
-                "aa_before": aa_before, "ab": ab, "bb": bb, "aa_after": aa_after});
+                "segments": plans.table.descriptors.len(),
+                "snapshot_bytes": plans.table.bytes(), "paged_bytes": paged_bytes,
+                "table_bytes": plans.upload.1.len(), "grid": plan.grid, "block": plan.block,
+                "launches": LAUNCHES, "bitwise": true,
+                "aa_before": aa_before, "ab": ab, "bb": bb, "aa_after": aa_after, "split": split});
             println!("snapshot_copy_pair {record}");
             records.push(record);
         }

@@ -74,6 +74,7 @@ pub mod select;
 pub mod sinkhorn_expand_mix;
 pub mod sinkhorn_hyper_connection;
 pub mod sinkhorn_hyper_connection_oracle;
+pub mod snapshot_copy;
 pub mod sparse_attention_oracle;
 pub mod topology;
 pub mod transform;

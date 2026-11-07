@@ -87,6 +87,7 @@ use crate::sinkhorn_hyper_connection::{
     ReduceExpandMixNormBuffers, SinkhornHyperConnectionQuery, StreamExpandBuffers,
     StreamHeadBuffers, WeightedStreamHeadBuffers,
 };
+use crate::snapshot_copy::{SnapshotCopy, SnapshotCopyBuffers};
 
 /// What a model needs of a prepared op beyond its contract.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -2149,6 +2150,26 @@ pub trait Backend: Send + Sync {
         let _ = (op, need);
         Err(Refused::Unsupported)
     }
+
+    // Snapshot copies (`crate::snapshot_copy`), which move a snapshot's
+    // bytes between bound views and pool pages and compute nothing.
+
+    /// A snapshot table's segments copied to or from its pages.
+    ///
+    /// Launches read `Counts::rows` as the table's segment count, from one
+    /// to the prepared capacity, and size their grid from the op's pages;
+    /// the table view holds the op's page IDs and at least that many
+    /// segments. The host checks the table against the views it binds
+    /// (`SnapshotCopy::check`), so its page IDs and segments bound every
+    /// pool, view and snapshot byte a launch touches.
+    fn snapshot_copy(
+        &self,
+        op: &SnapshotCopy,
+        need: Need,
+    ) -> Result<Prepared<SnapshotCopyBuffers<View>>, Refused> {
+        let _ = (op, need);
+        Err(Refused::Unsupported)
+    }
 }
 
 #[cfg(test)]
@@ -2901,6 +2922,15 @@ mod tests {
                 alignment_bytes: 16,
             },
             Need::rows(4),
+        );
+        snapshot_copy: Empty.snapshot_copy(
+            &SnapshotCopy {
+                direction: crate::snapshot_copy::Direction::ToPages,
+                views: 3,
+                page_bytes: 56_960,
+                pages: 128,
+            },
+            Need::rows(84),
         );
     }
 

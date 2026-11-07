@@ -60,6 +60,9 @@ pub(crate) struct Cache {
     /// anchors and a capture's catch-up among them. A successor's private
     /// projection and its ring copies are not committed writes.
     pub ring_writes: Cell<u64>,
+    /// The last step's successor: `none`, `discarded` or `reused`.
+    #[cfg(feature = "state-capture")]
+    pub outcome: Cell<&'static str>,
 }
 
 pub(crate) struct Memory {
@@ -83,6 +86,8 @@ impl Cache {
             done: Vec::new(),
             joined: None,
             ring_writes: Cell::new(0),
+            #[cfg(feature = "state-capture")]
+            outcome: Cell::new("none"),
         }
     }
 }

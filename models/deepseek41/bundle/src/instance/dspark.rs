@@ -20,6 +20,8 @@ mod results;
 #[cfg(any(feature = "diagnostic-taps", feature = "state-capture"))]
 mod state_capture;
 #[cfg(feature = "state-capture")]
+mod successor_capture;
+#[cfg(feature = "state-capture")]
 mod transition_capture;
 
 use std::collections::BTreeMap;
@@ -607,6 +609,16 @@ impl Instance {
         {
             self.log(&format!("prefill Engram cleanup failed: {settle}"));
         }
+        #[cfg(feature = "state-capture")]
+        if result.is_ok() {
+            match self.forced_successor_feedback(&inputs) {
+                Ok(Some(feedback)) => {
+                    self.dspark.as_mut().expect("drafter").prefetch.feedback = Some(feedback);
+                }
+                Ok(None) => {}
+                Err(error) => result = Err(error),
+            }
+        }
         if result.is_ok()
             && let Err(error) = self.queue_dspark_prefetch()
         {
@@ -617,6 +629,12 @@ impl Instance {
                 .as_mut()
                 .expect("lifecycle")
                 .poison();
+            result = Err(error);
+        }
+        #[cfg(feature = "state-capture")]
+        if result.is_ok()
+            && let Err(error) = self.dump_successor_step(&inputs)
+        {
             result = Err(error);
         }
         self.dspark

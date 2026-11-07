@@ -97,6 +97,8 @@ impl Instance {
     }
 
     pub(in crate::instance) fn check_dspark_status(&self) -> Result<(), String> {
+        #[cfg(feature = "state-capture")]
+        self.dump_successor_status()?;
         if self.check_dspark_boundary()? {
             return Ok(());
         }

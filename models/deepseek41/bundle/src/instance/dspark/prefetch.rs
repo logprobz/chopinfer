@@ -63,6 +63,13 @@ impl Instance {
     }
 
     pub(super) fn queue_dspark_prefetch(&mut self) -> Result<(), String> {
+        #[cfg(feature = "state-capture")]
+        if self.successors_off() {
+            if let Some(device) = self.dspark.as_mut() {
+                device.prefetch.feedback = None;
+            }
+            return Ok(());
+        }
         let device = self.dspark.as_mut().ok_or("DSpark absent")?;
         let Some(feedback) = device.prefetch.feedback.take() else {
             return Ok(());
@@ -150,6 +157,8 @@ impl Instance {
         let device = self.dspark.as_mut().ok_or("DSpark absent")?;
         device.prefetch.feedback = None;
         device.prefetch.reused = false;
+        #[cfg(feature = "state-capture")]
+        device.prefetch.outcome.set("none");
         let Some(plan) = device.prefetch.plan.take() else {
             return Ok(());
         };
@@ -190,6 +199,8 @@ impl Instance {
         if !matched {
             // Without the option, whether its rule would have served the step.
             let would = logs && !prefill && covered && relaxed();
+            #[cfg(feature = "state-capture")]
+            device.prefetch.outcome.set("discarded");
             let extra = format!(",\"prefill_items\":{},\"relaxed\":{would}", restored.len());
             self.prefetch_trace("discarded", plan.drafts.len(), 0, &extra);
             return Ok(());
@@ -269,6 +280,8 @@ impl Instance {
             )?;
         device.computed_positions = computed;
         device.prefetch.reused = true;
+        #[cfg(feature = "state-capture")]
+        device.prefetch.outcome.set("reused");
         let extra = format!(",\"prefill_items\":{},\"heads\":{computed}", restored.len());
         self.prefetch_trace(
             "reused",

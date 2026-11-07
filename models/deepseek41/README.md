@@ -281,8 +281,15 @@ this split. Wider admitted verify steps run eagerly above the graph budget.
 
 For untimed transition diagnostics, `state-capture` and
 `CHOPINFER_DSPARK_STATE_DIR` record selected before-draft/after-commit
-boundaries. `diagnostic_step_logs` defaults to false and controls step and
-confidence JSON, without changing confidence computation.
+boundaries. In the same directory, `successors-off` queues no DSpark
+successor, `successor.json` names the acceptance a drafting verify step
+queues its successor from, and `successor-steps` dumps each drafted step's
+per-rank saved status, draft IDs, confidence and context ring cells; the
+`dspark_successor` GPU test (`model-deepseek41`, feature `gpu-tests`)
+compares successor reuse against inline drafting with them. Serving builds
+have none of these controls. `diagnostic_step_logs` defaults to false and
+controls step and confidence JSON, without changing confidence
+computation.
 
 A text-only mixed DSpark step whose prefill takes the prepared-gather DMA
 route (one request of 512 to 8192 rows at TP4, beside a graphed verify

@@ -385,15 +385,16 @@ impl<O: JournalObserver> FakeDevice<O> {
     pub fn release_records(&self) {
         free(&self.journal);
         free(&self.logs);
-        free(&self.route_names);
         free(&self.residency_queries);
-        // An open capture counts its nodes from its start in `launched`.
+        // An open capture reads its launches and their names from its start
+        // when it closes.
         if self
             .capture_starts
             .try_borrow()
             .is_ok_and(|starts| starts.is_empty())
         {
             free(&self.launched);
+            free(&self.route_names);
         }
     }
 
@@ -1043,6 +1044,40 @@ mod tests {
         .join()
         .unwrap();
         assert_eq!(receiver.recv().unwrap(), (0, 0));
+    }
+
+    /// Records released while a capture is open keep the launches and
+    /// names that closing it reads; with none open both go.
+    #[test]
+    fn released_records_keep_an_open_captures_launches() {
+        let device = FakeDevice::<NoObserver>::default();
+        device.symbols_only.set(true);
+        let stream = device.create_stream(device.id(), BundleContextHandleV1::from_parts(1, 1));
+        let config = LaunchConfigV1 {
+            flags: BUNDLE_LAUNCH_FLAG_V1_PROGRAMMATIC_STREAM_SERIALIZATION,
+            grid_x: 1,
+            grid_y: 1,
+            grid_z: 1,
+            block_x: 32,
+            block_y: 1,
+            block_z: 1,
+            shared_memory_bytes: 0,
+            cluster: runtime_bundle_abi::LaunchClusterV1 { x: 1, y: 1, z: 1 },
+        };
+        device.launched(stream, "chop_before_v1", config, &[]);
+        device.begin_capture(stream);
+        device.launched(stream, "chop_row_v1", config, &[]);
+        device.release_records();
+        let (graph, nodes) = device.end_capture(stream, || device.id()).unwrap();
+        assert_eq!(nodes, 1);
+        assert_eq!(device.launch_graph(stream, graph), Ok(1));
+        assert_eq!(
+            device.journal.borrow().last().unwrap(),
+            &format!("launch {} chop_row_v1", stream.slot())
+        );
+        device.release_records();
+        assert!(device.launched.borrow().is_empty());
+        assert!(device.route_names.borrow().is_empty());
     }
 
     #[test]

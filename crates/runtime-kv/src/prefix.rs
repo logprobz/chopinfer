@@ -234,9 +234,7 @@ impl PrefixChainV1 {
     }
 
     fn hash_range(&self, sha: &mut Sha256, start: usize, end: usize) {
-        for token in &self.tokens[start..end] {
-            sha.update(token.to_le_bytes());
-        }
+        hash_tokens(sha, &self.tokens[start..end]);
         for span in self
             .media
             .iter()
@@ -247,6 +245,20 @@ impl PrefixChainV1 {
             sha.update((span.rows as u64).to_le_bytes());
             sha.update(span.media_row.to_le_bytes());
         }
+    }
+}
+
+/// Hashes each token's little-endian bytes in order. A digest depends only on
+/// the bytes, so staging them in a buffer gives the digest one update per
+/// token gives, with one update per buffer.
+fn hash_tokens(sha: &mut Sha256, tokens: &[u32]) {
+    const STAGED: usize = 256;
+    let mut bytes = [0; STAGED * size_of::<u32>()];
+    for chunk in tokens.chunks(STAGED) {
+        for (staged, token) in bytes.chunks_exact_mut(size_of::<u32>()).zip(chunk) {
+            staged.copy_from_slice(&token.to_le_bytes());
+        }
+        sha.update(&bytes[..chunk.len() * size_of::<u32>()]);
     }
 }
 
@@ -268,9 +280,7 @@ impl PrefixDigestTailV1 {
             sha.update(TAIL_DOMAIN);
             sha.update((self.tokens.len() as u64).to_le_bytes());
         }
-        for token in &self.tokens {
-            sha.update(token.to_le_bytes());
-        }
+        hash_tokens(&mut sha, &self.tokens);
         for span in &self.media {
             sha.update(span.identity);
             sha.update((span.start as u64).to_le_bytes());
@@ -387,4 +397,109 @@ impl PrefixRegistryV1 {
 pub(crate) struct PrefixAtom {
     pub(crate) token: u32,
     pub(crate) media: Option<PrefixMediaSpanV1>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The digests as the module documentation defines them, each over one
+    /// buffer of the previous digest, the block's token bytes and its media.
+    fn defined(
+        block_tokens: usize,
+        tokens: &[u32],
+        media: &[PrefixMediaSpanV1],
+        salt: Option<&[u8]>,
+    ) -> Vec<[u8; 32]> {
+        let mut root = ROOT_DOMAIN.to_vec();
+        root.extend((block_tokens as u64).to_le_bytes());
+        if let Some(salt) = salt {
+            root.extend(SALT_DOMAIN);
+            root.extend((salt.len() as u64).to_le_bytes());
+            root.extend(salt);
+        }
+        let mut digests = vec![<[u8; 32]>::from(Sha256::digest(&root))];
+        for (block, chunk) in tokens.chunks_exact(block_tokens).enumerate() {
+            let (start, end) = (block * block_tokens, (block + 1) * block_tokens);
+            let mut buffer = digests[block].to_vec();
+            buffer.extend(chunk.iter().flat_map(|token| token.to_le_bytes()));
+            for span in media
+                .iter()
+                .filter(|span| span.start < end && start < span.end())
+            {
+                buffer.extend(span.identity);
+                buffer.extend((span.start as u64).to_le_bytes());
+                buffer.extend((span.rows as u64).to_le_bytes());
+                buffer.extend(span.media_row.to_le_bytes());
+            }
+            digests.push(Sha256::digest(&buffer).into());
+        }
+        digests
+    }
+
+    fn prompt(length: usize) -> Vec<u32> {
+        (0..length as u32)
+            .map(|index| index.wrapping_mul(2_654_435_761) % 151_000)
+            .collect()
+    }
+
+    #[test]
+    fn chain_digests_hash_the_defined_bytes() {
+        let media = vec![PrefixMediaSpanV1 {
+            identity: [9; 32],
+            start: 300,
+            rows: 700,
+            media_row: 4,
+        }];
+        for block_tokens in [1, 3, 64, 256, 257, 1024] {
+            for length in [0, 1, 255, 256, 1000, 5000] {
+                for salt in [None, Some(b"scope".as_slice())] {
+                    let tokens = prompt(length);
+                    let spans = if length >= 1000 {
+                        media.clone()
+                    } else {
+                        Vec::new()
+                    };
+                    let chain = PrefixChainV1::salted(
+                        block_tokens,
+                        Arc::from(tokens.as_slice()),
+                        spans.clone(),
+                        salt,
+                    )
+                    .unwrap();
+                    let expected = defined(block_tokens, &tokens, &spans, salt);
+                    let actual = chain
+                        .digests()
+                        .iter()
+                        .map(|key| key.digest())
+                        .collect::<Vec<_>>();
+                    assert_eq!(actual, expected, "{block_tokens} {length} {salt:?}");
+                }
+            }
+        }
+    }
+
+    /// One served-size digest, pinned so a change to the bytes hashed fails.
+    #[test]
+    fn a_long_chain_digest_is_pinned() {
+        let tokens = prompt(94_080);
+        let chain =
+            PrefixChainV1::salted(256, Arc::from(tokens.as_slice()), Vec::new(), Some(b"salt"))
+                .unwrap();
+        let hex = |key: PrefixCacheKeyV1| {
+            key.digest()
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect::<String>()
+        };
+        assert_eq!(chain.full_blocks(), 367);
+        assert_eq!(
+            hex(chain.chain(367).unwrap()),
+            "0c6d450b6fbb21d3e9ba4fa54a811f604755cdc528c97b0c5937cf5e43da1539"
+        );
+        assert_eq!(
+            hex(chain.key_at(94_080).unwrap()),
+            "24a8dc80e2f07a1c8b43c5ed0a286dd505486bf0c078bb5b47f0cf926b8d6415"
+        );
+    }
 }

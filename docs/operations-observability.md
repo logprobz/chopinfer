@@ -337,6 +337,31 @@ synchronous and asynchronous mapped gathers (`=1` enables both), and
 `CHOPINFER_MAPPED_ASYNC_READ_AHEAD` overrides only the asynchronous path;
 the advice never changes gather bytes, row order or synchronization.
 
+Two default-off candidate switches, not serving options, change how a
+large mapped gather (8192 or more table rows, such as a prefill layer's
+prepared gather) reads its rows. `CHOPINFER_MAPPED_READER_FILES=1` reads
+each mapping through open file descriptions of its own, one per reader,
+instead of the one descriptor the mapping retains: the retained
+descriptor's `/proc/self/fd` link reopened read-only, kept only when it
+names the same device and inode, at most 24 per mapping and
+`min(256, RLIMIT_NOFILE soft / 16)` in the process, and closed with the
+mapping. `CHOPINFER_MAPPED_LARGE_GATHER_DIRECT=1`, which needs the first,
+reads the rows on scoped workers (the CPUs the process may use less two,
+from 1 to 24) straight into the gather's outputs and writes the other
+ranks' copies in the same pass. Bytes, routes, events and ordering are
+unchanged. Each logs one `chopinfer.mapped-row-fetch.v1` line when it
+first engages (`reader-files` with the description count and budget,
+`direct-gather` with the worker count). The process's first description
+that fails to open logs one `reader-files` line with a `reason`; that
+mapping opens no more, and its gathers read through the descriptions it
+has or the retained one. The `miss_fetch` object of the mapped-row reports
+counts `reader_file_gathers`, `reader_files_held`, `reader_file_failures`,
+the `direct` gathers and workers, and the `nowait` probe classes (`full`,
+`short`, `would_block`, `unsupported`, `other`). On 2026-11-07, a CPU
+benchmark of a four-rank layer gather of resident rows on 24 CPUs of a
+shared host took 26.3, 9.6 and 5.9 ms at 2890 prefill rows with neither
+switch, the first, and both; served step-time acceptance is pending.
+
 ### Weight keeper
 
 A keeper owns immutable rank images after a serving process exits, so a

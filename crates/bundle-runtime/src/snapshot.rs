@@ -8,10 +8,11 @@
 //! c % page_bytes` of the serving pool.
 //!
 //! A bundle moves the pieces with device copies split at page boundaries
-//! ([`Table::copies`]), or covers some of them with a copy kernel of its own
-//! that mirrors the table. [`copy_prefix`] submits every rank's actions,
-//! built and checked before any rank starts, and drains every rank that
-//! received work.
+//! ([`Table::copies`]), with one launch of the shared snapshot copy kernel
+//! that reads the table itself ([`Table::kernel_actions`]), or covers some
+//! of them with a copy kernel of its own that mirrors the table.
+//! [`copy_prefix`] submits every rank's actions, built and checked before
+//! any rank starts, and drains every rank that received work.
 
 use std::collections::BTreeSet;
 use std::ops::Range;
@@ -22,6 +23,11 @@ use runtime_bundle_abi::{
 };
 
 use crate::state::{Extent, Holder, Invalid, RequestState};
+
+mod kernel;
+#[cfg(any(test, feature = "test-support"))]
+pub use kernel::launched_copies;
+pub use kernel::{BoundLaunch, KernelCopy};
 
 /// One piece of a snapshot: `length` bytes at `offset` of a declared
 /// buffer's working planes (or of its separate spare buffer), at byte `at`

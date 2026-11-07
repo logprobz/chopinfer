@@ -19,7 +19,8 @@ serde.workspace = true
 
 [dev-dependencies]
 # SM120 offers and catalogs the projection and encoder tests prepare and
-# compare the backend path with. Production source names no kernel set.
+# compare the backend path with, and the snapshot copy the snapshot tests
+# prepare. Production source names no kernel set.
 kernels-sm120.workspace = true
 # Catalog entry parameters, for comparing the backend path with resolved
 # kernels.

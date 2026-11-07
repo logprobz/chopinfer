@@ -45,7 +45,7 @@ pub fn status(error: DispatchError) -> BundleStatusV1 {
 
 /// Planner IDs are local to one dispatch and never interpreted as CUDA handles.
 /// Distinct views of an arena get distinct IDs even when the host buffer is shared.
-#[derive(Clone, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct BufferBindings {
     route: Option<kernel_core::route::RouteTag>,
     next: u64,

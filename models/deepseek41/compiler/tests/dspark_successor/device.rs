@@ -213,12 +213,14 @@ impl Fixture {
         else {
             return Err("expected bundle selection".into());
         };
-        runtime_host::direct::select_checkpoint_v1(&config.checkpoint)?;
+        runtime_host::direct::select_checkpoint_v1(&config.checkpoint)
+            .map_err(|error| format!("{}: {error}", config.checkpoint.display()))?;
         let loaded = runtime_host::load_selected_topology_bundle_v1(
             &selection,
             &host,
             "deepseek41-flash-tp4",
-        )?;
+        )
+        .map_err(|error| format!("{}: {error}", config.bundle.display()))?;
         loaded.with_model_options(options)?;
         let spec = loaded
             .manifest()

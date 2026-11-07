@@ -50,6 +50,12 @@ pub const DSPARK_HC_DRAFT_ROWS: &str = "dspark_hc_draft_rows";
 /// of at most 32 rows, and its saved status holds every item's depth-five
 /// maximum. Eight keeps the one-launch bound.
 pub const DSPARK_SUCCESSOR_ITEMS: &str = "dspark_successor_items";
+/// Candidate: the successor the decode step before a mixed step queued
+/// serves that step when its decode items are the successor's, in order,
+/// and its other items are prefills whose contexts only prefix restores
+/// added; a five-head successor is cut to the three heads the step would
+/// compute inline.
+pub const DSPARK_SUCCESSOR_PREFILL: &str = "dspark_successor_prefill";
 /// The successor item bound a create record without the option keeps.
 pub const DEFAULT_SUCCESSOR_ITEMS: u32 = 8;
 /// The widest successor the candidate plans.
@@ -77,9 +83,10 @@ pub struct Options {
     pub dspark_moe_direct: bool,
     pub dspark_hc_draft_rows: bool,
     pub dspark_successor_items: u32,
+    pub dspark_successor_prefill: bool,
 }
 
-pub fn declarations() -> [ModelOptionV1; 14] {
+pub fn declarations() -> [ModelOptionV1; 15] {
     [
         (
             DIAGNOSTIC_STEP_LOGS,
@@ -120,6 +127,10 @@ pub fn declarations() -> [ModelOptionV1; 14] {
                 minimum: i64::from(DEFAULT_SUCCESSOR_ITEMS),
                 maximum: i64::from(MAX_SUCCESSOR_ITEMS),
             },
+        ),
+        (
+            DSPARK_SUCCESSOR_PREFILL,
+            OptionDefinitionV1::Boolean { default: false },
         ),
         (
             PHASED_DECODE_REDUCE,
@@ -206,6 +217,7 @@ impl Options {
             dspark_successor_items: values[DSPARK_SUCCESSOR_ITEMS]
                 .as_u64()
                 .expect("checked successor items") as u32,
+            dspark_successor_prefill: flag(DSPARK_SUCCESSOR_PREFILL),
         })
     }
 }
@@ -388,6 +400,7 @@ mod tests {
             dspark_hc_fusion: false,
             dspark_markov_staged: false,
             dspark_successor_items: 8,
+            dspark_successor_prefill: false,
         };
         assert_eq!(Options::read(&defaults).unwrap(), expected);
         assert_eq!(Options::read(&BTreeMap::new()).unwrap(), expected);
@@ -412,6 +425,7 @@ mod tests {
             (DSPARK_HC_FUSION.into(), "true".into()),
             (DSPARK_MARKOV_STAGED.into(), "true".into()),
             (DSPARK_SUCCESSOR_ITEMS.into(), "16".into()),
+            (DSPARK_SUCCESSOR_PREFILL.into(), "true".into()),
         ]);
         let resolved = declaration.resolve(&overrides).unwrap();
         assert_eq!(
@@ -431,6 +445,7 @@ mod tests {
                 dspark_hc_fusion: true,
                 dspark_markov_staged: true,
                 dspark_successor_items: 16,
+                dspark_successor_prefill: true,
             }
         );
         assert!(!declaration.is_qualified(&resolved));
@@ -460,6 +475,7 @@ mod tests {
             (DSPARK_SUCCESSOR_ITEMS, "7"),
             (DSPARK_SUCCESSOR_ITEMS, "17"),
             (DSPARK_SUCCESSOR_ITEMS, "true"),
+            (DSPARK_SUCCESSOR_PREFILL, "1"),
         ] {
             assert!(
                 declaration

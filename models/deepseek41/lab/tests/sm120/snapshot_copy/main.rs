@@ -9,7 +9,18 @@
 //! wait, as the served host's `copy_host_to_device` service does
 //! (`copy_host_to_device_ordered`); the staged and fenced upload
 //! `DeviceBuffer::copy_from_bytes_at` makes, which allocates page-locked
-//! staging per call and waits for the stream, is timed beside it.
+//! staging per call and waits for the stream, is timed beside it. The
+//! launch resolves its ABI arguments as the host does: each span is the
+//! address of its first byte.
+//!
+//! The spans lie inside a rank's allocations as a served rank's do: the
+//! state's declared buffers one after another in one allocation, the
+//! anchor spares in another, the pool span and the table (at an eight-byte
+//! boundary that is no sixteen-byte one) at offsets of theirs. In the
+//! packed layout they start near the start of their allocations over a
+//! 512-page pool; in the high layout the state's first view crosses 4 GiB
+//! of its allocation, the spares' crosses 2 GiB, and the pool runs past
+//! 4 GiB, its snapshot pages straddling both boundaries.
 //!
 //! The per-rank state declaration does not depend on the rank count, so
 //! the cases cover each KV storage, DSpark on and off and anchor spares on
@@ -18,9 +29,10 @@
 //! snapshot's pages ascending, scattered over the pool and descending.
 //! Slots capture and restore; anchors only capture, as served.
 //!
-//! [`bitwise_gpu`] compares every byte of every destination buffer, and
-//! the sources after, with the destinations poisoned twice, across both
-//! arms and the CPU oracle (`kernel_core::snapshot_copy::snapshot_copy`).
+//! [`bitwise_gpu`] compares every byte of every destination allocation, and
+//! the sources after, with the destinations poisoned (twice in the packed
+//! layout), across both arms and the CPU oracle
+//! (`kernel_core::snapshot_copy::snapshot_copy`).
 //! [`pair_gpu`] times both arms with CUDA events, host wall time and host
 //! issue time in a pair lab with A/A controls
 //! (docs/contributing.md#pair-lab-kernel-timing), then splits the kernel
@@ -32,30 +44,31 @@
 use bundle_deepseek41::sm120::{fold_cubin_for_symbol, snapshot_copy as bundle_kernel};
 use bundle_runtime::geometry::Items;
 use bundle_runtime::snapshot::{
-    Action, BoundLaunch, HeaderAction, HeldBuffers, KernelCopy, Pages, Table, launched_copies,
+    Action, BoundLaunch, Descriptor, HeaderAction, HeldBuffers, KernelCopy, Pages, Table,
+    launched_copies,
 };
 use bundle_runtime::state::{Extent, Holder, RequestState};
 use kernel_core::backend::{Backend, Need, Prepared, View};
-use kernel_core::contract::Argument;
 use kernel_core::snapshot_copy::{Direction, SnapshotCopy, SnapshotCopyBuffers};
-use kernel_harness::launch::{Bindings, launch};
 use kernel_harness::{LabResult, Session};
 use kernels_sm120::backend::Sm120;
 use kernels_sm120::snapshot_copy::SYMBOL;
 use model_deepseek41_contract::geometry::FLASH;
 use model_deepseek41_contract::serving::DECODE_BATCH;
 use model_deepseek41_contract::state::{KvStorage, request_state_with_anchors};
-use runtime_bundle_abi::{BundleDeviceBufferHandleV1, DeviceBufferSpanV1};
-use runtime_cuda::{DeviceBuffer, Function, PinnedHostBuffer, PinnedUploadRing, Stream};
+use runtime_bundle_abi::{BundleDeviceBufferHandleV1, DeviceBufferSpanV1, KernelArgumentV1};
+use runtime_cuda::{
+    DeviceBuffer, Function, KernelArgument, PinnedHostBuffer, PinnedUploadRing, Stream,
+};
 use serde_json::{Value, json};
 use std::cell::RefCell;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::time::Instant;
 
 /// Anchor items an anchored instance declares at TP4.
 const ANCHORS: u32 = 4;
-/// Pages of the lab's pool.
-const POOL_PAGES: u64 = 512;
+/// Pages of the packed layout's pool.
+const PACKED_POOL_PAGES: u64 = 512;
 /// The destinations' fills: a write of either value shows under the other.
 const POISONS: [u8; 2] = [0xa5, 0x00];
 /// The bitwise sweep stops here, with no result, so its job stays in its
@@ -68,12 +81,25 @@ const PAIR_BUDGET_SECONDS: u64 = 120;
 const RING_BYTES: usize = 4 << 20;
 /// Back-to-back launches whose events time the kernel on the device.
 const LAUNCHES: u32 = 32;
-/// Buffer handles of the lab's spans: declared buffer `i` is `BUFFER + i`
-/// and its spare `SPARE + i`.
-const BUFFER: u64 = 1;
-const SPARE: u64 = 101;
-const POOL: u64 = 201;
-const TABLE: u64 = 301;
+/// The lab's allocations, by buffer handle: a rank's state, its anchor
+/// spares, its pool and its table buffer.
+const STATE: u64 = 1;
+const SPARES: u64 = 2;
+const POOL: u64 = 3;
+const TABLE: u64 = 4;
+/// Where the pool span starts in its allocation.
+const POOL_OFFSET: u64 = 4096;
+/// Where the table starts in its allocation: an eight-byte boundary, the
+/// table's alignment, that is no sixteen-byte one.
+const TABLE_OFFSET: u64 = 4104;
+/// The alignment of the spans packed one after another, a host pool's.
+const SPAN_ALIGNMENT: u64 = 256;
+const GIB: u64 = 1 << 30;
+/// How far below 4 GiB (state) and 2 GiB (spares) the high layout's first
+/// span starts.
+const BELOW: u64 = 64 << 10;
+/// Bytes a verification reads back at once.
+const CHUNK_BYTES: u64 = 64 << 20;
 
 /// One per-rank state declaration.
 #[derive(Clone, Copy, Debug)]
@@ -116,51 +142,144 @@ const DECLARED: [Declared; 6] = [
     },
 ];
 
+/// Where a bench's spans lie in their allocations.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Layout {
+    /// From the start of each allocation, over a 512-page pool.
+    Packed,
+    /// The state's spans from 64 KiB below 4 GiB, the spares' from 64 KiB
+    /// below 2 GiB, over a pool past 4 GiB.
+    High,
+}
+
 #[derive(Clone, Copy, Debug)]
 enum Order {
     Ascending,
     Scattered,
     Descending,
+    /// The pages that straddle 2 GiB and 4 GiB of the pool and their
+    /// neighbours, the pool's last page, then scattered pages.
+    Straddling,
 }
 
 const ORDERS: [Order; 3] = [Order::Ascending, Order::Scattered, Order::Descending];
 
-/// `count` distinct pool pages in `order`.
-fn page_ids(order: Order, count: u64) -> Vec<u64> {
+/// The first `count` distinct pages of `ids`, or none when they run short.
+fn distinct(ids: impl Iterator<Item = u64>, count: u64, pool_pages: u64) -> LabResult<Vec<u64>> {
+    let mut seen = BTreeSet::new();
+    let ids = ids
+        .take(4 * pool_pages as usize + 16)
+        .filter(|&id| id < pool_pages && seen.insert(id))
+        .take(count as usize)
+        .collect::<Vec<_>>();
+    if ids.len() as u64 != count {
+        return Err(format!(
+            "{pool_pages} pool pages give no {count} distinct pages"
+        ));
+    }
+    Ok(ids)
+}
+
+/// `count` distinct pages of a pool of `pool_pages` in `order`.
+fn page_ids(order: Order, count: u64, pool_pages: u64, page_bytes: u64) -> LabResult<Vec<u64>> {
+    let scattered = (0..).map(move |i: u64| (i * 211 + 17) % pool_pages);
     match order {
-        Order::Ascending => (0..count).map(|i| 3 + i).collect(),
-        // 211 is odd, so it permutes the 512 pages.
-        Order::Scattered => (0..count).map(|i| (i * 211 + 17) % POOL_PAGES).collect(),
-        Order::Descending => (0..count).map(|i| POOL_PAGES - 1 - 2 * i).collect(),
+        Order::Ascending => distinct((0..count).map(|i| 3 + i), count, pool_pages),
+        Order::Scattered => distinct(scattered, count, pool_pages),
+        Order::Descending => distinct(
+            (0..count).map(|i| pool_pages.saturating_sub(1 + 2 * i)),
+            count,
+            pool_pages,
+        ),
+        Order::Straddling => {
+            let two = 2 * GIB / page_bytes;
+            let four = 4 * GIB / page_bytes;
+            let first = [
+                four,
+                two,
+                four - 1,
+                two + 1,
+                four + 1,
+                two - 1,
+                pool_pages - 1,
+            ];
+            distinct(first.into_iter().chain(scattered), count, pool_pages)
+        }
     }
 }
 
-fn span(raw: u64, length: u64) -> DeviceBufferSpanV1 {
-    DeviceBufferSpanV1::new(BundleDeviceBufferHandleV1 { raw }, 0, length)
+fn handle(raw: u64) -> BundleDeviceBufferHandleV1 {
+    BundleDeviceBufferHandleV1 { raw }
 }
 
 fn refused(error: impl std::fmt::Debug) -> String {
     format!("{error:?}")
 }
 
-/// One declaration's state in an instance serving the decode batch, its
-/// held buffers (each declared buffer and spare its own allocation), the
-/// pool and the table buffer, and the kernel ops prepared as the bundle
-/// prepares them: both directions over the snapshot's pages and views, for
-/// the most pieces a slot's or an anchor item's table has.
+fn align(bytes: u64) -> u64 {
+    bytes.div_ceil(SPAN_ALIGNMENT) * SPAN_ALIGNMENT
+}
+
+/// One declaration's state in an instance serving the decode batch, laid
+/// out in `layout`: its held buffers and spares, the pool and the table
+/// buffer, each allocation's size, and the kernel ops prepared as the
+/// bundle prepares them: both directions over the snapshot's pages and
+/// views, for the most pieces a slot's or an anchor item's table has.
 struct Bench {
     declared: Declared,
+    layout: Layout,
     state: RequestState,
     extent: Extent,
     held: HeldBuffers,
     pool: DeviceBufferSpanV1,
+    pool_pages: u64,
     table: DeviceBufferSpanV1,
+    /// Each allocation's buffer handle and bytes.
+    arenas: Vec<(u64, u64)>,
     capture: (SnapshotCopy, Prepared<SnapshotCopyBuffers<View>>),
     restore: (SnapshotCopy, Prepared<SnapshotCopyBuffers<View>>),
+    /// The synthetic bench's own table, in place of a holder's.
+    fixed: Option<Table>,
+}
+
+/// The kernel ops of a snapshot of `pages` over `views` for `capacity`
+/// pieces, prepared through the backend the bundle registers.
+fn ops(
+    views: u32,
+    page_bytes: u64,
+    pages: u64,
+    capacity: u32,
+) -> LabResult<[(SnapshotCopy, Prepared<SnapshotCopyBuffers<View>>); 2]> {
+    let backend = bundle_kernel::register(Sm120::new());
+    let prepare = |direction| -> LabResult<_> {
+        let op = SnapshotCopy {
+            direction,
+            views,
+            page_bytes,
+            pages: pages as u32,
+        };
+        let prepared = backend
+            .snapshot_copy(&op, Need::rows(capacity))
+            .map_err(|refusal| refusal.to_string())?;
+        Ok((op, prepared))
+    };
+    Ok([prepare(Direction::ToPages)?, prepare(Direction::FromPages)?])
+}
+
+/// Every bench: each declaration packed and high, then the synthetic one.
+fn benches() -> LabResult<Vec<Bench>> {
+    let mut benches = Vec::new();
+    for layout in [Layout::Packed, Layout::High] {
+        for declared in DECLARED {
+            benches.push(Bench::new(declared, layout)?);
+        }
+    }
+    benches.push(Bench::synthetic()?);
+    Ok(benches)
 }
 
 impl Bench {
-    fn new(declared: Declared) -> LabResult<Self> {
+    fn new(declared: Declared, layout: Layout) -> LabResult<Self> {
         let state =
             request_state_with_anchors(&FLASH, declared.storage, declared.dspark, declared.anchors);
         let items = Items::new(DECODE_BATCH).ok_or("the decode batch is no item count")?;
@@ -170,17 +289,37 @@ impl Bench {
             // Five drafts and the bonus row.
             verify_rows: if declared.dspark { 6 } else { 0 },
         };
-        let held = HeldBuffers {
-            buffers: (BUFFER..)
-                .zip(&state.buffers)
-                .map(|(raw, buffer)| Some(span(raw, buffer.bytes(extent))))
-                .collect(),
-            spares: (SPARE..)
-                .zip(&state.buffers)
-                .map(|(raw, buffer)| {
-                    (buffer.spare_bytes() > 0).then(|| span(raw, buffer.spare_bytes()))
+        let (state_base, spare_base) = match layout {
+            Layout::Packed => (0, 0),
+            Layout::High => (4 * GIB - BELOW, 2 * GIB - BELOW),
+        };
+        let mut at = state_base;
+        let buffers = state
+            .buffers
+            .iter()
+            .map(|buffer| {
+                let span = DeviceBufferSpanV1::new(handle(STATE), at, buffer.bytes(extent));
+                at = align(at + span.length);
+                Some(span)
+            })
+            .collect();
+        let state_bytes = at;
+        let mut at = spare_base;
+        let spares = state
+            .buffers
+            .iter()
+            .map(|buffer| {
+                (buffer.spare_bytes() > 0).then(|| {
+                    let span = DeviceBufferSpanV1::new(handle(SPARES), at, buffer.spare_bytes());
+                    at = align(at + span.length);
+                    span
                 })
-                .collect(),
+            })
+            .collect::<Vec<_>>();
+        let spare_bytes = at;
+        let held = HeldBuffers {
+            buffers,
+            spares: spares.clone(),
         };
         let mut tables = vec![Table::new(&state, extent, Holder::Slot(0)).map_err(refused)?];
         if declared.anchors > 0 {
@@ -192,59 +331,175 @@ impl Bench {
             .map(|table| table.descriptors.len())
             .max()
             .unwrap() as u32;
-        let op = |direction| SnapshotCopy {
-            direction,
-            views,
-            page_bytes: tables[0].page_bytes,
-            pages: tables[0].pages() as u32,
-        };
-        let backend = bundle_kernel::register(Sm120::new());
-        let prepare = |direction| -> LabResult<_> {
-            let op = op(direction);
-            let prepared = backend
-                .snapshot_copy(&op, Need::rows(capacity))
-                .map_err(|refusal| refusal.to_string())?;
-            Ok((op, prepared))
-        };
-        let capture = prepare(Direction::ToPages)?;
-        let restore = prepare(Direction::FromPages)?;
+        let page_bytes = tables[0].page_bytes;
+        let [capture, restore] = ops(views, page_bytes, tables[0].pages(), capacity)?;
         let table_bytes = capture.0.table_bytes(capacity).map_err(refused)?;
+        let pool_pages = match layout {
+            Layout::Packed => PACKED_POOL_PAGES,
+            Layout::High => 4 * GIB / page_bytes + 64,
+        };
+        let pool = DeviceBufferSpanV1::new(handle(POOL), POOL_OFFSET, pool_pages * page_bytes);
+        let table = DeviceBufferSpanV1::new(handle(TABLE), TABLE_OFFSET, table_bytes);
+        let mut arenas = vec![
+            (STATE, state_bytes),
+            (POOL, POOL_OFFSET + pool.length),
+            (TABLE, TABLE_OFFSET + table_bytes),
+        ];
+        if spares.iter().any(Option::is_some) {
+            arenas.push((SPARES, spare_bytes));
+        }
         Ok(Self {
             declared,
-            pool: span(POOL, POOL_PAGES * tables[0].page_bytes),
-            table: span(TABLE, table_bytes),
+            layout,
             state,
             extent,
             held,
+            pool,
+            pool_pages,
+            table,
+            arenas,
             capture,
             restore,
+            fixed: None,
         })
     }
 
-    /// Every span the lab allocates: the held buffers and spares, the pool
-    /// and the table.
-    fn spans(&self) -> Vec<DeviceBufferSpanV1> {
-        let held = self.held.buffers.iter().chain(&self.held.spares).flatten();
-        held.copied().chain([self.pool, self.table]).collect()
+    /// A bench of its own table, whose pieces the declarations never make:
+    /// views at offsets off a 16-byte boundary but one, pieces starting,
+    /// ending and lying at odd bytes, byte tails and pieces across pages,
+    /// so the kernel moves most bytes one at a time. Packed, over 64 pages
+    /// of 1,040 bytes.
+    fn synthetic() -> LabResult<Self> {
+        let declared = DECLARED[0];
+        let state =
+            request_state_with_anchors(&FLASH, declared.storage, declared.dspark, declared.anchors);
+        let items = Items::new(DECODE_BATCH).ok_or("the decode batch is no item count")?;
+        let extent = Extent {
+            served: items.get(),
+            bucket: items.capacity(),
+            verify_rows: 0,
+        };
+        let spans = [(3, 4096), (8192, 8192), (16384 + 11, 4096)]
+            .map(|(offset, length)| DeviceBufferSpanV1::new(handle(STATE), offset, length));
+        let held = HeldBuffers {
+            buffers: spans.map(Some).to_vec(),
+            spares: vec![None; spans.len()],
+        };
+        let mut at = 0;
+        let descriptors = [
+            (0, 3, 301),
+            (1, 17, 255),
+            (2, 1, 600),
+            (0, 400, 413),
+            (1, 1024, 4096),
+            (2, 700, 150),
+            (0, 2048, 15),
+            (1, 5120, 2080),
+            (2, 1000, 2051),
+        ]
+        .map(|(buffer, offset, length)| {
+            let descriptor = Descriptor {
+                buffer,
+                spare: false,
+                offset,
+                length,
+                at,
+            };
+            at += length;
+            descriptor
+        })
+        .to_vec();
+        let table = Table {
+            descriptors,
+            header_bytes: 0,
+            page_bytes: 1040,
+        };
+        let capacity = table.descriptors.len() as u32;
+        let [capture, restore] = ops(3, table.page_bytes, table.pages(), capacity)?;
+        let table_bytes = capture.0.table_bytes(capacity).map_err(refused)?;
+        let pool_pages = 64;
+        let pool =
+            DeviceBufferSpanV1::new(handle(POOL), POOL_OFFSET, pool_pages * table.page_bytes);
+        let state_bytes = align(spans[2].offset + spans[2].length);
+        Ok(Self {
+            declared,
+            layout: Layout::Packed,
+            state,
+            extent,
+            held,
+            pool,
+            pool_pages,
+            table: DeviceBufferSpanV1::new(handle(TABLE), TABLE_OFFSET, table_bytes),
+            arenas: vec![
+                (STATE, state_bytes),
+                (POOL, POOL_OFFSET + pool.length),
+                (TABLE, TABLE_OFFSET + table_bytes),
+            ],
+            capture,
+            restore,
+            fixed: Some(table),
+        })
     }
 
-    /// The held buffers and spares.
-    fn state_spans(&self) -> Vec<DeviceBufferSpanV1> {
+    /// The held buffers' and spares' spans.
+    fn held_spans(&self) -> Vec<DeviceBufferSpanV1> {
         let held = self.held.buffers.iter().chain(&self.held.spares).flatten();
         held.copied().collect()
     }
 
+    /// The allocations a capture (the pool) or a restore (the state and
+    /// spares) writes.
+    fn destinations(&self, to_pages: bool) -> Vec<u64> {
+        self.arenas
+            .iter()
+            .map(|&(raw, _)| raw)
+            .filter(|&raw| {
+                if to_pages {
+                    raw == POOL
+                } else {
+                    raw == STATE || raw == SPARES
+                }
+            })
+            .collect()
+    }
+
     /// The holders of its snapshots: the decode batch's first and last
-    /// slots and its first and last anchor items.
+    /// slots and its first and last anchor items; in the high layout the
+    /// last of each.
     fn holders(&self) -> Vec<Holder> {
-        let mut holders = vec![Holder::Slot(0), Holder::Slot(self.extent.served - 1)];
+        if self.fixed.is_some() {
+            return vec![Holder::Slot(0)];
+        }
+        let last = Holder::Slot(self.extent.served - 1);
+        let mut holders = match self.layout {
+            Layout::Packed => vec![Holder::Slot(0), last],
+            Layout::High => vec![last],
+        };
         if self.declared.anchors > 0 {
-            holders.extend([Holder::Anchor(0), Holder::Anchor(self.declared.anchors - 1)]);
+            let anchor = Holder::Anchor(self.declared.anchors - 1);
+            match self.layout {
+                Layout::Packed => holders.extend([Holder::Anchor(0), anchor]),
+                Layout::High => holders.push(anchor),
+            }
         }
         holders
     }
 
+    /// The page orders its cases take.
+    fn orders(&self) -> &'static [Order] {
+        if self.fixed.is_some() {
+            return &[Order::Scattered, Order::Descending];
+        }
+        match self.layout {
+            Layout::Packed => &ORDERS,
+            Layout::High => &[Order::Straddling],
+        }
+    }
+
     fn name(&self) -> String {
+        if self.fixed.is_some() {
+            return "synthetic".into();
+        }
         let d = self.declared;
         format!(
             "{}-{}-a{}",
@@ -254,6 +509,14 @@ impl Bench {
             },
             if d.dspark { "dspark" } else { "ar" },
             d.anchors
+        )
+    }
+
+    fn page_span(&self, id: u64, page_bytes: u64) -> DeviceBufferSpanV1 {
+        DeviceBufferSpanV1::new(
+            self.pool.buffer,
+            self.pool.offset + id * page_bytes,
+            page_bytes,
         )
     }
 }
@@ -269,14 +532,17 @@ struct Plans {
 }
 
 fn plans(bench: &Bench, holder: Holder, order: Order, to_pages: bool) -> LabResult<Plans> {
-    let table = Table::new(&bench.state, bench.extent, holder).map_err(refused)?;
-    let ids = page_ids(order, table.pages());
+    let table = match &bench.fixed {
+        Some(table) => table.clone(),
+        None => Table::new(&bench.state, bench.extent, holder).map_err(refused)?,
+    };
+    let ids = page_ids(order, table.pages(), bench.pool_pages, table.page_bytes)?;
     let paged = Pages {
         pool: bench.pool,
         ids: &ids,
         page_bytes: table.page_bytes,
     };
-    paged.check(&table, POOL_PAGES).map_err(refused)?;
+    paged.check(&table, bench.pool_pages).map_err(refused)?;
     let copies = table
         .actions::<()>(&bench.held, &paged, to_pages, HeaderAction::None)
         .map_err(refused)?
@@ -315,9 +581,9 @@ fn plans(bench: &Bench, holder: Holder, order: Order, to_pages: bool) -> LabResu
     })
 }
 
-/// The device side of one bench: an allocation per span, by buffer handle,
-/// the kernel's function, the stream's upload ring and, for the pair lab,
-/// a scratch buffer the bandwidth reference copies into.
+/// The device side of one bench: an allocation per arena, by buffer
+/// handle, the kernel's function, the stream's upload ring and, for the
+/// pair lab, a scratch buffer the bandwidth reference copies into.
 struct Device<'a> {
     session: &'a Session,
     buffers: BTreeMap<u64, DeviceBuffer>,
@@ -363,8 +629,8 @@ impl Arm {
 impl<'a> Device<'a> {
     fn new(session: &'a Session, bench: &Bench, module: &runtime_cuda::Module) -> LabResult<Self> {
         let mut buffers = BTreeMap::new();
-        for span in bench.spans() {
-            buffers.insert(span.buffer.raw, session.allocate(span.length as usize)?);
+        for &(raw, bytes) in &bench.arenas {
+            buffers.insert(raw, session.allocate(bytes as usize)?);
         }
         let function = module.function(SYMBOL).map_err(|e| e.to_string())?;
         let staging =
@@ -378,10 +644,21 @@ impl<'a> Device<'a> {
         })
     }
 
-    fn buffer(&self, span: DeviceBufferSpanV1) -> LabResult<&DeviceBuffer> {
+    fn arena(&self, raw: u64) -> LabResult<&DeviceBuffer> {
         self.buffers
-            .get(&span.buffer.raw)
-            .ok_or_else(|| format!("no allocation for {span:?}"))
+            .get(&raw)
+            .ok_or_else(|| format!("no allocation {raw}"))
+    }
+
+    fn buffer(&self, span: DeviceBufferSpanV1) -> LabResult<&DeviceBuffer> {
+        self.arena(span.buffer.raw)
+    }
+
+    /// The device address of `span`'s first byte, as the host resolves it.
+    fn address(&self, span: DeviceBufferSpanV1) -> LabResult<u64> {
+        self.buffer(span)?
+            .device_address_at(span.offset as usize, span.length as usize)
+            .map_err(|e| e.to_string())
     }
 
     /// The device copies, as the host issues them.
@@ -419,32 +696,44 @@ impl<'a> Device<'a> {
             .map_err(|e| e.to_string())
     }
 
-    /// The launch, its views bound to whole allocations.
+    /// The launch of the bound plan's ABI arguments, each span the address
+    /// of its first byte and each pointer array's slots resolved alike, as
+    /// the served host launches them.
     fn launch(&self, plans: &Plans, stream: &Stream) -> LabResult<()> {
-        let launched = &plans.launch;
-        let mut bound = BTreeMap::new();
-        for argument in &launched.launch.arguments.0 {
-            let handles = match argument {
-                Argument::DeviceBuffer(handle) => vec![*handle],
-                Argument::DevicePointerArray(handles) => handles.clone(),
-                _ => Vec::new(),
-            };
-            for handle in handles {
-                let span = launched.bindings.get(handle).map_err(refused)?;
-                if span.offset != 0 {
-                    return Err(format!("the lab binds whole allocations, not {span:?}"));
+        let arguments = plans.launch.arguments().map_err(refused)?;
+        let arrays = arguments
+            .iter()
+            .filter_map(|argument| match argument {
+                KernelArgumentV1::DevicePointerArray(slots) => Some(
+                    slots
+                        .iter()
+                        .map(|slot| slot.map_or(Ok(0), |span| self.address(span)))
+                        .collect::<LabResult<Vec<_>>>(),
+                ),
+                _ => None,
+            })
+            .collect::<LabResult<Vec<_>>>()?;
+        let mut arrays = arrays.iter();
+        let mut values = Vec::with_capacity(arguments.len());
+        for argument in &arguments {
+            values.push(match argument {
+                KernelArgumentV1::DeviceBuffer(span) => KernelArgument::Range {
+                    buffer: self.buffer(*span)?,
+                    offset: span.offset as usize,
+                    byte_len: span.length as usize,
+                },
+                KernelArgumentV1::DevicePointerArray(_) => {
+                    KernelArgument::DevicePointerArray(arrays.next().ok_or("a pointer array")?)
                 }
-                bound.insert(handle, self.buffer(span)?);
-            }
+                KernelArgumentV1::ScalarU32(value) => KernelArgument::U32(*value),
+                KernelArgumentV1::ScalarU64(value) => KernelArgument::U64(*value),
+                KernelArgumentV1::ScalarI32(value) => KernelArgument::I32(*value),
+                KernelArgumentV1::NullDevicePointer => KernelArgument::NullBuffer,
+                other => return Err(format!("the lab launches no {other:?}")),
+            });
         }
-        launch(
-            &self.session.context,
-            &self.function,
-            stream,
-            launched.launch.plan,
-            &launched.launch.arguments,
-            &Bindings { buffers: bound },
-        )
+        let config = kernel_harness::launch::config(plans.launch.launch.plan)?;
+        kernel_harness::launch::launch_with(&self.function, stream, config, &values)
     }
 
     fn arm(&self, arm: Arm, plans: &Plans, stream: &Stream) -> LabResult<()> {
@@ -473,35 +762,64 @@ impl<'a> Device<'a> {
                     .as_ref()
                     .ok_or("the reference copy needs scratch")?;
                 let bytes = (plans.table.pages() * plans.table.page_bytes) as usize;
-                let pool = self
-                    .buffers
-                    .get(&POOL)
-                    .ok_or("the reference copy reads the pool")?;
                 scratch
-                    .copy_range_from_async(0, pool, 0, bytes, stream)
+                    .copy_range_from_async(
+                        0,
+                        self.arena(POOL)?,
+                        POOL_OFFSET as usize,
+                        bytes,
+                        stream,
+                    )
                     .map_err(|e| e.to_string())
             }
         }
     }
 
+    /// Writes `bytes` at `span`, staged and waited for.
     fn write(&self, span: DeviceBufferSpanV1, bytes: &[u8]) -> LabResult<()> {
         self.buffer(span)?
-            .copy_from_bytes(bytes, &self.session.stream)
+            .copy_from_bytes_at(span.offset as usize, bytes, &self.session.stream)
             .map_err(|e| e.to_string())
     }
 
-    fn fill(&self, span: DeviceBufferSpanV1, value: u8) -> LabResult<()> {
-        kernel_harness::poison::fill_all(self.session, self.buffer(span)?, &[value])
+    /// Fills all of allocation `raw` with `value`.
+    fn fill(&self, raw: u64, value: u8) -> LabResult<()> {
+        kernel_harness::poison::fill_all(self.session, self.arena(raw)?, &[value])
     }
 
-    fn read(&self, span: DeviceBufferSpanV1) -> LabResult<Vec<u8>> {
-        let mut bytes = kernel_harness::poison::read(self.session, self.buffer(span)?)?;
-        bytes.truncate(span.length as usize);
+    /// The bytes of `length` at `offset` of allocation `raw`.
+    fn read(&self, raw: u64, offset: u64, bytes: &mut [u8]) -> LabResult<()> {
+        let stream = &self.session.stream;
+        self.arena(raw)?
+            .copy_to_bytes_at_async(offset as usize, bytes, stream)
+            .map_err(|e| e.to_string())?;
+        stream.synchronize().map_err(|e| e.to_string())
+    }
+
+    fn read_span(&self, span: DeviceBufferSpanV1) -> LabResult<Vec<u8>> {
+        let mut bytes = vec![0; span.length as usize];
+        self.read(span.buffer.raw, span.offset, &mut bytes)?;
         Ok(bytes)
+    }
+
+    /// Checks every byte of allocation `expected.arena` against
+    /// `expected`, reading it back a chunk at a time; returns its bytes.
+    fn verify(&self, expected: &Expected, fill: u8) -> LabResult<u64> {
+        let total = self.arena(expected.arena)?.byte_len() as u64;
+        let mut chunk = vec![0; CHUNK_BYTES.min(total) as usize];
+        let mut at = 0;
+        while at < total {
+            let length = CHUNK_BYTES.min(total - at);
+            let observed = &mut chunk[..length as usize];
+            self.read(expected.arena, at, observed)?;
+            expected.check(at, observed, fill)?;
+            at += length;
+        }
+        Ok(total)
     }
 }
 
-/// Seeded bytes, distinct for every buffer.
+/// Seeded bytes, distinct for every salt.
 fn seeded(length: u64, salt: u64) -> Vec<u8> {
     let mut x = salt.wrapping_mul(0x9e37_79b9_7f4a_7c15) | 1;
     let mut bytes = Vec::with_capacity(length as usize + 8);
@@ -515,72 +833,170 @@ fn seeded(length: u64, salt: u64) -> Vec<u8> {
     bytes
 }
 
-/// The sources' and destinations' spans of a direction.
-fn sides(bench: &Bench, to_pages: bool) -> (Vec<DeviceBufferSpanV1>, Vec<DeviceBufferSpanV1>) {
+/// The bytes a case starts from: a capture's every held span, or a
+/// restore's snapshot pages, compact in page order.
+struct Seeds {
+    spans: Vec<(DeviceBufferSpanV1, Vec<u8>)>,
+    pages: Vec<u8>,
+}
+
+/// The sources' seeds, for the host alone or also written to `device`.
+fn seeds(
+    bench: &Bench,
+    plans: &Plans,
+    to_pages: bool,
+    salt: u64,
+    device: Option<&Device<'_>>,
+) -> LabResult<Seeds> {
+    let mut seeds = Seeds {
+        spans: Vec::new(),
+        pages: Vec::new(),
+    };
     if to_pages {
-        (bench.state_spans(), vec![bench.pool])
+        for (index, span) in bench.held_spans().into_iter().enumerate() {
+            let bytes = seeded(span.length, salt * 1000 + index as u64);
+            if let Some(device) = device {
+                device.write(span, &bytes)?;
+            }
+            seeds.spans.push((span, bytes));
+        }
     } else {
-        (vec![bench.pool], bench.state_spans())
+        let page_bytes = plans.table.page_bytes;
+        for (index, &id) in plans.ids.iter().enumerate() {
+            let bytes = seeded(page_bytes, salt * 1000 + 500 + index as u64);
+            if let Some(device) = device {
+                device.write(bench.page_span(id, page_bytes), &bytes)?;
+            }
+            seeds.pages.extend(bytes);
+        }
+    }
+    Ok(seeds)
+}
+
+/// What an allocation holds after a case: these bytes at these offsets,
+/// sorted and apart, and the fill everywhere else.
+struct Expected {
+    arena: u64,
+    regions: Vec<(u64, Vec<u8>)>,
+}
+
+impl Expected {
+    /// Checks `observed`, the allocation's bytes from `at`.
+    fn check(&self, at: u64, observed: &[u8], fill: u8) -> LabResult<()> {
+        let end = at + observed.len() as u64;
+        let mut cursor = at;
+        let mut next = self
+            .regions
+            .partition_point(|(start, bytes)| start + bytes.len() as u64 <= at);
+        while cursor < end {
+            let region = self.regions.get(next);
+            let start = region.map_or(u64::MAX, |(start, _)| *start);
+            let (stop, wanted) = if cursor < start {
+                (start.min(end), None)
+            } else {
+                let (start, bytes) = region.unwrap();
+                let stop = (start + bytes.len() as u64).min(end);
+                next += 1;
+                (
+                    stop,
+                    Some(&bytes[(cursor - start) as usize..(stop - start) as usize]),
+                )
+            };
+            let seen = &observed[(cursor - at) as usize..(stop - at) as usize];
+            let differs = match wanted {
+                Some(wanted) => first_difference(seen, wanted),
+                None => seen.iter().position(|&byte| byte != fill),
+            };
+            if let Some(offset) = differs {
+                return Err(format!(
+                    "byte {} of allocation {} differs from the oracle's ({:#04x}{})",
+                    cursor + offset as u64,
+                    self.arena,
+                    seen[offset],
+                    if wanted.is_some() {
+                        ", a snapshot byte"
+                    } else {
+                        ", outside the snapshot"
+                    }
+                ));
+            }
+            cursor = stop;
+        }
+        Ok(())
     }
 }
 
-/// What the oracle leaves in `destinations` (each filled with `poison`)
-/// from `sources`.
+/// What the oracle leaves in each destination allocation, filled with
+/// `fill` beforehand, from `seeds`. The oracle runs over a compact pool
+/// of the snapshot's pages in order, page `i` standing for `plans.ids[i]`.
 fn oracle(
     bench: &Bench,
     plans: &Plans,
     to_pages: bool,
-    sources: &BTreeMap<u64, Vec<u8>>,
-    destinations: &[DeviceBufferSpanV1],
-    poison: u8,
-) -> LabResult<BTreeMap<u64, Vec<u8>>> {
-    let mut bytes = sources.clone();
-    for span in destinations {
-        bytes.insert(span.buffer.raw, vec![poison; span.length as usize]);
-    }
+    seeds: &Seeds,
+    fill: u8,
+) -> LabResult<Vec<Expected>> {
     let (views, segments) = plans.table.segments(&bench.held).map_err(refused)?;
-    let mut pool = bytes.remove(&POOL).ok_or("no pool bytes")?;
-    let mut held = views
-        .iter()
-        .map(|view| {
-            bytes
-                .remove(&view.buffer.raw)
-                .map(|bytes| (view.buffer.raw, bytes))
-                .ok_or("no view bytes")
-        })
-        .collect::<Result<Vec<_>, _>>()?;
+    let page_bytes = plans.table.page_bytes as usize;
+    let count = plans.ids.len();
+    let compact = (0..count as u64).collect::<Vec<_>>();
     let op = if to_pages {
         bench.capture.0
     } else {
         bench.restore.0
     };
+    let mut held = views
+        .iter()
+        .map(|view| {
+            if to_pages {
+                seeds
+                    .spans
+                    .iter()
+                    .find(|(span, _)| span == view)
+                    .map(|(_, bytes)| bytes.clone())
+                    .ok_or_else(|| format!("no seeds for {view:?}"))
+            } else {
+                Ok(vec![fill; view.length as usize])
+            }
+        })
+        .collect::<LabResult<Vec<_>>>()?;
+    let mut pool = if to_pages {
+        vec![fill; count * page_bytes]
+    } else {
+        seeds.pages.clone()
+    };
     let mut slices = held
         .iter_mut()
-        .map(|(_, bytes)| bytes.as_mut_slice())
+        .map(|bytes| bytes.as_mut_slice())
         .collect::<Vec<_>>();
-    kernel_core::snapshot_copy::snapshot_copy(&op, &mut slices, &mut pool, &plans.ids, &segments)
+    kernel_core::snapshot_copy::snapshot_copy(&op, &mut slices, &mut pool, &compact, &segments)
         .map_err(refused)?;
-    bytes.extend(held);
-    bytes.insert(POOL, pool);
-    Ok(destinations
-        .iter()
-        .map(|span| (span.buffer.raw, bytes.remove(&span.buffer.raw).unwrap()))
-        .collect())
-}
-
-/// Seeds the sources; returns their bytes.
-fn seed(
-    device: &Device<'_>,
-    sources: &[DeviceBufferSpanV1],
-    salt: u64,
-) -> LabResult<BTreeMap<u64, Vec<u8>>> {
-    let mut written = BTreeMap::new();
-    for span in sources {
-        let bytes = seeded(span.length, salt * 1000 + span.buffer.raw);
-        device.write(*span, &bytes)?;
-        written.insert(span.buffer.raw, bytes);
+    let mut expected = bench
+        .destinations(to_pages)
+        .into_iter()
+        .map(|arena| (arena, Vec::new()))
+        .collect::<BTreeMap<_, _>>();
+    if to_pages {
+        let regions = expected.get_mut(&POOL).ok_or("no pool")?;
+        for (index, &id) in plans.ids.iter().enumerate() {
+            let bytes = pool[index * page_bytes..(index + 1) * page_bytes].to_vec();
+            regions.push((bench.page_span(id, page_bytes as u64).offset, bytes));
+        }
+    } else {
+        for (view, bytes) in views.iter().zip(held) {
+            let regions = expected
+                .get_mut(&view.buffer.raw)
+                .ok_or("a view outside the state")?;
+            regions.push((view.offset, bytes));
+        }
     }
-    Ok(written)
+    Ok(expected
+        .into_iter()
+        .map(|(arena, mut regions)| {
+            regions.sort_by_key(|(start, _)| *start);
+            Expected { arena, regions }
+        })
+        .collect())
 }
 
 /// The first byte at which two buffers differ.
@@ -591,23 +1007,27 @@ fn first_difference(left: &[u8], right: &[u8]) -> Option<usize> {
     left.iter().zip(right).position(|(l, r)| l != r)
 }
 
-/// Runs both arms with every destination poisoned by each fill and
-/// compares all of their bytes with the oracle's, then the sources with
-/// their seeds. Returns the bytes compared.
+/// Runs both arms with every destination allocation filled with each
+/// poison (the first alone in the high layout) and compares all of their
+/// bytes with the oracle's, then the sources with their seeds. Returns the
+/// bytes compared.
 fn compare(
     bench: &Bench,
     device: &Device<'_>,
     plans: &Plans,
     to_pages: bool,
-    sources: &BTreeMap<u64, Vec<u8>>,
+    seeds: &Seeds,
 ) -> LabResult<u64> {
-    let (source_spans, destinations) = sides(bench, to_pages);
+    let poisons = match bench.layout {
+        Layout::Packed => &POISONS[..],
+        Layout::High => &POISONS[..1],
+    };
     let mut compared = 0;
-    for poison in POISONS {
-        let expected = oracle(bench, plans, to_pages, sources, &destinations, poison)?;
+    for &poison in poisons {
+        let expected = oracle(bench, plans, to_pages, seeds, poison)?;
         for arm in [Arm::Copies, Arm::Kernel] {
-            for span in &destinations {
-                device.fill(*span, poison)?;
+            for destination in &expected {
+                device.fill(destination.arena, poison)?;
             }
             device.arm(arm, plans, &device.session.stream)?;
             device
@@ -615,22 +1035,28 @@ fn compare(
                 .stream
                 .synchronize()
                 .map_err(|e| e.to_string())?;
-            for span in &destinations {
-                let observed = device.read(*span)?;
-                if let Some(at) = first_difference(&observed, &expected[&span.buffer.raw]) {
-                    return Err(format!(
-                        "{} arm differs from the oracle in buffer {} at byte {at} (poison {poison:#04x})",
-                        arm.name(),
-                        span.buffer.raw
-                    ));
-                }
-                compared += span.length;
+            for destination in &expected {
+                compared += device.verify(destination, poison).map_err(|error| {
+                    format!("{} arm, poison {poison:#04x}: {error}", arm.name())
+                })?;
             }
         }
     }
-    for span in &source_spans {
-        if device.read(*span)? != sources[&span.buffer.raw] {
-            return Err(format!("source buffer {} changed", span.buffer.raw));
+    if to_pages {
+        for (span, bytes) in &seeds.spans {
+            if device.read_span(*span)? != *bytes {
+                return Err(format!("source span {span:?} changed"));
+            }
+        }
+    } else {
+        let page_bytes = plans.table.page_bytes;
+        for (index, &id) in plans.ids.iter().enumerate() {
+            let at = index * page_bytes as usize;
+            if device.read_span(bench.page_span(id, page_bytes))?
+                != seeds.pages[at..at + page_bytes as usize]
+            {
+                return Err(format!("source page {id} changed"));
+            }
         }
     }
     Ok(compared)
@@ -650,26 +1076,39 @@ fn holder_name(holder: Holder) -> String {
     }
 }
 
+fn layout_name(layout: Layout) -> &'static str {
+    match layout {
+        Layout::Packed => "packed",
+        Layout::High => "high",
+    }
+}
+
 fn module(session: &Session) -> LabResult<runtime_cuda::Module> {
     let (_, bytes) =
         fold_cubin_for_symbol(SYMBOL).ok_or("the bundle embeds no snapshot copy cubin")?;
     session.load_cubin(bytes)
 }
 
+/// Every case: 90 packed, 15 high and 4 synthetic.
+const CASES: u64 = 109;
+
 /// Every case plans on the CPU: the bundle's ops prepare, the copies are
 /// the table's fragments, the kernel plan is one table upload and one
-/// launch of the embedded cubin's entry, its plan valid.
+/// launch of the embedded cubin's entry, its plan valid, and its arguments
+/// and uploaded table name exactly the device copies. The high layout's
+/// pages straddle 2 GiB and 4 GiB of the pool and its views' offsets pass
+/// 2 GiB and 4 GiB.
 #[test]
 fn inventory() {
     let (cubin, _) =
         fold_cubin_for_symbol(SYMBOL).expect("the bundle embeds the snapshot copy cubin");
     assert_eq!(cubin, bundle_kernel::CUBIN);
     let mut cases = 0;
-    for declared in DECLARED {
-        let bench = Bench::new(declared).unwrap();
+    for bench in benches().unwrap() {
+        let layout = bench.layout;
         for holder in bench.holders() {
             for &to_pages in directions(holder) {
-                for order in ORDERS {
+                for &order in bench.orders() {
                     let plans = plans(&bench, holder, order, to_pages).unwrap();
                     let (views, segments) = plans.table.segments(&bench.held).unwrap();
                     let op = if to_pages {
@@ -679,9 +1118,9 @@ fn inventory() {
                     };
                     let fragments = op.fragments(&plans.ids, &segments).unwrap();
                     assert_eq!(plans.copies.len(), fragments.len());
-                    // The launch and its uploaded table name the copies.
                     let arguments = plans.launch.arguments().unwrap();
                     let (table, bytes) = &plans.upload;
+                    assert_eq!(table.offset, TABLE_OFFSET);
                     let launched = launched_copies(&arguments, |read| {
                         assert_eq!(read, *table);
                         bytes.clone()
@@ -691,95 +1130,163 @@ fn inventory() {
                     assert!(views.len() as u32 == op.views && op.views <= 8);
                     assert_eq!(plans.launch.launch.plan.workspace_bytes, 0);
                     assert!(plans.launch.launch.plan.pdl);
+                    if layout == Layout::High {
+                        let page_bytes = plans.table.page_bytes;
+                        for boundary in [2 * GIB, 4 * GIB] {
+                            assert!(plans.ids.iter().any(|&id| {
+                                id * page_bytes < boundary && (id + 1) * page_bytes > boundary
+                            }));
+                        }
+                        // Views from below each boundary to past it.
+                        for (arena, boundary) in [(STATE, 4 * GIB), (SPARES, 2 * GIB)] {
+                            let named = views.iter().filter(|view| view.buffer.raw == arena);
+                            assert!(named.clone().all(|view| view.offset >= boundary - BELOW));
+                            if named.clone().next().is_some() {
+                                assert!(
+                                    named
+                                        .clone()
+                                        .any(|view| view.offset + view.length > boundary)
+                                );
+                            }
+                        }
+                    }
                     println!(
                         "snapshot_copy_inventory {}",
-                        json!({"state": bench.name(), "holder": holder_name(holder),
-                            "direction": if to_pages { "capture" } else { "restore" },
-                            "order": format!("{order:?}"), "pages": plans.ids.len(),
-                            "page_bytes": plans.table.page_bytes, "views": views.len(),
-                            "segments": segments.len(), "copies": plans.copies.len(),
-                            "table_bytes": plans.upload.1.len(),
-                            "grid": plans.launch.launch.plan.grid[0]})
+                        json!({"layout": layout_name(layout), "state": bench.name(),
+                                "holder": holder_name(holder),
+                                "direction": if to_pages { "capture" } else { "restore" },
+                                "order": format!("{order:?}"), "pages": plans.ids.len(),
+                                "page_bytes": plans.table.page_bytes, "views": views.len(),
+                                "view_offsets": views.iter().map(|view| view.offset).collect::<Vec<_>>(),
+                                "segments": segments.len(), "copies": plans.copies.len(),
+                                "table_bytes": plans.upload.1.len(),
+                                "grid": plans.launch.launch.plan.grid[0]})
                     );
                     cases += 1;
                 }
             }
         }
     }
-    // Six states, 18 holders, 30 holder directions, three page orders.
-    assert_eq!(cases, 90);
+    // Packed: six states, 30 holder directions, three page orders; high:
+    // 15 holder directions over straddling pages; synthetic: both
+    // directions over two page orders.
+    assert_eq!(cases, CASES);
     println!(
         "snapshot_copy_inventory_complete {}",
         json!({"cases": cases})
     );
 }
 
-/// The lab's oracle leaves what the copies plan, run on the host, leaves:
-/// a TP4 slot's capture and restore over scattered pages.
+/// The lab's oracle leaves what the copies plan, run on the host over the
+/// packed allocations, leaves: a TP4 slot's capture and restore over
+/// scattered pages, an anchor's capture, and the synthetic table's capture
+/// and restore.
 #[test]
 fn host_copies_match_the_oracle() {
-    let bench = Bench::new(DECLARED[1]).unwrap();
-    for to_pages in [true, false] {
-        let plans = plans(
-            &bench,
-            Holder::Slot(DECODE_BATCH - 1),
-            Order::Scattered,
-            to_pages,
-        )
-        .unwrap();
-        let (sources, destinations) = sides(&bench, to_pages);
-        let seeds = sources
+    let declared = Bench::new(DECLARED[1], Layout::Packed).unwrap();
+    let synthetic = Bench::synthetic().unwrap();
+    let cases = [
+        (&declared, Holder::Slot(DECODE_BATCH - 1), true),
+        (&declared, Holder::Slot(DECODE_BATCH - 1), false),
+        (&declared, Holder::Anchor(ANCHORS - 1), true),
+        (&synthetic, Holder::Slot(0), true),
+        (&synthetic, Holder::Slot(0), false),
+    ];
+    for (bench, holder, to_pages) in cases {
+        let plans = plans(bench, holder, Order::Scattered, to_pages).unwrap();
+        let seeds = seeds(bench, &plans, to_pages, 3, None).unwrap();
+        let fill = POISONS[0];
+        let expected = oracle(bench, &plans, to_pages, &seeds, fill).unwrap();
+        let mut arenas = bench
+            .arenas
             .iter()
-            .map(|span| (span.buffer.raw, seeded(span.length, span.buffer.raw)))
+            .map(|&(raw, bytes)| (raw, vec![0x5c; bytes as usize]))
             .collect::<BTreeMap<_, _>>();
-        let expected = oracle(&bench, &plans, to_pages, &seeds, &destinations, POISONS[0]).unwrap();
-        let mut copied = seeds.clone();
-        for span in &destinations {
-            copied.insert(span.buffer.raw, vec![POISONS[0]; span.length as usize]);
+        for destination in &expected {
+            arenas.get_mut(&destination.arena).unwrap().fill(fill);
+        }
+        let write =
+            |arenas: &mut BTreeMap<u64, Vec<u8>>, span: DeviceBufferSpanV1, bytes: &[u8]| {
+                arenas.get_mut(&span.buffer.raw).unwrap()
+                    [span.offset as usize..(span.offset + span.length) as usize]
+                    .copy_from_slice(bytes);
+            };
+        for (span, bytes) in &seeds.spans {
+            write(&mut arenas, *span, bytes);
+        }
+        let page_bytes = plans.table.page_bytes;
+        for (index, &id) in plans.ids.iter().enumerate() {
+            if !to_pages {
+                let at = index * page_bytes as usize;
+                let page = seeds.pages[at..at + page_bytes as usize].to_vec();
+                write(&mut arenas, bench.page_span(id, page_bytes), &page);
+            }
         }
         for &(from, to) in &plans.copies {
-            let bytes = copied[&from.buffer.raw]
+            let bytes = arenas[&from.buffer.raw]
                 [from.offset as usize..(from.offset + from.length) as usize]
                 .to_vec();
-            copied.get_mut(&to.buffer.raw).unwrap()
-                [to.offset as usize..(to.offset + to.length) as usize]
-                .copy_from_slice(&bytes);
+            write(&mut arenas, to, &bytes);
         }
-        for span in &destinations {
-            assert!(
-                copied[&span.buffer.raw] == expected[&span.buffer.raw],
-                "{to_pages}"
-            );
+        let mut moved = 0;
+        for destination in &expected {
+            destination
+                .check(0, &arenas[&destination.arena], fill)
+                .unwrap_or_else(|error| panic!("{holder:?} {to_pages}: {error}"));
+            moved += destination
+                .regions
+                .iter()
+                .map(|(_, bytes)| bytes.iter().filter(|&&byte| byte != fill).count())
+                .sum::<usize>();
         }
-        // Some bytes moved, and some stayed poisoned.
-        let moved = destinations
+        assert!(moved > 0, "{holder:?} {to_pages}");
+        // A wrong byte inside the snapshot, or a stray one outside it, shows.
+        for destination in expected
             .iter()
-            .map(|span| {
-                expected[&span.buffer.raw]
-                    .iter()
-                    .filter(|&&b| b != POISONS[0])
-                    .count()
-            })
-            .sum::<usize>();
-        assert!(moved > 0 && (moved as u64) < destinations.iter().map(|span| span.length).sum());
+            .filter(|expected| !expected.regions.is_empty())
+        {
+            let observed = &arenas[&destination.arena];
+            let (start, region) = &destination.regions[0];
+            let mut bytes = observed.clone();
+            bytes[*start as usize] = !region[0];
+            assert!(destination.check(0, &bytes, fill).is_err());
+            if let Some(at) = outside(destination, observed.len() as u64) {
+                let mut bytes = observed.clone();
+                bytes[at as usize] = !fill;
+                assert!(destination.check(0, &bytes, fill).is_err());
+            }
+        }
     }
 }
 
-/// Every case's destinations are bitwise the oracle's after both arms,
-/// under both poisons, and its sources unchanged.
+/// The first byte of an allocation of `length` that none of `expected`'s
+/// regions covers.
+fn outside(expected: &Expected, length: u64) -> Option<u64> {
+    let mut cursor = 0;
+    for (start, bytes) in &expected.regions {
+        if *start > cursor {
+            return Some(cursor);
+        }
+        cursor = cursor.max(start + bytes.len() as u64);
+    }
+    (cursor < length).then_some(cursor)
+}
+
+/// Every case's destination allocations are bitwise the oracle's after
+/// both arms, under each poison, and its sources unchanged.
 #[test]
 fn bitwise_gpu() {
-    kernel_harness::gpu_test(4 << 30, |s| {
+    kernel_harness::gpu_test(16 << 30, |s| {
         let module = module(s)?;
         let started = Instant::now();
         let mut cases = 0;
         let mut compared = 0;
-        for (index, declared) in DECLARED.into_iter().enumerate() {
-            let bench = Bench::new(declared)?;
+        for (index, bench) in benches()?.into_iter().enumerate() {
+            let layout = bench.layout;
             let device = Device::new(s, &bench, &module)?;
             for holder in bench.holders() {
                 for &to_pages in directions(holder) {
-                    for order in ORDERS {
+                    for &order in bench.orders() {
                         if started.elapsed().as_secs() >= BUDGET_SECONDS {
                             return Err(
                                 "the bitwise sweep exceeded its budget; coverage is incomplete"
@@ -787,15 +1294,16 @@ fn bitwise_gpu() {
                             );
                         }
                         let plans = plans(&bench, holder, order, to_pages)?;
-                        let (sources, _) = sides(&bench, to_pages);
-                        let seeds = seed(&device, &sources, index as u64 * 100 + cases)?;
+                        let salt = index as u64 * 100 + cases;
+                        let seeds = seeds(&bench, &plans, to_pages, salt, Some(&device))?;
                         let bytes = compare(&bench, &device, &plans, to_pages, &seeds)?;
                         println!(
                             "snapshot_copy_bitwise {}",
-                            json!({"state": bench.name(), "holder": holder_name(holder),
-                                "direction": if to_pages { "capture" } else { "restore" },
-                                "order": format!("{order:?}"), "copies": plans.copies.len(),
-                                "bytes_compared": bytes, "bitwise": true})
+                            json!({"layout": layout_name(layout), "state": bench.name(),
+                                    "holder": holder_name(holder),
+                                    "direction": if to_pages { "capture" } else { "restore" },
+                                    "order": format!("{order:?}"), "copies": plans.copies.len(),
+                                    "bytes_compared": bytes, "bitwise": true})
                         );
                         compared += bytes;
                         cases += 1;
@@ -803,8 +1311,8 @@ fn bitwise_gpu() {
                 }
             }
         }
-        if cases != 90 {
-            return Err(format!("only {cases} of 90 cases ran"));
+        if cases != CASES {
+            return Err(format!("only {cases} of {CASES} cases ran"));
         }
         let mut data = BTreeMap::new();
         data.insert("cases".into(), json!(cases));
@@ -989,13 +1497,12 @@ fn pair_gpu() {
             if started.elapsed().as_secs() >= PAIR_BUDGET_SECONDS {
                 return Err("the pair lab exceeded its budget; coverage is incomplete".into());
             }
-            let bench = Bench::new(declared)?;
+            let bench = Bench::new(declared, Layout::Packed)?;
             let mut device = Device::new(s, &bench, &module)?;
             let plans = plans(&bench, holder, Order::Scattered, to_pages)?;
             let paged_bytes = plans.table.pages() * plans.table.page_bytes;
             device.scratch = Some(s.allocate(paged_bytes as usize)?);
-            let (sources, _) = sides(&bench, to_pages);
-            let seeds = seed(&device, &sources, 7000 + index as u64)?;
+            let seeds = seeds(&bench, &plans, to_pages, 7000 + index as u64, Some(&device))?;
             compare(&bench, &device, &plans, to_pages, &seeds)?;
             let aa_before = pair(&device, &plans, [Arm::Copies, Arm::Copies])?;
             let ab = pair(&device, &plans, [Arm::Copies, Arm::Kernel])?;

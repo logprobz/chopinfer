@@ -1,5 +1,8 @@
 //! DSpark successor reuse against inline drafting on a real TP4 instance,
-//! bit for bit on every rank. Build before the GPU job.
+//! bit for bit on every rank. Build before the GPU job, with `--release`:
+//! the host loads and uploads the checkpoint in this binary, and the first
+//! debug run (2026-11-07) spent about 16 minutes before its first step,
+//! whose two arms of a case then took under a second.
 //!
 //! The package must be built with the bundle's `state-capture` feature,
 //! and `CHOPINFER_DSPARK_STATE_DIR` must name an empty directory: the test
@@ -23,6 +26,8 @@ use std::path::{Path, PathBuf};
 
 #[path = "dspark_successor/device.rs"]
 mod device;
+#[path = "../../bundle/src/fake_host_tests/dspark/successor_protocol.rs"]
+mod protocol;
 use device::{Capture, Fixture, Greedy, Item, Scheduled};
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -185,7 +190,7 @@ struct Arm {
     captures: BTreeMap<&'static str, Capture>,
     records: BTreeMap<&'static str, Value>,
     /// The queueing step's `successor.json`.
-    feedback: Value,
+    feedback: Vec<protocol::Accepted>,
 }
 
 fn verify(decoders: u32, inputs: &BTreeMap<u64, u32>, drafts: u32) -> Vec<Scheduled> {
@@ -205,13 +210,8 @@ fn each(decoders: u32, value: u32) -> BTreeMap<u64, u32> {
 }
 
 fn run_arm(fixture: &mut Fixture, case: &Case, inline: bool, output: &Path) -> Result<Arm> {
-    let off = fixture.root.join("successors-off");
-    if inline {
-        std::fs::write(&off, [])?;
-    } else if off.exists() {
-        std::fs::remove_file(&off)?;
-    }
-    let arm = output.join(if inline { "inline" } else { "reuse" });
+    protocol::select_arm(&fixture.root, inline)?;
+    let arm = protocol::arm_directory(output, inline);
     let mut captures = BTreeMap::new();
     let mut records = BTreeMap::new();
     let decoders = u64::from(case.decoders);
@@ -259,22 +259,16 @@ fn run_arm(fixture: &mut Fixture, case: &Case, inline: bool, output: &Path) -> R
         None,
     )?;
     fixture.commit(&each(case.decoders, 1))?;
-    let control = fixture.root.join("successor.json");
     let greedy = match case.acceptance {
         Forced(accepted) => {
             let items: Vec<_> = (1..=decoders)
-                .map(|request| json!({"request": request, "accepted": accepted, "bonus": FORCED_BONUS}))
+                .map(|request| (request, accepted, FORCED_BONUS))
                 .collect();
-            std::fs::write(
-                &control,
-                serde_json::to_vec(
-                    &json!({"version": 1, "allocated": case.allocated, "items": items}),
-                )?,
-            )?;
+            protocol::write_feedback(&fixture.root, case.allocated, &items)?;
             None
         }
         Natural => Some(Greedy {
-            path: control.clone(),
+            root: fixture.root.clone(),
             allocated: case.allocated,
         }),
     };
@@ -284,26 +278,15 @@ fn run_arm(fixture: &mut Fixture, case: &Case, inline: bool, output: &Path) -> R
         &verify(case.decoders, &each(case.decoders, QUEUE_INPUT), case.depth),
         greedy,
     )?;
-    let feedback: Value = serde_json::from_slice(&std::fs::read(&control)?)?;
-    std::fs::remove_file(&control)?;
-    let mut kept = BTreeMap::new();
-    let mut bonus = BTreeMap::new();
-    for item in feedback["items"]
-        .as_array()
-        .ok_or("feedback has no items")?
-    {
-        let request = item["request"]
-            .as_u64()
-            .ok_or("feedback item has no request")?;
-        let accepted = item["accepted"]
-            .as_u64()
-            .ok_or("feedback item has no acceptance")?;
-        kept.insert(request, accepted as u32 + 1);
-        bonus.insert(
-            request,
-            item["bonus"].as_u64().ok_or("feedback item has no bonus")? as u32,
-        );
-    }
+    let feedback = protocol::take_feedback(&fixture.root)?;
+    let kept: BTreeMap<u64, u32> = feedback
+        .iter()
+        .map(|&(request, accepted, _)| (request, accepted + 1))
+        .collect();
+    let bonus: BTreeMap<u64, u32> = feedback
+        .iter()
+        .map(|&(request, _, bonus)| (request, bonus))
+        .collect();
     fixture.commit(&kept)?;
     let mut items = Vec::new();
     match case.next {
@@ -358,20 +341,14 @@ fn run_arm(fixture: &mut Fixture, case: &Case, inline: bool, output: &Path) -> R
     })
 }
 
-/// The first byte at which `a` and `b` differ, if any.
-fn first_difference(a: &[u8], b: &[u8]) -> Option<usize> {
-    a.iter()
-        .zip(b)
-        .position(|(x, y)| x != y)
-        .or((a.len() != b.len()).then_some(a.len().min(b.len())))
-}
-
+/// Whether the arms match: the dumps of every step (the shared protocol's
+/// comparison) and each step's draft tokens and F32 logits.
 fn compare(output: &Path, case: &Case, reuse: &Arm, inline: &Arm) -> Result<()> {
     let label = case.label;
     if reuse.feedback != inline.feedback {
         return Err(format!("{label}: the arms decided different acceptance").into());
     }
-    for step in ["warm", "queue", "consume", "follow"] {
+    for step in protocol::STEPS {
         let (a, b) = (&reuse.captures[step], &inline.captures[step]);
         if a.drafts != b.drafts {
             return Err(format!("{label} {step}: draft tokens differ").into());
@@ -380,50 +357,26 @@ fn compare(output: &Path, case: &Case, reuse: &Arm, inline: &Arm) -> Result<()> 
             return Err(format!("{label} {step}: logits row counts differ").into());
         }
         for (row, (x, y)) in a.rows.iter().zip(&b.rows).enumerate() {
-            if let Some(at) = first_difference(x, y) {
+            if let Some(at) = protocol::first_difference(x, y) {
                 return Err(
                     format!("{label} {step}: logits row {row} differs at byte {at}").into(),
                 );
             }
         }
-        for rank in 0..4 {
-            for name in ["status", "drafts", "ring"] {
-                let file = format!("{name}-rank-{rank}.bin");
-                let x = std::fs::read(output.join("reuse").join(step).join(&file))?;
-                let y = std::fs::read(output.join("inline").join(step).join(&file))?;
-                if let Some(at) = first_difference(&x, &y) {
-                    return Err(format!("{label} {step}: {file} differs at byte {at}").into());
-                }
-            }
-        }
-        let (a, b) = (&reuse.records[step], &inline.records[step]);
-        if a["computed_positions"] != b["computed_positions"] || a["drafting"] != b["drafting"] {
-            return Err(format!("{label} {step}: heads or drafting items differ").into());
-        }
     }
-    let expected = [
-        ("queue", "queued", json!(true), json!(false)),
-        ("consume", "consumed", json!("reused"), json!("none")),
-        ("follow", "consumed", json!("none"), json!("none")),
-    ];
-    for (step, field, reused, drafted) in expected {
-        if reuse.records[step][field] != reused || inline.records[step][field] != drafted {
-            return Err(format!(
-                "{label} {step}: {field} is {} with the successor and {} inline",
-                reuse.records[step][field], inline.records[step][field]
-            )
-            .into());
-        }
-    }
-    Ok(())
+    Ok(protocol::compare_dumps(output)?)
 }
 
 fn run(extra: &[(&str, &str)]) -> Result<()> {
     gpu_guard()?;
-    let config: Config = serde_json::from_reader(std::fs::File::open(std::env::var(
-        "CHOPINFER_DEEPSEEK41_SUCCESSOR_TEST",
-    )?)?)?;
-    std::fs::create_dir(&config.output)?;
+    let path = PathBuf::from(
+        std::env::var_os("CHOPINFER_DEEPSEEK41_SUCCESSOR_TEST")
+            .ok_or("CHOPINFER_DEEPSEEK41_SUCCESSOR_TEST must name the test configuration")?,
+    );
+    let config: Config = serde_json::from_slice(&protocol::read(&path)?)
+        .map_err(|error| format!("{}: {error}", path.display()))?;
+    std::fs::create_dir(&config.output)
+        .map_err(|error| format!("{}: {error}", config.output.display()))?;
     let mut options = BTreeMap::from([
         (DSPARK_SUCCESSOR_ITEMS.to_owned(), "16".to_owned()),
         (DSPARK_SUCCESSOR_PREFILL.to_owned(), "true".to_owned()),
@@ -453,8 +406,9 @@ fn run(extra: &[(&str, &str)]) -> Result<()> {
         );
     }
     fixture.finish()?;
+    let receipt = config.output.join("receipt.json");
     std::fs::write(
-        config.output.join("receipt.json"),
+        &receipt,
         serde_json::to_vec_pretty(&json!({
             "schema": "chopinfer.deepseek41.dspark-successor-gpu.v1", "passed": true,
             "geometry": "flash", "tensor_parallel": 4, "model_options": options,
@@ -462,7 +416,8 @@ fn run(extra: &[(&str, &str)]) -> Result<()> {
                 rings, rank-0 draft tokens and F32 target logits, reuse against inline",
             "cases": receipts,
         }))?,
-    )?;
+    )
+    .map_err(|error| format!("{}: {error}", receipt.display()))?;
     Ok(())
 }
 
@@ -487,7 +442,7 @@ fn greedy_acceptance_breaks_ties_by_id_and_refuses_nonfinite_rows() {
     assert_eq!(device::maximum(&row).unwrap(), 1);
     assert!(device::maximum(&f32::NAN.to_le_bytes()).is_err());
     assert!(device::maximum(&[]).is_err());
-    assert_eq!(first_difference(b"abc", b"abd"), Some(2));
-    assert_eq!(first_difference(b"ab", b"abc"), Some(2));
-    assert_eq!(first_difference(b"ab", b"ab"), None);
+    assert_eq!(protocol::first_difference(b"abc", b"abd"), Some(2));
+    assert_eq!(protocol::first_difference(b"ab", b"abc"), Some(2));
+    assert_eq!(protocol::first_difference(b"ab", b"ab"), None);
 }

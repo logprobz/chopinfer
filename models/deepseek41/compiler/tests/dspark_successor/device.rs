@@ -43,9 +43,10 @@ pub struct Capture {
     pub rows: Vec<Vec<u8>>,
 }
 
-/// Each verify item's greedy acceptance, as `successor.json` names it.
+/// Each verify item's greedy acceptance, as `successor.json` in the
+/// capture directory `root` names it.
 pub struct Greedy {
-    pub path: PathBuf,
+    pub root: PathBuf,
     pub allocated: bool,
 }
 
@@ -83,15 +84,13 @@ impl Sink {
                 accepted += 1;
             }
             let bonus = maximum(&self.rows[&((first + accepted) as u32)])?;
-            items.push(json!({"request": request, "accepted": accepted, "bonus": bonus}));
+            items.push((request, accepted as u32, bonus));
         }
-        std::fs::write(
-            &greedy.path,
-            serde_json::to_vec(
-                &json!({"version": 1, "allocated": greedy.allocated, "items": items}),
-            )?,
-        )?;
-        Ok(())
+        Ok(protocol::write_feedback(
+            &greedy.root,
+            greedy.allocated,
+            &items,
+        )?)
     }
 }
 
@@ -200,11 +199,7 @@ impl Fixture {
             std::env::var_os("CHOPINFER_DSPARK_STATE_DIR")
                 .ok_or("CHOPINFER_DSPARK_STATE_DIR must name an empty capture directory")?,
         );
-        if std::fs::read_dir(&root)?.next().is_some() {
-            return Err("the capture directory must start empty".into());
-        }
-        std::fs::write(root.join("enabled"), [])?;
-        std::fs::write(root.join("successor-steps"), [])?;
+        protocol::start(&root)?;
         let arguments = vec![
             "serve".into(),
             "--bundle".into(),
@@ -484,28 +479,7 @@ impl Fixture {
     /// Moves the one step dump the bundle wrote since the last call to
     /// `destination`, returning its `step.json`.
     pub fn take_dump(&self, destination: &Path) -> Result<Value> {
-        let dumps: Vec<_> = std::fs::read_dir(&self.root)?
-            .map(|entry| Ok(entry?.path()))
-            .collect::<Result<Vec<_>>>()?
-            .into_iter()
-            .filter(|path| {
-                path.file_name()
-                    .and_then(|name| name.to_str())
-                    .is_some_and(|name| name.starts_with("successor-step-"))
-            })
-            .collect();
-        let [dump] = dumps.as_slice() else {
-            return Err(format!("expected one step dump, found {}", dumps.len()).into());
-        };
-        std::fs::create_dir_all(
-            destination
-                .parent()
-                .ok_or("dump destination has no parent")?,
-        )?;
-        std::fs::rename(dump, destination)?;
-        Ok(serde_json::from_slice(&std::fs::read(
-            destination.join("step.json"),
-        )?)?)
+        Ok(protocol::take_dump(&self.root, destination)?)
     }
 
     pub fn finish(mut self) -> Result<()> {

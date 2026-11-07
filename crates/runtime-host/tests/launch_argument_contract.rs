@@ -14,13 +14,13 @@ use std::rc::Rc;
 use runtime_bundle_abi::{
     BundleAbiError, BundleContextHandleV1, BundleCudaSymbolHandleV1, BundleDeviceBufferHandleV1,
     BundleMemoryPoolHandleV1, BundleStatusV1, BundleStreamHandleV1, DeviceBufferSpanV1,
-    HostServicesTableV1, KernelArgumentV1, LaunchClusterV1, LaunchConfigV1, TensorMapElementV1,
-    TensorMapSwizzleV1, TensorMapV1,
+    HostServicesTableV1, KernelArgumentV1, LaunchClusterV1, LaunchConfigV1, StateRequestV1,
+    TensorMapElementV1, TensorMapSwizzleV1, TensorMapV1,
 };
 use runtime_host::fake::FakeHostDeviceV1;
 use runtime_host::{
-    DeclaredKvContractV1, DeviceArgumentV1, HostInstanceConfigV1, HostServicesV1Backend,
-    HostTopologyV1,
+    DeclaredKvContractV1, DeclaredStateContractV1, DeviceArgumentV1, HostInstanceConfigV1,
+    HostServicesV1Backend, HostTopologyV1,
 };
 use runtime_kv::{DeclaredPageLayoutV1, RankPlacementV1, StateLifetimeV1};
 
@@ -28,6 +28,9 @@ const MODULE: &[u8] = b"fake-module-image";
 const SYMBOL: &[u8] = b"fake_entry_v1";
 /// The span every argument below is cut from, in bytes.
 const ARENA_BYTES: u64 = 65_536;
+/// The request state the host allocates for a bundle, in bytes.
+const STATE_ID: &[u8] = b"fake-request-state";
+const STATE_BYTES: u64 = 4_096;
 
 fn page_layout() -> DeclaredPageLayoutV1 {
     DeclaredPageLayoutV1::new(
@@ -73,6 +76,11 @@ fn harness() -> HarnessV1 {
     .with_kv_contract(DeclaredKvContractV1::new(
         b"paged-kv-layout".to_vec(),
         page_layout(),
+    ))
+    .with_state_contract(DeclaredStateContractV1::new(
+        STATE_ID.to_vec(),
+        STATE_BYTES,
+        256,
     ));
     let backend = Rc::new(HostServicesV1Backend::new(FakeHostDeviceV1::new(), config));
     let table = HostServicesTableV1::new(Rc::clone(&backend));
@@ -223,6 +231,67 @@ fn an_address_array_slot_reaching_past_its_allocation_reaches_no_backend() {
         BundleAbiError::Status(BundleStatusV1::InvalidArgument)
     );
     assert!(harness.recorded().is_empty());
+}
+
+#[test]
+fn a_state_view_is_a_device_buffer_argument_but_never_an_address_array_slot() {
+    // A request's state belongs to the host, which records it without an
+    // origin context. An address array slot may name only memory whose
+    // context the instance can check, so a state view there is refused before
+    // anything resolves, beside a slot the bundle allocated. The same view as
+    // a device-buffer argument is resolved and bounds checked like any span.
+    let harness = harness();
+    let services = harness.table.caller();
+    let state = services
+        .allocate_state(&StateRequestV1 {
+            flags: 0,
+            byte_length: STATE_BYTES,
+            alignment: 256,
+            state_id: STATE_ID.to_vec(),
+        })
+        .expect("a request state");
+    let view = services
+        .resolve_state_view(state, 0)
+        .expect("rank 0's state view");
+    let piece = DeviceBufferSpanV1::new(view.buffer, view.offset + 64, 128);
+    for slots in [
+        vec![Some(piece)],
+        vec![Some(harness.span(0, 16)), Some(piece), None],
+    ] {
+        assert_eq!(
+            harness.launch(&[KernelArgumentV1::DevicePointerArray(slots)]),
+            BundleAbiError::Status(BundleStatusV1::InvalidArgument)
+        );
+    }
+    assert!(harness.recorded().is_empty());
+
+    assert_eq!(
+        harness.host_status(&[
+            KernelArgumentV1::DeviceBuffer(piece),
+            KernelArgumentV1::NullDevicePointer,
+            KernelArgumentV1::DeviceBuffer(harness.span(0, 16)),
+        ]),
+        BundleStatusV1::Unsupported
+    );
+    let recorded = harness.recorded();
+    let [arguments] = recorded.as_slice() else {
+        panic!("one launch reached the backend: {recorded:?}");
+    };
+    let DeviceArgumentV1::Range(range) = &arguments[0] else {
+        panic!("the state view resolved to a range: {arguments:?}");
+    };
+    assert_eq!((range.offset, range.length), (view.offset + 64, 128));
+    assert_eq!(arguments[1], DeviceArgumentV1::NullDevicePointer);
+    // Past its bytes, the view is refused as any device buffer is.
+    assert_eq!(
+        harness.launch(&[KernelArgumentV1::DeviceBuffer(DeviceBufferSpanV1::new(
+            view.buffer,
+            view.offset + view.length - 64,
+            128,
+        ))]),
+        BundleAbiError::Status(BundleStatusV1::InvalidArgument)
+    );
+    services.release_state(state).expect("the state goes back");
 }
 
 #[test]

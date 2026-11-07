@@ -269,11 +269,22 @@ counters cover the image's lifetime, so do not divide them by upload seconds.
 when comparing startup times. `tools/dev/startup_timing.py` summarizes a
 startup log. Validated weight plans, metadata only, are reused from the model
 cache's `weight-plans-v1` directory; `CHOPINFER_WEIGHT_PLAN_CACHE` names
-another absolute private directory, or `0` disables reuse. Tensor payloads
-are still read and validated on every start. Views mapped
-from the checkpoint stay in the page cache, not pinned memory; `mapped_bytes`
-and the `prewarm_*` fields describe them. `prewarm_resident_bytes` is omitted
-when residency is hidden. `host-ram-short` warns when
+another absolute private directory, or `0` disables reuse. A weight census
+reads tensor bytes (about 17 GB of expert scales for DeepSeek V4.1 Flash), so
+its counts are reused from `weight-census-v1` only for the same checkpoint
+headers, the same file stamps (device, inode, length, modification and change
+times), the same census and the same host transform implementation, and are
+stored only from files unchanged during the measurement and at least two
+seconds older than it; `CHOPINFER_WEIGHT_CENSUS_CACHE` names another
+directory the same way, or `0` measures every start. `startup weight_census`
+reports `cache_hit` and `bytes_read` (zero on a hit), and
+`startup weight_plan` splits its `seconds` into `census_seconds` (within
+`plan_seconds`) and `validation_seconds`. A loaded image's tensor payloads
+are still read and validated, and a load refuses counts that differ from the
+bytes it encodes. Views mapped from the checkpoint stay in the page cache,
+not pinned memory; `mapped_bytes` and the `prewarm_*` fields describe them.
+`prewarm_resident_bytes` is omitted when residency is hidden.
+`host-ram-short` warns when
 `MemAvailable` cannot hold the prewarmed views plus a 16 GiB margin
 (`CHOPINFER_PREWARM_MARGIN_BYTES`).
 

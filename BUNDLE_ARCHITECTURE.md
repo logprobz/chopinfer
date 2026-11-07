@@ -281,8 +281,11 @@ capability. The census names the raw sections it may encode. The host
 measures them on the CPU and returns the counts, with the census digest, in
 the rank's plan request, and the plan then sizes the encoded sections from
 those counts. The host stores the encoding of each validated raw section and
-refuses counts that no longer match the data. A request without counts plans
-every section raw, and so does a host started with `CHOPINFER_WEIGHT_CENSUS=0`.
+refuses counts that no longer match the data. It reuses counts it measured
+for the same census over the same, unchanged checkpoint files
+([weight-loading counters](docs/operations-observability.md#weight-loading-counters)).
+A request without counts plans every section raw, and so does a host started
+with `CHOPINFER_WEIGHT_CENSUS=0`.
 The only encoding today is `scale-row-offset-v1` for one-byte block scales
 (`kernel_core::precision::scale_offset`); the bundle expands an encoded bank
 into its raw layout on the device before the bank's consumers read it.

@@ -1125,9 +1125,12 @@ impl PlannedImageV1 {
         > = BTreeMap::new();
         let mut offsets = Vec::with_capacity(count);
         let mut next = 0_u64;
-        // Each rank's records are checked and prepared, and its identity
-        // digested, on its own thread; grouping shared records stays in rank
-        // order, so the result does not depend on the threads.
+        // Each rank's identity is digested on its own thread, and its records
+        // are checked and prepared in consecutive parts, one thread each, as
+        // many parts as the process has CPUs per rank. Parts join in record
+        // order and grouping shared records stays in rank order, so neither
+        // the result nor the first error reported depends on the threads.
+        let parts = (process_cpus_v1() / count).max(1);
         let prepared_ranks = std::thread::scope(|scope| {
             let handles: Vec<_> = plans
                 .iter()
@@ -1135,27 +1138,44 @@ impl PlannedImageV1 {
                     let checkpoint = &checkpoint;
                     let implementation = &implementation;
                     let unproduced = &unproduced[plan.rank as usize];
-                    scope.spawn(move || -> Result<_, String> {
-                        let identity = runtime_weights::sha256_bytes(
+                    let identity = scope.spawn(move || {
+                        runtime_weights::sha256_bytes(
                             &plan.identity_document(&checkpoint.identity, implementation),
-                        );
-                        let records = plan
-                            .records
-                            .iter()
-                            .enumerate()
-                            .filter(|(index, _)| !unproduced.contains(index))
-                            .map(|(_, record)| prepare_record_v1(checkpoint, transform, record))
-                            .collect::<Result<Vec<_>, String>>()?;
-                        Ok((identity, records))
-                    })
+                        )
+                    });
+                    let length = plan.records.len().div_ceil(parts).max(1);
+                    let prepared: Vec<_> = plan
+                        .records
+                        .chunks(length)
+                        .enumerate()
+                        .map(|(part, records)| {
+                            scope.spawn(move || {
+                                records
+                                    .iter()
+                                    .enumerate()
+                                    .filter(|(index, _)| {
+                                        !unproduced.contains(&(part * length + index))
+                                    })
+                                    .map(|(_, record)| {
+                                        prepare_record_v1(checkpoint, transform, record)
+                                    })
+                                    .collect::<Result<Vec<_>, String>>()
+                            })
+                        })
+                        .collect();
+                    (identity, prepared)
                 })
                 .collect();
+            let panicked = |_| "record preparation panicked".to_owned();
             handles
                 .into_iter()
-                .map(|handle| {
-                    handle
-                        .join()
-                        .unwrap_or_else(|_| Err("record preparation panicked".into()))
+                .map(|(identity, prepared)| {
+                    let identity = identity.join().map_err(panicked)?;
+                    let mut records = Vec::new();
+                    for part in prepared {
+                        records.extend(part.join().map_err(panicked)??);
+                    }
+                    Ok((identity, records))
                 })
                 .collect::<Result<Vec<_>, String>>()
         })?;
@@ -3866,6 +3886,61 @@ mod tests {
         );
         assert_eq!(request.documents[2].bytes, [7_u8; 100]);
         WeightPlanRequestV1::decode(&request.encode()).unwrap();
+    }
+
+    /// Records are prepared in parts on several threads, yet the image keeps
+    /// their order and reports the first refused record in plan order.
+    #[test]
+    fn record_preparation_keeps_plan_order_across_parts() {
+        let data = bytes(64, 3);
+        let root = checkpoint(&[("t", "U8", vec![64], data.clone())]);
+        let checkpoint = Arc::new(DirectCheckpointV1::open(&root.0).unwrap());
+        let image = |missing: &[u64]| {
+            let records = (0..64)
+                .map(|index| {
+                    let tensor = if missing.contains(&index) {
+                        format!("missing-{index}")
+                    } else {
+                        "t".to_owned()
+                    };
+                    record(
+                        index * 64,
+                        64,
+                        WeightTransform::Copy,
+                        &tensor,
+                        None,
+                        vec![],
+                        vec![64],
+                    )
+                })
+                .collect();
+            PlannedImageV1::new(
+                checkpoint.clone(),
+                vec![WeightPlanV1 {
+                    image_role: "r".into(),
+                    ranks: 1,
+                    rank: 0,
+                    alignment: 64,
+                    arena_bytes: 64 * 64,
+                    views: vec![],
+                    components: vec![],
+                    records,
+                }],
+                None,
+                implementation_v1([0; 32]),
+                DirectLoadOptionsV1 {
+                    threads_per_rank: 1,
+                    read_ahead: false,
+                    direct_reads: false,
+                    shared_bytes: DirectLoadOptionsV1::SHARED_BYTES_DEFAULT,
+                },
+            )
+        };
+        let error = image(&[60, 5, 33]).unwrap_err();
+        assert!(error.contains("tensor missing-5 is not in"), "{error}");
+        let mut output = vec![0; 64 * 64];
+        image(&[]).unwrap().read(0, &mut output).unwrap();
+        assert_eq!(output, data.repeat(64));
     }
 
     /// Plans `ranks` ranks that each keep their equal K slice of every

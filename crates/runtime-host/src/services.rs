@@ -2180,6 +2180,12 @@ impl<D: HostDeviceBackendV1> HostServicesV1Backend<D> {
                     },
                 )?;
             }
+            // The step's execution needs these pages, so this wait for the
+            // rank's zeroing and copies, and the work queued before them, is
+            // a device wait of the step.
+            let _profile = runtime_engine::profile::PhaseTimer::new(
+                runtime_engine::profile::StepPhase::DeviceWait,
+            );
             state.device.synchronize_stream(stream)?;
         }
         Ok(())

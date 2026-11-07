@@ -838,6 +838,44 @@ fn serving_pool_copies_whole_shared_pages_before_execute() {
     }
 }
 
+/// Preparing a step's serving pages waits on each rank for their zeroing and
+/// copies, and that wait is a device wait of the traced step; a batch with no
+/// page work waits for nothing.
+#[test]
+fn serving_page_preparation_waits_are_device_waits() {
+    use runtime_engine::profile;
+    let (table, backend) = serving_table(Some(4));
+    let host = table.caller();
+    serving_ranks(host);
+    host.acquire_serving_kv(LAYOUT_ID).unwrap();
+    let mut logical = KvPool::new(KvGeometry::new(8, 4).unwrap(), 2).unwrap();
+    let source = logical.create_sequence(16).unwrap();
+    logical.append(source, 3).unwrap();
+    let mut alone = KvPool::new(KvGeometry::new(8, 4).unwrap(), 2).unwrap();
+    let sequence = alone.create_sequence(16).unwrap();
+    alone.append(sequence, 3).unwrap();
+    let plain = alone.prepare_append_batch(&[(sequence, 1)]).unwrap();
+    assert!(plain.appends()[0].copy().is_none());
+    let step = profile::TraceTotals::begin();
+    backend.prepare_serving_batch(&plain).unwrap();
+    let waits = profile::device_waits();
+    drop(step);
+    assert_eq!(waits.first_started, None, "no page work, no wait");
+    let child = logical.fork(source, 16).unwrap();
+    let shared = logical.prepare_append_batch(&[(child, 1)]).unwrap();
+    assert!(shared.appends()[0].copy().is_some());
+    let step = profile::TraceTotals::begin();
+    let called = std::time::Instant::now();
+    backend.prepare_serving_batch(&shared).unwrap();
+    let returned = std::time::Instant::now();
+    let waits = profile::device_waits();
+    drop(step);
+    for instant in [waits.first_started, waits.last_ended] {
+        let instant = instant.expect("the page copies were waited for");
+        assert!(called <= instant && instant <= returned);
+    }
+}
+
 #[test]
 fn a_kv_append_prepares_commits_and_releases_in_reverse_order() {
     let (table, backend) = table();

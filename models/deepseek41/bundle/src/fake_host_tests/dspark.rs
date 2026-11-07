@@ -23,6 +23,7 @@ mod mixed_engram;
 mod native_package;
 mod phased_reduce;
 mod prefetch;
+mod prefill_successor;
 mod results;
 mod retention;
 mod round_trips;

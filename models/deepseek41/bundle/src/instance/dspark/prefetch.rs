@@ -387,3 +387,42 @@ pub(crate) fn rings_for_test(
             .collect()
     })
 }
+
+/// The instance's committed ring writes after adding `add`, a stand-in
+/// for a committed writer that leaves the drafter state unchanged.
+#[cfg(test)]
+pub(crate) fn ring_writes_for_test(handle: runtime_bundle_abi::BundleHandleV1, add: u64) -> u64 {
+    crate::instance::INSTANCES.with(|table| {
+        let mut table = table.borrow_mut();
+        let device = table
+            .get_mut(handle)
+            .and_then(|instance| instance.dspark.as_ref())
+            .expect("drafter");
+        let writes = &device.prefetch.ring_writes;
+        writes.set(writes.get() + add);
+        writes.get()
+    })
+}
+
+/// Each rank's draft IDs and confidence the target reads, and the heads
+/// the drafter last reported.
+#[cfg(test)]
+pub(crate) fn draft_outputs_for_test(
+    handle: runtime_bundle_abi::BundleHandleV1,
+) -> (Vec<(Span, Span)>, u32) {
+    crate::instance::INSTANCES.with(|table| {
+        let mut table = table.borrow_mut();
+        let device = table
+            .get_mut(handle)
+            .and_then(|instance| instance.dspark.as_ref())
+            .expect("drafter");
+        (
+            device
+                .ranks
+                .iter()
+                .map(|rank| (rank.draft_ids, rank.confidence))
+                .collect(),
+            device.computed_positions,
+        )
+    })
+}

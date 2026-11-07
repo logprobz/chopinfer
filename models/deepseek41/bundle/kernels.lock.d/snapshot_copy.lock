@@ -14,12 +14,46 @@
     "defines": [],
     "entries": [
       {
-        "symbol": "chop_snapshot_copy_v1",
+        "symbol": "chop_snapshot_copy_v2",
         "params": [
           {
-            "kind": "PointerArray",
-            "name": "views",
-            "slots": 8,
+            "kind": "DevicePointer",
+            "name": "view_0",
+            "cxx_type": "uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "view_1",
+            "cxx_type": "uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "view_2",
+            "cxx_type": "uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "view_3",
+            "cxx_type": "uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "view_4",
+            "cxx_type": "uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "view_5",
+            "cxx_type": "uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "view_6",
+            "cxx_type": "uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "view_7",
             "cxx_type": "uint8_t"
           },
           {
@@ -54,10 +88,10 @@
         "allowed_local_bytes": 0
       }
     ],
-    "cubin_sha256": "625bdbb439bbc911f8242713436a9e0ce5dc032697abc9cdd57a4f3bf7494859",
+    "cubin_sha256": "d5697450d2d61485d33b20d4f29d786dcc3147add50f7cc2ea7978b266f0d041",
     "resources": [
       {
-        "symbol": "chop_snapshot_copy_v1",
+        "symbol": "chop_snapshot_copy_v2",
         "registers": 40,
         "shared_static_bytes": 0,
         "local_bytes": 0,

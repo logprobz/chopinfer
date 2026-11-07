@@ -9,7 +9,7 @@ each `length` bytes at `offset` of one of up to eight bound views, at
 snapshot byte `at`. One launch per rank moves every segment a snapshot
 table covers, in place of one device copy per piece and page fragment.
 
-- `copy<Views>` (`copy.cuh`, grid `[pages * page_bytes / 16 / 256]`, 256
+- `copy` (`copy.cuh`, grid `[pages * page_bytes / 16 / 256]`, 256
   threads) gives each thread one 16-byte vector of the snapshot's bytes.
   The thread finds the first segment that ends past its vector by binary
   search over the segments, which the host keeps in snapshot order and
@@ -19,6 +19,12 @@ table covers, in place of one device copy per piece and page fragment.
   moves as one 16-byte access; every other part (an unaligned segment, a
   byte tail, a vector two segments share) moves byte by byte. Threads past
   the last segment, and over the header the host writes, return.
+
+Each of the eight views is its own device-pointer parameter, null past the
+views the table binds. Views are often spans of a request's state, which the
+host owns and records without an origin context, so it refuses them in a
+by-value pointer array (meant for peer addresses) but resolves them as
+ordinary device buffers.
 
 The launch is PDL: it releases dependents and waits before reading the
 table, the views or the pages. It writes only the bytes the segments name,

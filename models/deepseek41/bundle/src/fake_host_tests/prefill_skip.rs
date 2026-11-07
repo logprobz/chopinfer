@@ -349,11 +349,11 @@ fn shared_prefix_endpoint(kernel: bool) {
             ),
             (true, true) => (
                 "flash-tp4-dspark-shared-anchor-snapshot-kernel.journal",
-                (78146, 0x027c692bfed0ef6d),
+                (78146, 0x75bb4a39d10caaa1),
             ),
             (false, true) => (
                 "flash-tp4-ar-shared-anchor-snapshot-kernel.journal",
-                (75200, 0x73a8558a014c0b85),
+                (75200, 0xed54dc049117bc75),
             ),
         };
         if let Err(error) =

@@ -663,13 +663,6 @@ impl<'a> Device<'a> {
         self.arena(span.buffer.raw)
     }
 
-    /// The device address of `span`'s first byte, as the host resolves it.
-    fn address(&self, span: DeviceBufferSpanV1) -> LabResult<u64> {
-        self.buffer(span)?
-            .device_address_at(span.offset as usize, span.length as usize)
-            .map_err(|e| e.to_string())
-    }
-
     /// The device copies, as the host issues them.
     fn copies(&self, plans: &Plans, stream: &Stream) -> LabResult<()> {
         for &(from, to) in &plans.copies {
@@ -706,23 +699,10 @@ impl<'a> Device<'a> {
     }
 
     /// The launch of the bound plan's ABI arguments, each span the address
-    /// of its first byte and each pointer array's slots resolved alike, as
-    /// the served host launches them.
+    /// of its first byte and each unused view slot null, as the served host
+    /// launches them.
     fn launch(&self, plans: &Plans, stream: &Stream) -> LabResult<()> {
         let arguments = plans.launch.arguments().map_err(refused)?;
-        let arrays = arguments
-            .iter()
-            .filter_map(|argument| match argument {
-                KernelArgumentV1::DevicePointerArray(slots) => Some(
-                    slots
-                        .iter()
-                        .map(|slot| slot.map_or(Ok(0), |span| self.address(span)))
-                        .collect::<LabResult<Vec<_>>>(),
-                ),
-                _ => None,
-            })
-            .collect::<LabResult<Vec<_>>>()?;
-        let mut arrays = arrays.iter();
         let mut values = Vec::with_capacity(arguments.len());
         for argument in &arguments {
             values.push(match argument {
@@ -731,9 +711,6 @@ impl<'a> Device<'a> {
                     offset: span.offset as usize,
                     byte_len: span.length as usize,
                 },
-                KernelArgumentV1::DevicePointerArray(_) => {
-                    KernelArgument::DevicePointerArray(arrays.next().ok_or("a pointer array")?)
-                }
                 KernelArgumentV1::ScalarU32(value) => KernelArgument::U32(*value),
                 KernelArgumentV1::ScalarU64(value) => KernelArgument::U64(*value),
                 KernelArgumentV1::ScalarI32(value) => KernelArgument::I32(*value),

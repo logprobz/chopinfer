@@ -251,22 +251,35 @@ pub fn launched_copies(
     arguments: &[KernelArgumentV1],
     read: impl FnOnce(DeviceBufferSpanV1) -> Vec<u8>,
 ) -> Result<Vec<(DeviceBufferSpanV1, DeviceBufferSpanV1)>, Refusal> {
+    let not_a_launch = Refusal("not a snapshot copy launch");
+    let (slots, rest) = arguments
+        .split_at_checked(MAX_VIEWS as usize)
+        .ok_or(not_a_launch)?;
     let [
-        KernelArgumentV1::DevicePointerArray(views),
         KernelArgumentV1::DeviceBuffer(pool),
         KernelArgumentV1::DeviceBuffer(table),
         KernelArgumentV1::ScalarU32(segments),
         KernelArgumentV1::ScalarU32(pages),
         KernelArgumentV1::ScalarU64(page_bytes),
         KernelArgumentV1::ScalarU32(to_pages),
-    ] = arguments
+    ] = rest
     else {
-        return Err(Refusal("not a snapshot copy launch"));
+        return Err(not_a_launch);
     };
-    let views = views
+    // The views lead, each its own device buffer, then null to the eighth.
+    let views = slots
         .iter()
-        .map(|view| view.ok_or(Refusal("a snapshot copy view is null")))
-        .collect::<Result<Vec<_>, _>>()?;
+        .map_while(|slot| match slot {
+            KernelArgumentV1::DeviceBuffer(view) => Some(*view),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    if slots[views.len()..]
+        .iter()
+        .any(|slot| !matches!(slot, KernelArgumentV1::NullDevicePointer))
+    {
+        return Err(Refusal("a snapshot copy's views lead its null slots"));
+    }
     let op = SnapshotCopy {
         direction: if *to_pages != 0 {
             Direction::ToPages

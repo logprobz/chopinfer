@@ -298,6 +298,29 @@ fn a_launch_moves_exactly_the_tables_device_copies() {
                 .copies(0..usize::MAX, &held(&state), &pages, to_pages)
                 .unwrap();
             assert_eq!(copies, expected, "{holder:?} {to_pages}");
+            // Each view is its own device buffer, then null to the eighth:
+            // a host refuses a by-value address array naming a state span.
+            let (views, rest) = arguments.split_at(MAX_VIEWS as usize);
+            let bound = views
+                .iter()
+                .take_while(|view| matches!(view, KernelArgumentV1::DeviceBuffer(_)))
+                .count();
+            assert!(bound >= 2, "{arguments:?}");
+            assert!(
+                views[bound..]
+                    .iter()
+                    .all(|view| *view == KernelArgumentV1::NullDevicePointer)
+            );
+            assert!(rest.iter().all(|argument| !matches!(
+                argument,
+                KernelArgumentV1::DevicePointerArray(_) | KernelArgumentV1::NullDevicePointer
+            )));
+            let mut gapped = arguments.clone();
+            gapped[0] = KernelArgumentV1::NullDevicePointer;
+            assert_eq!(
+                launched_copies(&gapped, |_| bytes.clone()),
+                Err(Refusal("a snapshot copy's views lead its null slots"))
+            );
             // Some pieces cross pages.
             assert!(expected.len() > table.descriptors.len());
         }

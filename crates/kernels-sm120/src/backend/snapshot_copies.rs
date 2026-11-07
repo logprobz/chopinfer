@@ -24,7 +24,7 @@ pub(super) fn snapshot_copy(
     let copy = Copy::new(*op, need.capacity, &symbol)?;
     check_plan(&copy.plan()?)?;
     let op = SnapshotCopyOp {
-        info: OpInfo::new("sm120.snapshot.copy.v1", guarantees, vec![(symbol, 0)]),
+        info: OpInfo::new("sm120.snapshot.copy.v2", guarantees, vec![(symbol, 0)]),
         copy,
     };
     need.check(&op.info)?;
@@ -148,7 +148,7 @@ mod tests {
         for direction in [Direction::ToPages, Direction::FromPages] {
             let op = op(direction);
             let prepared = shared().snapshot_copy(&op, Need::rows(84)).unwrap();
-            assert_eq!(prepared.info().implementation, "sm120.snapshot.copy.v1");
+            assert_eq!(prepared.info().implementation, "sm120.snapshot.copy.v2");
             assert_eq!(prepared.info().guarantees, INVARIANCE);
             assert_eq!(prepared.info().symbols, [(SYMBOL.to_owned(), 0)]);
             let full = buffers(op.table_bytes(84).unwrap());

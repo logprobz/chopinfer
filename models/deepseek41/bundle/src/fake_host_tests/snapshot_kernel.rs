@@ -318,31 +318,31 @@ const KERNEL_JOURNALS: [(&str, KvStorage, (usize, u64)); 6] = [
     (
         "deepseek41-flash-tp1",
         KvStorage::Native,
-        (15530, 0x29f7335e333d1126),
+        (15530, 0x57f82e95cf5ad48d),
     ),
     (
         "deepseek41-flash-tp1",
         KvStorage::Bf16,
-        (15384, 0xcac404178240be70),
+        (15384, 0x7b557b2e0e5340f1),
     ),
     (
         "deepseek41-flash-tp2",
         KvStorage::Native,
-        (30985, 0x000e95084ddb42cf),
+        (30985, 0x9bd4eb665c9886f3),
     ),
     (
         "deepseek41-flash-tp2",
         KvStorage::Bf16,
-        (30693, 0x0c75b58efb5ba8e3),
+        (30693, 0x5e0a2d315fd28dcb),
     ),
     (
         "deepseek41-flash-tp4",
         KvStorage::Native,
-        (76821, 0x16235ecfd35b978b),
+        (76821, 0x0187e258db1715bd),
     ),
     (
         "deepseek41-flash-tp4",
         KvStorage::Bf16,
-        (75201, 0x8a84acb7af55eb6b),
+        (75201, 0x5429dc6d559b568b),
     ),
 ];

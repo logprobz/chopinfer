@@ -202,7 +202,7 @@ fn prefix_capture_catch_up(kernel: bool) {
     let (name, expected) = if kernel {
         (
             "flash-tp4-dspark-prefix-capture-snapshot-kernel.journal",
-            (40296, 0x49f4b18e3bcd732b),
+            (40296, 0xc37ff480477a2b73),
         )
     } else {
         (

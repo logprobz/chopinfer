@@ -20,8 +20,11 @@ pub const THREADS: u32 = 256;
 /// Bytes of the vector each thread moves; pages hold whole vectors.
 pub const VECTOR_BYTES: u64 = 16;
 /// The shared entry.
-pub const SYMBOL: &str = "chop_snapshot_copy_v1";
-/// Slots of the entry's view pointer array: every view a table may name.
+pub const SYMBOL: &str = "chop_snapshot_copy_v2";
+/// View parameters of the entry: every view a table may name, each an
+/// ordinary device pointer, null past the op's views. Views are often spans
+/// of a request's state, which a host owns and refuses in a by-value pointer
+/// array, so the entry takes none.
 pub const VIEW_SLOTS: u8 = MAX_VIEWS as u8;
 /// What a launch keeps: it moves bytes and computes nothing, so every byte
 /// it writes is its source byte at any segment count up to the most an
@@ -47,33 +50,32 @@ impl Entry {
             name: name.into(),
             cxx_type: cxx_type.into(),
         };
-        EntrySpec::new(
-            self.symbol.clone(),
-            vec![
-                EntryParam::PointerArray {
-                    name: "views".into(),
-                    slots: VIEW_SLOTS,
-                    cxx_type: "uint8_t".into(),
-                },
-                pointer("pool", "uint8_t"),
-                pointer("table", "const uint64_t"),
-                EntryParam::U32 {
-                    name: "segments".into(),
-                },
-                EntryParam::U32 {
-                    name: "pages".into(),
-                },
-                EntryParam::U64 {
-                    name: "page_bytes".into(),
-                },
-                EntryParam::U32 {
-                    name: "to_pages".into(),
-                },
-            ],
-            "chop::snapshot::copy(views,pool,table,segments,pages,page_bytes,to_pages);".into(),
-            THREADS,
-            1,
-        )
+        let views = (0..VIEW_SLOTS).map(|slot| format!("view_{slot}"));
+        let mut params = views
+            .clone()
+            .map(|name| pointer(&name, "uint8_t"))
+            .collect::<Vec<_>>();
+        params.extend([
+            pointer("pool", "uint8_t"),
+            pointer("table", "const uint64_t"),
+            EntryParam::U32 {
+                name: "segments".into(),
+            },
+            EntryParam::U32 {
+                name: "pages".into(),
+            },
+            EntryParam::U64 {
+                name: "page_bytes".into(),
+            },
+            EntryParam::U32 {
+                name: "to_pages".into(),
+            },
+        ]);
+        let body = format!(
+            "chop::snapshot::copy(chop::snapshot::Views{{{}}},pool,table,segments,pages,page_bytes,to_pages);",
+            views.collect::<Vec<_>>().join(",")
+        );
+        EntrySpec::new(self.symbol.clone(), params, body, THREADS, 1)
     }
 }
 
@@ -179,7 +181,7 @@ impl Copy {
     }
 
     /// The arguments of a launch of `segments` segments over the bound
-    /// `views` (in view order), `pool` and `table`.
+    /// `views` (in view order, then null to the eighth), `pool` and `table`.
     pub fn arguments(
         &self,
         views: &[u64],
@@ -200,8 +202,12 @@ impl Copy {
                 "a snapshot copy's views, pool and table are distinct buffers",
             ));
         }
-        let args = ArgumentList(vec![
-            Argument::DevicePointerArray(views.to_vec()),
+        let mut args = views
+            .iter()
+            .map(|&view| Argument::DeviceBuffer(view))
+            .collect::<Vec<_>>();
+        args.resize(usize::from(VIEW_SLOTS), Argument::NullDevicePointer);
+        args.extend([
             Argument::DeviceBuffer(pool),
             Argument::DeviceBuffer(table),
             Argument::U32(segments),
@@ -209,6 +215,7 @@ impl Copy {
             Argument::U64(self.op.page_bytes),
             Argument::U32(u32::from(self.op.direction == Direction::ToPages)),
         ]);
+        let args = ArgumentList(args);
         args.validate()?;
         Ok(args)
     }
@@ -379,7 +386,14 @@ mod tests {
         assert_eq!(
             arguments.0,
             [
-                Argument::DevicePointerArray(vec![1, 2, 3]),
+                Argument::DeviceBuffer(1),
+                Argument::DeviceBuffer(2),
+                Argument::DeviceBuffer(3),
+                Argument::NullDevicePointer,
+                Argument::NullDevicePointer,
+                Argument::NullDevicePointer,
+                Argument::NullDevicePointer,
+                Argument::NullDevicePointer,
                 Argument::DeviceBuffer(4),
                 Argument::DeviceBuffer(5),
                 Argument::U32(7),
@@ -387,6 +401,14 @@ mod tests {
                 Argument::U64(op.page_bytes),
                 Argument::U32(1),
             ]
+        );
+        // No argument is a by-value pointer array, which a host checks for
+        // peer reachability and refuses on a host-owned state span.
+        assert!(
+            !arguments
+                .0
+                .iter()
+                .any(|argument| matches!(argument, Argument::DevicePointerArray(_)))
         );
         let restore = Copy::new(
             SnapshotCopy {
@@ -398,7 +420,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            restore.arguments(&[1, 2, 3], 4, 5, 1).unwrap().0[6],
+            restore.arguments(&[1, 2, 3], 4, 5, 1).unwrap().0[13],
             Argument::U32(0)
         );
         for (views, pool, table, segments) in [
@@ -446,14 +468,23 @@ mod tests {
     }
 
     #[test]
-    fn the_entry_takes_eight_view_slots_and_the_table_sizes() {
+    fn the_entry_takes_eight_view_pointers_and_the_table_sizes() {
         let spec = Entry::new(SYMBOL).spec();
         assert_eq!(spec.symbol, SYMBOL);
-        assert!(matches!(
-            &spec.params[0],
-            EntryParam::PointerArray { slots: 8, .. }
-        ));
-        assert_eq!(spec.params.len(), 7);
+        for (slot, param) in spec.params[..8].iter().enumerate() {
+            assert_eq!(
+                param,
+                &EntryParam::DevicePointer {
+                    name: format!("view_{slot}"),
+                    cxx_type: "uint8_t".into(),
+                }
+            );
+        }
+        assert_eq!(spec.params.len(), 14);
+        assert!(
+            spec.body
+                .starts_with("chop::snapshot::copy(chop::snapshot::Views{view_0,view_1,")
+        );
         let cubin = cubin_spec("snapshot_copy_sm120", &entries());
         assert_eq!(cubin.headers, ["#include \"snapshot/copy.cuh\""]);
         assert_eq!(declared_entries()[0].invariance, INVARIANCE);

@@ -18,9 +18,23 @@ struct Segment {
 
 constexpr uint64_t kVectorBytes = 16;
 
-// View `view` of the launch's pointer array; null past its eight slots,
-// which the host's table check never names.
-template <class Views>
+// The launch's eight view parameters, each an ordinary device pointer
+// (null past the views the table binds): a by-value pointer array is for
+// peer addresses, and the host refuses one that names a host-owned buffer
+// such as a request's state.
+struct Views {
+  uint8_t* slot_0;
+  uint8_t* slot_1;
+  uint8_t* slot_2;
+  uint8_t* slot_3;
+  uint8_t* slot_4;
+  uint8_t* slot_5;
+  uint8_t* slot_6;
+  uint8_t* slot_7;
+};
+
+// View `view` of the launch; null past its eight slots, which the host's
+// table check never names.
 __device__ __forceinline__ uint8_t* view_at(const Views& views, uint64_t view) {
   switch (view) {
     case 0: return views.slot_0;
@@ -42,7 +56,6 @@ __device__ __forceinline__ uint8_t* view_at(const Views& views, uint64_t view) {
 // other run (a segment's unaligned start, a byte tail, a vector two
 // segments share) moves byte by byte. Each snapshot byte has one thread and
 // each view byte at most one segment, so no two threads write one byte.
-template <class Views>
 __device__ void copy(const Views& views, uint8_t* pool, const uint64_t* table,
                      uint32_t segments, uint32_t pages, uint64_t page_bytes,
                      uint32_t to_pages) {

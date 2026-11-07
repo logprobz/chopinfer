@@ -191,6 +191,13 @@ pub struct FakeHostDeviceV1 {
     skip_collective_ordering: bool,
     /// Whether a launch this backend checked is reported as accepted.
     accept_launches: bool,
+    /// How long each graph launch keeps its stream busy; zero completes it
+    /// at once.
+    launch_time: std::time::Duration,
+    /// When each stream's launched work completes, by stream object.
+    stream_busy: BTreeMap<u64, std::time::Instant>,
+    /// When the launched work each recorded event follows completes.
+    event_ready: BTreeMap<u64, std::time::Instant>,
     /// What `cluster_residency` reports; `None` reports it unsupported.
     cluster_residency: Option<runtime_bundle_abi::BundleRawClusterResidencyV1>,
     sparse_probe_allocations: bool,
@@ -295,6 +302,9 @@ impl FakeHostDeviceV1 {
             fill_streams: BTreeSet::new(),
             skip_collective_ordering: false,
             accept_launches: false,
+            launch_time: std::time::Duration::ZERO,
+            stream_busy: BTreeMap::new(),
+            event_ready: BTreeMap::new(),
             cluster_residency: None,
             sparse_probe_allocations: false,
             pool_peer_access: BTreeSet::new(),
@@ -502,6 +512,23 @@ impl FakeHostDeviceV1 {
     /// recorded, so what the launch asked for is still observable.
     pub fn accept_launches(&mut self, accept: bool) {
         self.accept_launches = accept;
+    }
+
+    /// Makes each graph launch keep its stream busy for `time` after the
+    /// stream's earlier work, as a device running the graph would. A stream
+    /// or event synchronization and a device-to-host copy then block until
+    /// the work they follow would have finished, and an event wait carries
+    /// that completion to the waiting stream. Zero, the default, completes
+    /// launched work at once.
+    pub fn set_launch_time(&mut self, time: std::time::Duration) {
+        self.launch_time = time;
+    }
+
+    /// Sleeps until `ready`, the completion of work a host wait follows.
+    fn block_until(ready: Option<std::time::Instant>) {
+        if let Some(ready) = ready {
+            std::thread::sleep(ready.saturating_duration_since(std::time::Instant::now()));
+        }
     }
 
     /// Reports `residency` for every cluster residency query, as a device
@@ -1434,12 +1461,14 @@ impl HostDeviceBackendV1 for FakeHostDeviceV1 {
         self.require(stream, FakeObjectKindV1::Stream)?;
         self.check(FakeRefusalV1::SynchronizeStream)?;
         self.synchronizations += 1;
+        Self::block_until(self.stream_busy.get(&stream.get()).copied());
         self.drain_deferred(stream)
     }
 
     fn release_stream(&mut self, stream: DeviceObjectV1) -> HostDeviceResultV1<()> {
         self.check(FakeRefusalV1::ReleaseStream)?;
         self.destroy(stream, FakeObjectKindV1::Stream)?;
+        self.stream_busy.remove(&stream.get());
         // A released stream's staging chunk goes with it.
         self.fill_streams.remove(&stream.get());
         Ok(())
@@ -1470,7 +1499,13 @@ impl HostDeviceBackendV1 for FakeHostDeviceV1 {
         graph: DeviceObjectV1,
     ) -> HostDeviceResultV1<()> {
         self.require(stream, FakeObjectKindV1::Stream)?;
-        self.require(graph, FakeObjectKindV1::Graph).map(|_| ())
+        self.require(graph, FakeObjectKindV1::Graph)?;
+        if !self.launch_time.is_zero() {
+            let now = std::time::Instant::now();
+            let busy = self.stream_busy.entry(stream.get()).or_insert(now);
+            *busy = (*busy).max(now) + self.launch_time;
+        }
+        Ok(())
     }
 
     fn release_graph(&mut self, graph: DeviceObjectV1) -> HostDeviceResultV1<()> {
@@ -1491,6 +1526,10 @@ impl HostDeviceBackendV1 for FakeHostDeviceV1 {
     ) -> HostDeviceResultV1<()> {
         self.require(event, FakeObjectKindV1::Event)?;
         self.require(stream, FakeObjectKindV1::Stream)?;
+        match self.stream_busy.get(&stream.get()) {
+            Some(&busy) => self.event_ready.insert(event.get(), busy),
+            None => self.event_ready.remove(&event.get()),
+        };
         Ok(())
     }
 
@@ -1501,16 +1540,24 @@ impl HostDeviceBackendV1 for FakeHostDeviceV1 {
     ) -> HostDeviceResultV1<()> {
         self.require(stream, FakeObjectKindV1::Stream)?;
         self.require(event, FakeObjectKindV1::Event)?;
+        if let Some(&ready) = self.event_ready.get(&event.get()) {
+            let busy = self.stream_busy.entry(stream.get()).or_insert(ready);
+            *busy = (*busy).max(ready);
+        }
         Ok(())
     }
 
     fn synchronize_event(&mut self, event: DeviceObjectV1) -> HostDeviceResultV1<()> {
-        self.require(event, FakeObjectKindV1::Event).map(|_| ())
+        self.require(event, FakeObjectKindV1::Event)?;
+        Self::block_until(self.event_ready.get(&event.get()).copied());
+        Ok(())
     }
 
     fn release_event(&mut self, event: DeviceObjectV1) -> HostDeviceResultV1<()> {
         self.check(FakeRefusalV1::ReleaseEvent)?;
-        self.destroy(event, FakeObjectKindV1::Event)
+        self.destroy(event, FakeObjectKindV1::Event)?;
+        self.event_ready.remove(&event.get());
+        Ok(())
     }
 
     /// Stages each chunk as a real ring would: filled in place, then copied.
@@ -1585,6 +1632,8 @@ impl HostDeviceBackendV1 for FakeHostDeviceV1 {
         if bytes.len() != destination.len() {
             return Err(BundleStatusV1::InvalidArgument);
         }
+        // The copy is stream-ordered and returns once it has landed.
+        Self::block_until(self.stream_busy.get(&stream.get()).copied());
         destination.copy_from_slice(&bytes);
         Ok(())
     }

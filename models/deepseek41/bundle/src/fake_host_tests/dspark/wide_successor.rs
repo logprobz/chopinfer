@@ -80,7 +80,7 @@ pub(super) fn prompted(
 
 /// [`prompted`] on an instance of `slots` slots whose pool holds
 /// [`KV_PAGES`] pages.
-fn prompted_in(
+pub(super) fn prompted_in(
     items: u32,
     slots: u32,
     verify: u32,

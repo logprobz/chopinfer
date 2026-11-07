@@ -28,6 +28,8 @@ mod results;
 mod retention;
 mod round_trips;
 mod successor_capture;
+#[cfg(feature = "state-capture")]
+mod successor_protocol;
 mod undrafted;
 mod verify_rows;
 mod wide_draft;

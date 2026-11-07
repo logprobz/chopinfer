@@ -71,6 +71,9 @@ const ANCHORS: u32 = 4;
 const PACKED_POOL_PAGES: u64 = 512;
 /// The destinations' fills: a write of either value shows under the other.
 const POISONS: [u8; 2] = [0xa5, 0x00];
+/// What a packed case's source allocations hold outside their seeds, so a
+/// write anywhere in them shows.
+const GUARD: u8 = 0x3c;
 /// The bitwise sweep stops here, with no result, so its job stays in its
 /// bound.
 const BUDGET_SECONDS: u64 = 240;
@@ -445,6 +448,12 @@ impl Bench {
     fn held_spans(&self) -> Vec<DeviceBufferSpanV1> {
         let held = self.held.buffers.iter().chain(&self.held.spares).flatten();
         held.copied().collect()
+    }
+
+    /// The allocations a capture (the state and spares) or a restore (the
+    /// pool) reads.
+    fn sources(&self, to_pages: bool) -> Vec<u64> {
+        self.destinations(!to_pages)
     }
 
     /// The allocations a capture (the pool) or a restore (the state and
@@ -840,7 +849,8 @@ struct Seeds {
     pages: Vec<u8>,
 }
 
-/// The sources' seeds, for the host alone or also written to `device`.
+/// The sources' seeds, for the host alone or also written to `device`,
+/// in a packed case over source allocations filled with [`GUARD`].
 fn seeds(
     bench: &Bench,
     plans: &Plans,
@@ -852,6 +862,13 @@ fn seeds(
         spans: Vec::new(),
         pages: Vec::new(),
     };
+    if let Some(device) = device
+        && bench.layout == Layout::Packed
+    {
+        for arena in bench.sources(to_pages) {
+            device.fill(arena, GUARD)?;
+        }
+    }
     if to_pages {
         for (index, span) in bench.held_spans().into_iter().enumerate() {
             let bytes = seeded(span.length, salt * 1000 + index as u64);
@@ -999,6 +1016,37 @@ fn oracle(
         .collect())
 }
 
+/// What a packed case's source allocations hold: their seeds, and
+/// [`GUARD`] everywhere else.
+fn guarded(bench: &Bench, plans: &Plans, to_pages: bool, seeds: &Seeds) -> Vec<Expected> {
+    let mut regions = bench
+        .sources(to_pages)
+        .into_iter()
+        .map(|arena| (arena, Vec::new()))
+        .collect::<BTreeMap<_, _>>();
+    if to_pages {
+        for (span, bytes) in &seeds.spans {
+            if let Some(arena) = regions.get_mut(&span.buffer.raw) {
+                arena.push((span.offset, bytes.clone()));
+            }
+        }
+    } else if let Some(pool) = regions.get_mut(&POOL) {
+        let page_bytes = plans.table.page_bytes;
+        for (index, &id) in plans.ids.iter().enumerate() {
+            let at = index * page_bytes as usize;
+            let bytes = seeds.pages[at..at + page_bytes as usize].to_vec();
+            pool.push((bench.page_span(id, page_bytes).offset, bytes));
+        }
+    }
+    regions
+        .into_iter()
+        .map(|(arena, mut regions)| {
+            regions.sort_by_key(|(start, _)| *start);
+            Expected { arena, regions }
+        })
+        .collect()
+}
+
 /// The first byte at which two buffers differ.
 fn first_difference(left: &[u8], right: &[u8]) -> Option<usize> {
     if left.len() != right.len() {
@@ -1009,8 +1057,10 @@ fn first_difference(left: &[u8], right: &[u8]) -> Option<usize> {
 
 /// Runs both arms with every destination allocation filled with each
 /// poison (the first alone in the high layout) and compares all of their
-/// bytes with the oracle's, then the sources with their seeds. Returns the
-/// bytes compared.
+/// bytes with the oracle's, then the sources: every byte of a packed
+/// case's source allocations against their seeds and [`GUARD`] (a write
+/// to a page the snapshot does not take shows), the high layout's seeded
+/// spans or pages. Returns the destination bytes compared.
 fn compare(
     bench: &Bench,
     device: &Device<'_>,
@@ -1042,7 +1092,13 @@ fn compare(
             }
         }
     }
-    if to_pages {
+    if bench.layout == Layout::Packed {
+        for source in guarded(bench, plans, to_pages, seeds) {
+            device
+                .verify(&source, GUARD)
+                .map_err(|error| format!("a source changed: {error}"))?;
+        }
+    } else if to_pages {
         for (span, bytes) in &seeds.spans {
             if device.read_span(*span)? != *bytes {
                 return Err(format!("source span {span:?} changed"));
@@ -1205,6 +1261,9 @@ fn host_copies_match_the_oracle() {
         for destination in &expected {
             arenas.get_mut(&destination.arena).unwrap().fill(fill);
         }
+        for source in bench.sources(to_pages) {
+            arenas.get_mut(&source).unwrap().fill(GUARD);
+        }
         let write =
             |arenas: &mut BTreeMap<u64, Vec<u8>>, span: DeviceBufferSpanV1, bytes: &[u8]| {
                 arenas.get_mut(&span.buffer.raw).unwrap()
@@ -1240,6 +1299,30 @@ fn host_copies_match_the_oracle() {
                 .sum::<usize>();
         }
         assert!(moved > 0, "{holder:?} {to_pages}");
+        // The sources keep their seeds and guard, and a write to a page or
+        // byte the snapshot does not take shows.
+        for source in guarded(bench, &plans, to_pages, &seeds) {
+            let observed = &arenas[&source.arena];
+            source.check(0, observed, GUARD).unwrap();
+            let (start, _) = &source.regions[0];
+            let mut bytes = observed.clone();
+            bytes[*start as usize] ^= 1;
+            assert!(source.check(0, &bytes, GUARD).is_err());
+            if let Some(at) = outside(&source, observed.len() as u64) {
+                let mut bytes = observed.clone();
+                bytes[at as usize] = !GUARD;
+                assert!(source.check(0, &bytes, GUARD).is_err());
+            }
+            if !to_pages {
+                let page_bytes = plans.table.page_bytes;
+                let unselected = (0..bench.pool_pages)
+                    .find(|id| !plans.ids.contains(id))
+                    .unwrap();
+                let mut bytes = observed.clone();
+                bytes[(bench.page_span(unselected, page_bytes).offset + 7) as usize] ^= 1;
+                assert!(source.check(0, &bytes, GUARD).is_err());
+            }
+        }
         // A wrong byte inside the snapshot, or a stray one outside it, shows.
         for destination in expected
             .iter()

@@ -72,7 +72,12 @@ impl Instance {
             .as_ref()
             .ok_or("DSpark lifecycle borrowed")?
             .state();
-        let Some(plan) = feedback.plan(state, device.shape.geometry.shape.vocab)? else {
+        let Some(plan) = feedback.plan(
+            state,
+            device.shape.geometry.shape.vocab,
+            device.prefetch.items,
+        )?
+        else {
             return Ok(());
         };
         if device.prefetch.ranks.len() != self.ranks.len() || device.prefetch.plan.is_some() {
@@ -213,7 +218,11 @@ pub(crate) fn for_test(
         let device = instance.dspark.as_ref().expect("drafter");
         let state = device.runtime.as_ref().expect("lifecycle").state();
         let plan = feedback
-            .plan(state, device.shape.geometry.shape.vocab)
+            .plan(
+                state,
+                device.shape.geometry.shape.vocab,
+                device.prefetch.items,
+            )
             .unwrap()
             .expect("predictable test");
         let mut spans = Vec::new();
@@ -258,3 +267,4 @@ pub(crate) fn for_test(
         )
     })
 }
+

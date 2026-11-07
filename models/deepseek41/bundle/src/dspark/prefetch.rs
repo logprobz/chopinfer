@@ -1,6 +1,8 @@
 //! A private successor draft is useful only after its predicted commit matches.
 use super::execution::{DraftInput, Input};
-use super::state::{BLOCK_ROWS, CommitPlan, DraftBlock, Kind, RowProjection, State};
+use super::state::{
+    BATCH_PROJECTION_ROWS, BLOCK_ROWS, CommitPlan, DraftBlock, Kind, RowProjection, State,
+};
 use bundle_runtime::graphs::GraphCache;
 use model_deepseek41_contract::serving::DeepSeek;
 use runtime_bundle_abi::DeviceBufferSpanV1 as Span;
@@ -10,7 +12,31 @@ use runtime_bundle_abi::device_results::{
 };
 use std::collections::BTreeMap;
 
+/// Most items a successor plans within one batched projection launch,
+/// the bound before `dspark_successor_items` lifted it.
+pub(crate) const ONE_LAUNCH_ITEMS: u32 = 8;
+
+/// The most accepted rows a successor of `items` items projects: one
+/// batched launch of `batch_rows` for at most [`ONE_LAUNCH_ITEMS`], and
+/// above that each item's depth-five rows, its five drafts and the bonus,
+/// in launches of at most `batch_rows`.
+pub(crate) fn projection_rows(items: u32, batch_rows: u32) -> u32 {
+    if items > ONE_LAUNCH_ITEMS {
+        items * (BLOCK_ROWS + 1)
+    } else {
+        batch_rows
+    }
+}
+
+/// Rows of saved status a successor of at most `items` items holds: its
+/// projected rows, then five block rows an item, eight bytes a row.
+pub(crate) fn status_rows(items: u32) -> u32 {
+    projection_rows(items, BATCH_PROJECTION_ROWS) + items.max(ONE_LAUNCH_ITEMS) * BLOCK_ROWS
+}
+
 pub(crate) struct Cache {
+    /// Most drafting items a successor plans (`dspark_successor_items`).
+    pub items: u32,
     pub ranks: Vec<Memory>,
     pub graphs: BTreeMap<u32, GraphCache<DeepSeek>>,
     pub plan: Option<Plan>,
@@ -30,8 +56,9 @@ pub(crate) struct Memory {
 }
 
 impl Cache {
-    pub fn new() -> Self {
+    pub fn new(items: u32) -> Self {
         Self {
+            items,
             ranks: Vec::new(),
             graphs: BTreeMap::new(),
             plan: None,
@@ -60,10 +87,11 @@ pub(crate) struct Plan {
 }
 
 impl Feedback {
-    /// The device result predicts work, never authorizes a host commit.
-    pub fn plan(&self, state: &State, vocab: u32) -> Result<Option<Plan>, String> {
+    /// The device result predicts work, never authorizes a host commit. A
+    /// step of more than `items` drafting items plans none.
+    pub fn plan(&self, state: &State, vocab: u32, items: u32) -> Result<Option<Plan>, String> {
         if self.inputs.is_empty()
-            || self.inputs.len() > 8
+            || self.inputs.len() > items as usize
             || self.metadata.items.len() != self.inputs.len()
             || self.inputs.iter().any(|input| {
                 !matches!(
@@ -171,7 +199,9 @@ impl Feedback {
                 projections.push(pass);
             }
         }
-        if projections.iter().map(|pass| pass.count).sum::<u32>() > state.batch_rows() {
+        if projections.iter().map(|pass| pass.count).sum::<u32>()
+            > projection_rows(self.inputs.len() as u32, state.batch_rows())
+        {
             return Ok(None);
         }
         Ok(Some(Plan {

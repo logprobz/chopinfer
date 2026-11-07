@@ -4,7 +4,7 @@ use runtime_bundle_abi::device_results::*;
 
 fn pending(items: u32, k: u32, start: u64) -> (State, Feedback) {
     let mut state = State::new(Config {
-        slots: 8,
+        slots: items.max(8),
         stages: 3,
         window: 8,
         max_prefill_rows: 64,
@@ -119,7 +119,7 @@ fn predicts_every_acceptance_depth_without_committing_original_state() {
             let (state, mut feedback) = pending(1, 5, start);
             let original = state.clone();
             outcome(&mut feedback, depth);
-            let plan = feedback.plan(&state, 100).unwrap().unwrap();
+            let plan = feedback.plan(&state, 100, 8).unwrap().unwrap();
             assert_eq!(state, original);
             assert!(state.is_pending());
             assert_eq!(plan.drafts[0].block.main_rows, start + u64::from(depth) + 1);
@@ -151,11 +151,102 @@ fn predicts_every_acceptance_depth_without_committing_original_state() {
 fn preserves_c8_batch_bound_and_declines_oversized_projection() {
     let (state, mut feedback) = pending(8, 3, 3);
     outcome(&mut feedback, 3);
-    let plan = feedback.plan(&state, 100).unwrap().unwrap();
+    let plan = feedback.plan(&state, 100, 8).unwrap().unwrap();
     assert_eq!(plan.projections.iter().map(|p| p.count).sum::<u32>(), 32);
     let (state, mut feedback) = pending(8, 5, 3);
     outcome(&mut feedback, 5);
-    assert!(feedback.plan(&state, 100).unwrap().is_none());
+    assert!(feedback.plan(&state, 100, 8).unwrap().is_none());
+}
+
+/// Up to `dspark_successor_items` drafting items plan one successor, which
+/// computes five heads above eight items. Above eight, the accepted rows
+/// may pass one 32-row launch: every item's rows project, up to its
+/// depth-five maximum, in launches of at most 32 rows.
+#[test]
+fn wide_successors_plan_up_to_the_item_bound_and_project_in_several_launches() {
+    for items in [9, 12, 13, 16] {
+        for (k, depth) in [(3, 3), (3, 0), (5, 5), (5, 2), (1, 1)] {
+            let (state, mut feedback) = pending(items, k, 3);
+            outcome(&mut feedback, depth);
+            assert!(
+                feedback.plan(&state, 100, 8).unwrap().is_none(),
+                "the default bound plans at most eight items"
+            );
+            if items > 9 {
+                assert!(feedback.plan(&state, 100, items - 1).unwrap().is_none());
+            }
+            for bound in [items, 16] {
+                let plan = feedback.plan(&state, 100, bound).unwrap().unwrap();
+                let rows: u32 = plan.projections.iter().map(|pass| pass.count).sum();
+                assert_eq!(
+                    rows,
+                    items * (depth + 1),
+                    "items={items} k={k} depth={depth}"
+                );
+                assert!(rows <= projection_rows(items, 32));
+                assert_eq!(plan.drafts.len(), items as usize);
+                assert!(plan.drafts.iter().all(|draft| draft.block.emit_rows == 5));
+                let launches = crate::dspark::transfers::batched_projection(
+                    state.config(),
+                    &plan.projections,
+                    state.batch_rows(),
+                )
+                .unwrap();
+                assert_eq!(launches.len() as u32, rows.div_ceil(32));
+                assert!(launches.iter().all(|launch| launch.rows <= 32));
+                assert_eq!(launches.iter().map(|launch| launch.rows).sum::<u32>(), rows);
+            }
+        }
+    }
+}
+
+/// Eight or fewer items keep the one-launch bound at every item bound, so
+/// the candidate leaves their plans unchanged.
+#[test]
+fn at_most_eight_items_keep_one_projection_launch_at_every_bound() {
+    for bound in [8, 9, 16] {
+        for (items, k, depth, planned) in [
+            (8, 3, 3, true),
+            (8, 5, 5, false),
+            (7, 5, 5, false),
+            (6, 5, 4, true),
+            (6, 5, 5, false),
+        ] {
+            let (state, mut feedback) = pending(items, k, 3);
+            outcome(&mut feedback, depth);
+            assert_eq!(
+                feedback.plan(&state, 100, bound).unwrap().is_some(),
+                planned,
+                "bound={bound} items={items} depth={depth}"
+            );
+        }
+    }
+}
+
+/// The successor's saved status holds its projected rows and five block
+/// rows an item: the one-launch maximum and eight items at the default,
+/// 1,408 bytes at sixteen items. Every plan within the bound fits it.
+#[test]
+fn successor_status_holds_the_depth_five_maximum_of_its_bound() {
+    assert_eq!(status_rows(8) * 8, (32 + 8 * 5) * 8);
+    assert_eq!(status_rows(16) * 8, 1408);
+    assert_eq!(status_rows(9) * 8, (9 * 6 + 9 * 5) * 8);
+    for bound in 8..=16 {
+        for items in 1..=bound {
+            for (k, depth) in [(5, 5), (3, 3), (1, 0)] {
+                let (state, mut feedback) = pending(items, k, 3);
+                outcome(&mut feedback, depth.min(k));
+                let Some(plan) = feedback.plan(&state, 100, bound).unwrap() else {
+                    continue;
+                };
+                let rows: u32 = plan.projections.iter().map(|pass| pass.count).sum();
+                assert!(
+                    rows + items * BLOCK_ROWS <= status_rows(bound),
+                    "bound={bound} items={items} k={k}"
+                );
+            }
+        }
+    }
 }
 
 #[test]
@@ -163,31 +254,31 @@ fn terminal_limits_bad_samples_and_stale_acceptance_never_predict() {
     let (state, mut feedback) = pending(1, 5, 3);
     outcome(&mut feedback, 0);
     feedback.metadata.items[0].acceptance.remaining_tokens = 2;
-    assert!(feedback.plan(&state, 100).unwrap().is_none());
+    assert!(feedback.plan(&state, 100, 8).unwrap().is_none());
     feedback.metadata.items[0].acceptance.remaining_tokens = 100;
     let mut record = BundleAcceptanceResultV1::from_le_bytes(&feedback.packet[..32]).unwrap();
     record.accepted_drafts = 1;
     record.flags = BUNDLE_ACCEPTANCE_TERMINAL_V1;
     feedback.packet[..32].copy_from_slice(&record.to_le_bytes());
-    assert!(feedback.plan(&state, 100).unwrap().is_none());
+    assert!(feedback.plan(&state, 100, 8).unwrap().is_none());
     outcome(&mut feedback, 0);
     let sample = crate::dspark::results::SAMPLE_OFFSET as usize;
     feedback.packet[sample + 4..sample + 8].copy_from_slice(&2_u32.to_le_bytes());
-    assert!(feedback.plan(&state, 100).unwrap().is_none());
+    assert!(feedback.plan(&state, 100, 8).unwrap().is_none());
     feedback.packet[sample + 4..sample + 8].fill(0);
     feedback.packet[..8].copy_from_slice(&8_u64.to_le_bytes());
-    assert!(feedback.plan(&state, 100).unwrap().is_none());
+    assert!(feedback.plan(&state, 100, 8).unwrap().is_none());
     feedback.packet[..32].fill(0);
-    assert!(feedback.plan(&state, 100).unwrap().is_none());
+    assert!(feedback.plan(&state, 100, 8).unwrap().is_none());
     feedback.packet[..32].fill(0xff);
-    assert!(feedback.plan(&state, 100).unwrap().is_none());
+    assert!(feedback.plan(&state, 100, 8).unwrap().is_none());
 }
 
 #[test]
 fn a_different_commit_or_reused_slot_cannot_consume_the_preview() {
     let (mut state, mut feedback) = pending(1, 5, 3);
     outcome(&mut feedback, 3);
-    let plan = feedback.plan(&state, 100).unwrap().unwrap();
+    let plan = feedback.plan(&state, 100, 8).unwrap().unwrap();
     let commit = state.begin_commit(&[(1, 3)]).unwrap();
     state.complete_commit(commit).unwrap();
     let next = [Input {
@@ -227,7 +318,7 @@ fn a_sampled_successor_restarts_its_noise_after_the_emitted_rows() {
         let (state, mut feedback) = pending(2, 5, 3);
         feedback.inputs[0].noise = Noise::sampled(0x55, 40, 0.8);
         outcome(&mut feedback, depth);
-        let plan = feedback.plan(&state, 100).unwrap().unwrap();
+        let plan = feedback.plan(&state, 100, 8).unwrap().unwrap();
         let emitted = u64::from(depth) + 1;
         assert_eq!(
             plan.drafts[0].noise,
@@ -297,7 +388,7 @@ fn depth_three_successor_cannot_supply_five_positions_after_c8() {
     for items in [3, 8] {
         let (state, mut feedback) = pending(items, 3, 3);
         outcome(&mut feedback, 2);
-        let plan = feedback.plan(&state, 100).unwrap().unwrap();
+        let plan = feedback.plan(&state, 100, 8).unwrap().unwrap();
         assert!(
             plan.drafts
                 .iter()

@@ -23,6 +23,49 @@ fn chunk_ranges(items: usize, maximum: usize) -> impl Iterator<Item = std::ops::
 }
 
 impl Instance {
+    /// The most drafting items one drafter forward runs: the wide drafter
+    /// forward's, or the chunk option's.
+    fn draft_chunk_items(&self) -> Result<usize, String> {
+        let device = self.dspark.as_ref().ok_or("DSpark is absent")?;
+        Ok(device
+            .shape
+            .wide_draft_items()
+            .map_or(device.draft_chunk_items, |items| items as usize))
+    }
+
+    /// The heads a draft of `inputs` computes inline: three for an
+    /// unallocated Flash TP4 batch of three to eight depth-three items in
+    /// one forward, otherwise all five.
+    pub(super) fn draft_positions(
+        &self,
+        inputs: &[DraftInput],
+        allocated: bool,
+    ) -> Result<u32, String> {
+        let device = self.dspark.as_ref().ok_or("DSpark is absent")?;
+        if inputs.len() > self.draft_chunk_items()? {
+            return Ok(BLOCK_ROWS);
+        }
+        let positions = if device.shape.geometry.id == FLASH.id
+            && device.shape.ranks() == 4
+            && compact_heads(inputs, allocated)
+        {
+            3
+        } else {
+            BLOCK_ROWS
+        };
+        #[cfg(feature = "diagnostic-taps")]
+        let positions = if device
+            .head_capture
+            .as_ref()
+            .is_some_and(|c| c.pending(inputs.len() as u32 * BLOCK_ROWS))
+        {
+            BLOCK_ROWS
+        } else {
+            positions
+        };
+        Ok(positions)
+    }
+
     pub(super) fn dspark_draft(
         &mut self,
         inputs: &[DraftInput],
@@ -39,30 +82,9 @@ impl Instance {
         // Validate the complete batch before any chunk can mutate staging.
         let device = self.dspark.as_ref().ok_or("DSpark is absent")?;
         crate::lower::dspark::metadata(device.shape.geometry, inputs)?;
-        // The wide drafter forward replaces the chunk option's bound.
-        let chunk_items = device
-            .shape
-            .wide_draft_items()
-            .map_or(device.draft_chunk_items, |items| items as usize);
+        let chunk_items = self.draft_chunk_items()?;
         if inputs.len() <= chunk_items {
-            let positions = if device.shape.geometry.id == FLASH.id
-                && device.shape.ranks() == 4
-                && compact_heads(inputs, allocated)
-            {
-                3
-            } else {
-                BLOCK_ROWS
-            };
-            #[cfg(feature = "diagnostic-taps")]
-            let positions = if device
-                .head_capture
-                .as_ref()
-                .is_some_and(|c| c.pending(inputs.len() as u32 * BLOCK_ROWS))
-            {
-                BLOCK_ROWS
-            } else {
-                positions
-            };
+            let positions = self.draft_positions(inputs, allocated)?;
             #[cfg(feature = "diagnostic-taps")]
             let reference = if positions != BLOCK_ROWS {
                 self.draft_reference(inputs)?

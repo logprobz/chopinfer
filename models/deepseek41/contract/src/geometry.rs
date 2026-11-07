@@ -376,8 +376,8 @@ mod tests {
             let values = resolve(top_k, blocks).unwrap();
             assert_eq!(values.candidate_topk_blocks, blocks);
             let options = FLASH.model_options(values);
-            assert_eq!(options[18].name, "text_config.candidate_topk_blocks");
-            assert_eq!(options[18].default_is_qualified, blocks == 2048);
+            assert_eq!(options[19].name, "text_config.candidate_topk_blocks");
+            assert_eq!(options[19].default_is_qualified, blocks == 2048);
         }
         for (top_k, blocks) in [(2, 1), (10, 2), (256, 32), (512, 64)] {
             let error = resolve(top_k, blocks).unwrap_err();
@@ -517,34 +517,35 @@ mod tests {
         let checkpoint = FLASH.check_runtime(&config).unwrap();
         assert_eq!(checkpoint.index_topk, 512);
         let options = FLASH.model_options(checkpoint);
-        assert_eq!(options.len(), 25);
+        assert_eq!(options.len(), 26);
         assert_eq!(options[0].name, "diagnostic_step_logs");
         assert_eq!(options[1].name, "dspark_confidence_staged");
         assert_eq!(options[2].name, "dspark_coupled_drafts");
         assert_eq!(options[3].name, "dspark_draft_chunk_items");
         assert_eq!(options[5].name, "dspark_hc_draft_rows");
         assert_eq!(options[6].name, "dspark_hc_fusion");
-        assert_eq!(options[7].name, "dspark_markov_staged");
-        assert_eq!(options[8].name, "dspark_moe_direct");
-        assert_eq!(options[9].name, "dspark_successor_items");
-        assert_eq!(options[10].name, "dspark_successor_prefill");
-        assert_eq!(options[11].name, "phased_decode_reduce");
-        assert_eq!(options[16].name, "prefix_snapshot_copy_kernel");
-        assert_eq!(options[18].name, "text_config.candidate_topk_blocks");
-        assert_eq!(options[19].name, "text_config.index_topk");
-        assert_eq!(options[20].name, "text_config.indexer_mma");
-        assert_eq!(options[23].name, "wide_draft");
-        assert_eq!(options[24].name, "wide_verify");
+        assert_eq!(options[7].name, "dspark_main_short_rows");
+        assert_eq!(options[8].name, "dspark_markov_staged");
+        assert_eq!(options[9].name, "dspark_moe_direct");
+        assert_eq!(options[10].name, "dspark_successor_items");
+        assert_eq!(options[11].name, "dspark_successor_prefill");
+        assert_eq!(options[12].name, "phased_decode_reduce");
+        assert_eq!(options[17].name, "prefix_snapshot_copy_kernel");
+        assert_eq!(options[19].name, "text_config.candidate_topk_blocks");
+        assert_eq!(options[20].name, "text_config.index_topk");
+        assert_eq!(options[21].name, "text_config.indexer_mma");
+        assert_eq!(options[24].name, "wide_draft");
+        assert_eq!(options[25].name, "wide_verify");
         assert!(!options.iter().any(|o| o.name.starts_with("moe_direct_")));
         assert_eq!(
-            options[19].definition,
+            options[20].definition,
             OptionDefinitionV1::Integer {
                 default: 512,
                 minimum: 1,
                 maximum: 512
             }
         );
-        assert!(options[18].default_is_qualified);
+        assert!(options[19].default_is_qualified);
         assert_eq!(
             FLASH
                 .resolve_model_options(checkpoint, &BTreeMap::new())

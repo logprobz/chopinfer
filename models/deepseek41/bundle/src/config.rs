@@ -460,6 +460,7 @@ pub(crate) mod tests {
             (DSPARK_SUCCESSOR_ITEMS, 16.into()),
             (DSPARK_SUCCESSOR_PREFILL, true.into()),
             (PREFIX_SNAPSHOT_COPY_KERNEL, true.into()),
+            (DSPARK_MAIN_SHORT_ROWS, true.into()),
         ] {
             changed = with_option(changed, name, value);
         }
@@ -482,6 +483,7 @@ pub(crate) mod tests {
                 dspark_successor_items: 16,
                 dspark_successor_prefill: true,
                 prefix_snapshot_copy_kernel: true,
+                dspark_main_short_rows: true,
             }
         );
         for (name, value) in [

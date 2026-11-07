@@ -66,6 +66,11 @@ pub const MAX_SUCCESSOR_ITEMS: u32 = 16;
 /// fragment. The header actions, the drain of every rank and the refusals
 /// stay as they are.
 pub const PREFIX_SNAPSHOT_COPY_KERNEL: &str = "prefix_snapshot_copy_kernel";
+/// Candidate: the Flash TP4 DSpark main projection runs the compact
+/// admission and compute pair at the inner rows the candidate table admits
+/// (`dense_prefill.dspark_main_short.prefill`, 65 to 128) instead of the
+/// generic fold. Every row's bytes are unchanged.
+pub const DSPARK_MAIN_SHORT_ROWS: &str = "dspark_main_short_rows";
 /// Maximum prompt-ending items whose interior grid anchor one step retains.
 pub const MAX_ANCHOR_ITEMS: u32 = 8;
 pub const DEFAULT_PLANS: usize = 16;
@@ -91,9 +96,10 @@ pub struct Options {
     pub dspark_successor_items: u32,
     pub dspark_successor_prefill: bool,
     pub prefix_snapshot_copy_kernel: bool,
+    pub dspark_main_short_rows: bool,
 }
 
-pub fn declarations() -> [ModelOptionV1; 16] {
+pub fn declarations() -> [ModelOptionV1; 17] {
     [
         (
             DIAGNOSTIC_STEP_LOGS,
@@ -117,6 +123,10 @@ pub fn declarations() -> [ModelOptionV1; 16] {
         ),
         (
             DSPARK_HC_FUSION,
+            OptionDefinitionV1::Boolean { default: false },
+        ),
+        (
+            DSPARK_MAIN_SHORT_ROWS,
             OptionDefinitionV1::Boolean { default: false },
         ),
         (
@@ -230,6 +240,7 @@ impl Options {
                 .expect("checked successor items") as u32,
             dspark_successor_prefill: flag(DSPARK_SUCCESSOR_PREFILL),
             prefix_snapshot_copy_kernel: flag(PREFIX_SNAPSHOT_COPY_KERNEL),
+            dspark_main_short_rows: flag(DSPARK_MAIN_SHORT_ROWS),
         })
     }
 }
@@ -414,6 +425,7 @@ mod tests {
             dspark_successor_items: 8,
             dspark_successor_prefill: false,
             prefix_snapshot_copy_kernel: false,
+            dspark_main_short_rows: false,
         };
         assert_eq!(Options::read(&defaults).unwrap(), expected);
         assert_eq!(Options::read(&BTreeMap::new()).unwrap(), expected);
@@ -440,6 +452,7 @@ mod tests {
             (DSPARK_SUCCESSOR_ITEMS.into(), "16".into()),
             (DSPARK_SUCCESSOR_PREFILL.into(), "true".into()),
             (PREFIX_SNAPSHOT_COPY_KERNEL.into(), "true".into()),
+            (DSPARK_MAIN_SHORT_ROWS.into(), "true".into()),
         ]);
         let resolved = declaration.resolve(&overrides).unwrap();
         assert_eq!(
@@ -461,6 +474,7 @@ mod tests {
                 dspark_successor_items: 16,
                 dspark_successor_prefill: true,
                 prefix_snapshot_copy_kernel: true,
+                dspark_main_short_rows: true,
             }
         );
         assert!(!declaration.is_qualified(&resolved));
@@ -486,6 +500,7 @@ mod tests {
             (DSPARK_HC_FUSION, "1"),
             (DSPARK_MARKOV_STAGED, "1"),
             (PREFIX_SNAPSHOT_COPY_KERNEL, "1"),
+            (DSPARK_MAIN_SHORT_ROWS, "1"),
             (DSPARK_GRAPH_HANDLES_PER_RANK, "-1"),
             (DSPARK_GRAPH_HANDLES_PER_RANK, "9223372036854775808"),
             (DSPARK_SUCCESSOR_ITEMS, "7"),

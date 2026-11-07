@@ -178,6 +178,7 @@ them. A non-default value is unqualified.
 | `prefill_plan_cache_plans` | `16` | Kept short-prompt plans, from 1 to 64; evict the least recently used plan when full. |
 | `prefill_plan_cache_verify` | `false` | Lower each cache hit and each reused plan template again and refuse a differing plan. |
 | `prefill_upper_skip` | `true` | Use upper-skip prefill; requires nonzero guaranteed chunk ends. |
+| `prefix_snapshot_copy_kernel` | `false` | Candidate: a prefix capture or restore moves its snapshot's pieces on each rank with one upload of the page and segment table and one launch of the shared snapshot copy kernel (`kernels_sm120::snapshot_copy`), instead of a device copy per piece and page fragment (about 207 a rank). The pages and restored slots hold the same bytes; the header upload and readback, the drain of every rank and every refusal are unchanged. Not yet measured. |
 | `shared_overlap_max_rows` | `4294967295` | Largest graph bucket that overlaps shared-expert and eligible window-KV work. Positive values only; the default covers every admitted bucket. |
 | `text_config.candidate_topk_blocks` | `2048` | Candidate block pool, checked with index top-k and the partial newest block. |
 | `text_config.index_topk` | `512` | Index selection top-k, from 1 to 512. |

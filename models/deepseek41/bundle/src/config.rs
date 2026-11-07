@@ -425,6 +425,7 @@ pub(crate) mod tests {
             (DSPARK_MARKOV_STAGED, true.into()),
             (DSPARK_SUCCESSOR_ITEMS, 16.into()),
             (DSPARK_SUCCESSOR_PREFILL, true.into()),
+            (PREFIX_SNAPSHOT_COPY_KERNEL, true.into()),
         ] {
             changed = with_option(changed, name, value);
         }
@@ -446,6 +447,7 @@ pub(crate) mod tests {
                 dspark_markov_staged: true,
                 dspark_successor_items: 16,
                 dspark_successor_prefill: true,
+                prefix_snapshot_copy_kernel: true,
             }
         );
         for (name, value) in [

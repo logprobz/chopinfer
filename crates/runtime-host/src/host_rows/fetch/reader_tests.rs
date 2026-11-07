@@ -117,6 +117,33 @@ fn reader_descriptions_are_new_bounded_reused_and_closed_with_their_owner() {
     assert!(fds.iter().all(|fd| !left.contains(fd)));
 }
 
+/// The slots of a dropped owner's descriptions come back only once the
+/// descriptions are closed, so concurrent acquisition never holds more open
+/// descriptions than the budget.
+#[cfg(target_os = "linux")]
+#[test]
+fn descriptions_close_before_their_slots_are_given_back() {
+    let (temp, file) = temp("close-first");
+    let path = temp.0.clone();
+    let open_at_refund = Arc::new(Mutex::new(Vec::new()));
+    let budget = {
+        let open_at_refund = Arc::clone(&open_at_refund);
+        Arc::new(Budget::watched(8, move |count| {
+            open_at_refund
+                .lock()
+                .unwrap()
+                .push((count, links(&path).len()));
+        }))
+    };
+    let readers = ReaderFiles::default();
+    assert_eq!(readers.get_with(&file, 4, &reopen, &budget).len(), 4);
+    assert_eq!(links(&temp.0).len(), 5);
+    drop(readers);
+    // Four slots back, with only the retained descriptor still open.
+    assert_eq!(*open_at_refund.lock().unwrap(), [(4, 1)]);
+    assert_eq!(budget.held(), 0);
+}
+
 #[cfg(target_os = "linux")]
 #[test]
 fn a_failed_open_is_cached_and_leaves_the_retained_descriptor() {

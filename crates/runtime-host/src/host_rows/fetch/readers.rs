@@ -35,10 +35,15 @@ const LIMIT_SHARE: u64 = 16;
 
 static FAILURES: AtomicU64 = AtomicU64::new(0);
 
-/// Reader descriptions held process-wide, against a fixed limit.
+/// Reader descriptions held process-wide, against a fixed limit. A slot
+/// is taken before its description opens and given back only after it
+/// closes, so the descriptions open never exceed the limit.
 pub(super) struct Budget {
     limit: usize,
     held: AtomicUsize,
+    /// Called with each refund's count as it is given back.
+    #[cfg(test)]
+    watch: Option<Box<dyn Fn(usize) + Send + Sync>>,
 }
 
 impl Budget {
@@ -46,6 +51,17 @@ impl Budget {
         Self {
             limit,
             held: AtomicUsize::new(0),
+            #[cfg(test)]
+            watch: None,
+        }
+    }
+
+    /// A budget that calls `watch` at each refund.
+    #[cfg(test)]
+    pub(super) fn watched(limit: usize, watch: impl Fn(usize) + Send + Sync + 'static) -> Self {
+        Self {
+            watch: Some(Box::new(watch)),
+            ..Self::new(limit)
         }
     }
 
@@ -58,14 +74,18 @@ impl Budget {
 
     fn take(&self) -> bool {
         self.held
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |held| {
+            .fetch_update(Ordering::Acquire, Ordering::Acquire, |held| {
                 (held < self.limit).then_some(held + 1)
             })
             .is_ok()
     }
 
     fn give(&self, count: usize) {
-        self.held.fetch_sub(count, Ordering::Relaxed);
+        #[cfg(test)]
+        if let Some(watch) = &self.watch {
+            watch(count);
+        }
+        self.held.fetch_sub(count, Ordering::Release);
     }
 
     pub(super) fn held(&self) -> usize {
@@ -159,10 +179,17 @@ impl ReaderFiles {
 }
 
 impl Drop for ReaderFiles {
+    /// Closes the descriptions, then gives their slots back, so a mapping
+    /// acquiring descriptions meanwhile never takes a slot whose
+    /// description is still open. A reader thread drops its description
+    /// before it replies, so these references are the last ones.
     fn drop(&mut self) {
         let state = self.state.get_mut().unwrap_or_else(PoisonError::into_inner);
+        let files = std::mem::take(&mut state.files);
+        let closed = files.len();
+        drop(files);
         if let Some(budget) = &state.budget {
-            budget.give(state.files.len());
+            budget.give(closed);
         }
     }
 }

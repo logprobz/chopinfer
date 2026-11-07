@@ -17,6 +17,7 @@ use std::ops::Range;
 
 mod reuse;
 mod scales;
+pub use scales::StandaloneScales;
 
 /// Which packed section the record stores.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

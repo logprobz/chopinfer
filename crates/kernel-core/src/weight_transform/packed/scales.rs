@@ -3,6 +3,63 @@
 use super::*;
 use crate::precision::layout::{ROW_TILES_64X128, ROW_TILES_64X128_LANES};
 use crate::precision::packed::ScaleBytes;
+use crate::weight_transform::payload::MXFP4_SCALE_MAX;
+use std::sync::OnceLock;
+
+/// One standalone UE8M0 scale tensor that several sections are produced
+/// from, such as every rank's slice of one matrix. Its checks read the whole
+/// tensor, so they are taken once, on first use, and each section gets what
+/// checking the tensor for it alone would give.
+pub struct StandaloneScales<'a> {
+    bytes: &'a [u8],
+    /// The scale count first checked, and its verdict.
+    valid: OnceLock<(usize, Result<(), &'static str>)>,
+    /// Whether a scale is above [`MXFP4_SCALE_MAX`].
+    extreme: OnceLock<bool>,
+}
+
+impl<'a> StandaloneScales<'a> {
+    #[must_use]
+    pub fn new(bytes: &'a [u8]) -> Self {
+        Self {
+            bytes,
+            valid: OnceLock::new(),
+            extreme: OnceLock::new(),
+        }
+    }
+
+    #[must_use]
+    pub const fn bytes(&self) -> &'a [u8] {
+        self.bytes
+    }
+
+    /// The bytes checked as `count` finite UE8M0 scales.
+    fn validate(&self, count: usize) -> Result<(), &'static str> {
+        let check = || {
+            ScaleBytes {
+                dtype: DType::Ue8M0,
+                bytes: self.bytes,
+            }
+            .validate(count, false)
+        };
+        match self.valid.get_or_init(|| (count, check())) {
+            (checked, verdict) if *checked == count => *verdict,
+            _ => check(),
+        }
+    }
+
+    fn extreme(&self) -> bool {
+        *self.extreme.get_or_init(|| above_mxfp4_max(self.bytes))
+    }
+}
+
+/// Whether a byte of `bytes` is above [`MXFP4_SCALE_MAX`]: the largest byte
+/// of each chunk, a reduction the compiler vectorizes, compared once.
+fn above_mxfp4_max(bytes: &[u8]) -> bool {
+    bytes
+        .chunks(4096)
+        .any(|chunk| chunk.iter().fold(0, |high, &byte| high.max(byte)) > MXFP4_SCALE_MAX)
+}
 
 impl PackedOperand {
     /// The scale source when this section can be produced independently.
@@ -78,6 +135,17 @@ impl PackedOperand {
         &self,
         record: &WeightRecord,
         bytes: &[u8],
+        out: Vec<u8>,
+    ) -> Result<Option<Vec<u8>>, WeightTransformError> {
+        self.independent_scales_of(record, &StandaloneScales::new(bytes), out)
+    }
+
+    /// [`Self::independent_scales`] from a scale tensor whose whole-tensor
+    /// checks the sections produced from it share.
+    pub fn independent_scales_of(
+        &self,
+        record: &WeightRecord,
+        scales: &StandaloneScales<'_>,
         mut out: Vec<u8>,
     ) -> Result<Option<Vec<u8>>, WeightTransformError> {
         let Some(source) = self.independent_scale_source(record) else {
@@ -85,17 +153,15 @@ impl PackedOperand {
         };
         self.output_bytes(record)?;
         let expected = self.raw_output_bytes(record)?;
-        ScaleBytes {
-            dtype: DType::Ue8M0,
-            bytes,
-        }
-        .validate(record.sources[source].byte_length as usize, false)
-        .map_err(|e| {
-            WeightTransformError(format!("packed operand packed operand local scale: {e}"))
-        })?;
-        if self.decode_order.has_bf16_weight_operand() && bytes.iter().any(|b| *b > 252) {
+        scales
+            .validate(record.sources[source].byte_length as usize)
+            .map_err(|e| {
+                WeightTransformError(format!("packed operand packed operand local scale: {e}"))
+            })?;
+        if self.decode_order.has_bf16_weight_operand() && scales.extreme() {
             return Ok(None);
         }
+        let bytes = scales.bytes();
         let matrix = &self.matrices[0];
         out.resize(expected as usize, 127);
         out.fill(127);
@@ -109,5 +175,36 @@ impl PackedOperand {
         }
         let mut sections = self.stored([Vec::new(), out, Vec::new()])?;
         Ok(Some(std::mem::take(&mut sections[1])))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The chunked maximum answers what a scan of every byte does, wherever
+    /// the extreme byte falls relative to the chunks.
+    #[test]
+    fn the_chunked_maximum_finds_every_extreme_scale() {
+        let naive = |bytes: &[u8]| bytes.iter().any(|b| *b > MXFP4_SCALE_MAX);
+        for length in [0_usize, 1, 31, 32, 4095, 4096, 4097, 8192, 12_289] {
+            let base: Vec<u8> = (0..length).map(|i| (i * 31 % 253) as u8).collect();
+            assert!(!above_mxfp4_max(&base));
+            assert_eq!(above_mxfp4_max(&base), naive(&base));
+            for at in [0, 1, length / 2, 4095, 4096, length.saturating_sub(1)] {
+                if at >= length {
+                    continue;
+                }
+                for value in [MXFP4_SCALE_MAX, 253, 254, 255] {
+                    let mut bytes = base.clone();
+                    bytes[at] = value;
+                    assert_eq!(
+                        above_mxfp4_max(&bytes),
+                        naive(&bytes),
+                        "{length} {at} {value}"
+                    );
+                }
+            }
+        }
     }
 }

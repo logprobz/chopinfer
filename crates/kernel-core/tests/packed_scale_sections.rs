@@ -385,6 +385,86 @@ fn scale_section_keeps_full_source_validation_and_code_dependent_fallback() {
     }
 }
 
+/// Sections produced from one shared scale tensor (every rank's slice of a
+/// matrix) answer exactly what each answers checking the tensor alone: the
+/// same bytes, refusal or fallback, whichever section checks it first and
+/// whatever scale count it checks.
+#[test]
+fn shared_standalone_scales_answer_each_section_as_alone() {
+    use kernel_core::weight_transform::StandaloneScales;
+    let (operand, record, _, valid) = record(DecodeOrder::ExactScaledOperand);
+    let slices = [
+        (vec![2..5, 8..13], 64..128),
+        (vec![0..12], 0..96),
+        (vec![4..16], 160..256),
+        (vec![15..16], 224..256),
+    ];
+    let mut sections = Vec::new();
+    for order in [
+        DecodeOrder::ExactScaledOperand,
+        DecodeOrder::NativeBlockScaledMma,
+    ] {
+        for (rows, k) in &slices {
+            let mut sliced = operand.clone();
+            sliced.decode_order = order;
+            sliced.matrices[0].rows_kept = rows.clone();
+            sliced.matrices[0].k_kept = k.clone();
+            let mut sliced_record = record.clone();
+            sliced_record.transform = WeightTransform::PackedOperand(Box::new(sliced.clone()));
+            sections.push((sliced.clone(), sliced_record.clone()));
+            // A section of a half-height matrix, which checks another scale
+            // count against the same bytes.
+            sliced.matrices[0].rows = 8;
+            sliced.matrices[0].rows_kept = vec![1..7];
+            sliced_record.transform = WeightTransform::PackedOperand(Box::new(sliced.clone()));
+            sliced_record.sources[0].byte_length = 1024;
+            sliced_record.sources[1].byte_length = 64;
+            assert_eq!(sliced.independent_scale_source(&sliced_record), Some(1));
+            sections.push((sliced, sliced_record));
+        }
+    }
+    let mut finite_extreme = valid.clone();
+    finite_extreme[3] = 254;
+    let mut infinite = valid.clone();
+    infinite[100] = 255;
+    let mut answers = std::collections::BTreeSet::new();
+    for scales in [valid, finite_extreme, infinite] {
+        let alone: Vec<_> = sections
+            .iter()
+            .map(|(operand, record)| {
+                operand
+                    .independent_scales(record, &scales, vec![7; 3])
+                    .map_err(|error| error.0)
+            })
+            .collect();
+        // Every kind of answer occurs: sections, fallbacks and refusals.
+        let kinds = |pattern: fn(&Result<Option<Vec<u8>>, String>) -> bool| {
+            alone.iter().filter(|answer| pattern(answer)).count()
+        };
+        assert!(kinds(|answer| answer.is_err()) > 0);
+        if !scales.contains(&255) {
+            assert!(kinds(|answer| matches!(answer, Ok(Some(_)))) > 0);
+        }
+        for first in 0..sections.len() {
+            let shared = StandaloneScales::new(&scales);
+            let order = (first..sections.len()).chain(0..first);
+            for index in order {
+                let (operand, record) = &sections[index];
+                let answer = operand
+                    .independent_scales_of(record, &shared, vec![7; 3])
+                    .map_err(|error| error.0);
+                assert_eq!(answer, alone[index], "section {index} after {first}");
+            }
+        }
+        answers.extend(alone.iter().map(|answer| match answer {
+            Ok(Some(_)) => "section",
+            Ok(None) => "fallback",
+            Err(_) => "refusal",
+        }));
+    }
+    assert_eq!(answers.len(), 3);
+}
+
 #[test]
 fn independent_scales_fall_back_for_padded_coordinate_overflow() {
     for axis in ["row", "column"] {

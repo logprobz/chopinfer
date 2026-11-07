@@ -6,10 +6,9 @@
 //! `prefix_snapshot_copy_kernel` candidate each rank instead uploads the
 //! snapshot's page and segment table and launches the shared snapshot copy
 //! kernel once ([`SnapshotKernel`]), with the same checks, header actions
-//! and drain. The KV
-//! sources' compressed latents and index keys live in the shared pages
-//! already. A ring holds its last window of positions; a tail the open
-//! group's row. The Engram history needs no pages: a restore names every
+//! and drain. The KV sources' compressed latents and index keys live in the
+//! shared pages already. A ring holds its last window of positions; a tail
+//! the open group's row. The Engram history needs no pages: a restore names every
 //! prefix token, and the history takes the last of them. A capture at an
 //! anchor kept inside a prompt-ending item copies that anchor's spares
 //! instead of a slot (`execute::anchors`), DSpark's raw feature history
@@ -379,5 +378,92 @@ impl PrefixInstance for Instance {
             }
         }
         restored
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bundle_runtime::geometry::{Items, Ranks};
+    use model_deepseek41_contract::geometry::FLASH;
+    use model_deepseek41_contract::state::{KvStorage, request_state_with_anchors};
+
+    struct Nothing;
+
+    impl Backend for Nothing {
+        fn name(&self) -> &str {
+            "nothing"
+        }
+    }
+
+    fn extent(verify_rows: u32) -> Extent {
+        let items = Items::new(4).unwrap();
+        Extent {
+            served: items.get(),
+            bucket: items.capacity(),
+            verify_rows,
+        }
+    }
+
+    /// The bundle's kernel serves the slot and anchor snapshots of every
+    /// Flash state it declares: its ops cover the snapshot's pages and
+    /// views, and its table the most pieces either holder's snapshot has.
+    #[test]
+    fn the_bundle_kernel_serves_every_flash_snapshot() {
+        for ranks in [Ranks::TP1, Ranks::TP2, Ranks::TP4] {
+            let shape = crate::shape::Shape::new(&FLASH, ranks).unwrap();
+            for storage in [KvStorage::Native, KvStorage::Bf16] {
+                let kernels = crate::Kernels::new_for_kv(&shape, storage).unwrap();
+                for (dspark, anchors) in [(false, 0), (false, 4), (true, 0), (true, 4)] {
+                    if dspark && storage != KvStorage::Native {
+                        continue;
+                    }
+                    let state =
+                        request_state_with_anchors(shape.geometry, storage, dspark, anchors);
+                    let extent = extent(if dspark { 6 } else { 0 });
+                    let kernel =
+                        SnapshotKernel::prepare(kernels.backend.as_ref(), &state, extent).unwrap();
+                    let mut holders = vec![Holder::Slot(0), Holder::Slot(3)];
+                    if anchors > 0 {
+                        holders.extend([Holder::Anchor(0), Holder::Anchor(anchors - 1)]);
+                    }
+                    let tables = holders
+                        .into_iter()
+                        .map(|holder| Table::new(&state, extent, holder).unwrap())
+                        .collect::<Vec<_>>();
+                    let most = tables.iter().map(|table| table.descriptors.len()).max();
+                    let (capture, restore) = (kernel.capture.0, kernel.restore.0);
+                    assert_eq!(capture.direction, Direction::ToPages);
+                    assert_eq!(restore.direction, Direction::FromPages);
+                    for table in &tables {
+                        for op in [capture, restore] {
+                            assert_eq!(u64::from(op.pages), table.pages());
+                            assert_eq!(op.page_bytes, table.page_bytes);
+                        }
+                    }
+                    let views = if dspark { 3 } else { 2 };
+                    assert_eq!((capture.views, restore.views), (views, views));
+                    assert_eq!(
+                        kernel.table_bytes(),
+                        capture.pages as u64 * 8 + most.unwrap() as u64 * 32,
+                        "{ranks:?} {storage:?} {dspark} {anchors}"
+                    );
+                }
+            }
+        }
+    }
+
+    /// A backend without the kernel refuses it, so create keeps the device
+    /// copies.
+    #[test]
+    fn a_backend_without_the_kernel_keeps_the_device_copies() {
+        let state = request_state_with_anchors(&FLASH, KvStorage::Native, false, 0);
+        let error = SnapshotKernel::prepare(&Nothing, &state, extent(0))
+            .err()
+            .expect("the kernel is refused");
+        assert_eq!(
+            error,
+            kernel_core::backend::Refused::Unsupported.to_string()
+        );
     }
 }

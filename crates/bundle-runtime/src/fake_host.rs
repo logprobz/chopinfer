@@ -58,6 +58,37 @@ pub fn journal_digest(lines: &[String]) -> (usize, u64) {
     (lines.len(), fnv1a(lines.join("\n").as_bytes()))
 }
 
+/// Runs `release` when the calling thread ends.
+///
+/// A bundle instance's service table stays resident for the whole process
+/// (`runtime_bundle_abi` keeps every table a create has seen, since the
+/// bundle may still hold its caller), and with it the fake host the table
+/// owns, destroyed or poisoned. A host registers here to free what it
+/// recorded once its test thread ends, so one test process does not keep
+/// every test's journals.
+pub fn release_at_thread_exit(release: impl FnOnce() + 'static) {
+    struct Releases(RefCell<Vec<Box<dyn FnOnce()>>>);
+    impl Drop for Releases {
+        fn drop(&mut self) {
+            for release in self.0.get_mut().drain(..) {
+                release();
+            }
+        }
+    }
+    thread_local! {
+        static RELEASES: Releases = const { Releases(RefCell::new(Vec::new())) };
+    }
+    // A thread already destroying its locals keeps the host's records.
+    let _ = RELEASES.try_with(|releases| releases.0.borrow_mut().push(Box::new(release)));
+}
+
+/// Frees `cell`'s value unless it is borrowed.
+pub fn free<T: Default>(cell: &RefCell<T>) {
+    if let Ok(mut value) = cell.try_borrow_mut() {
+        drop(std::mem::take(&mut *value));
+    }
+}
+
 /// Checks `lines` against its pinned digest. On a mismatch the journal goes
 /// to `file` in the temporary directory, for diffing, and the error names
 /// the observed digest and the path.
@@ -346,6 +377,24 @@ impl<O: JournalObserver> FakeDevice<O> {
                 .checked_add(1)
                 .expect("mapped gather count overflow"),
         );
+    }
+
+    /// Frees the records of what the bundle did: the journal, the logs and
+    /// the launch histories. Handles, spans and graphs stay, so the device
+    /// still answers ([`release_at_thread_exit`]).
+    pub fn release_records(&self) {
+        free(&self.journal);
+        free(&self.logs);
+        free(&self.route_names);
+        free(&self.residency_queries);
+        // An open capture counts its nodes from its start in `launched`.
+        if self
+            .capture_starts
+            .try_borrow()
+            .is_ok_and(|starts| starts.is_empty())
+        {
+            free(&self.launched);
+        }
     }
 
     /// Bound sweep storage between steps, with no open graph capture.
@@ -967,6 +1016,34 @@ macro_rules! unused_host_services {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A host the thread still holds when it ends, as a retained service
+    /// table holds one, gives back its records.
+    #[test]
+    fn a_thread_releases_its_hosts_records_when_it_ends() {
+        let (sender, receiver) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let device = std::rc::Rc::new(FakeDevice::<NoObserver>::default());
+            device.note("launch 1 symbol".into());
+            device.log(b"message");
+            let retained = std::rc::Rc::clone(&device);
+            let weak = std::rc::Rc::downgrade(&device);
+            release_at_thread_exit(move || {
+                if let Some(device) = weak.upgrade() {
+                    device.release_records();
+                }
+                let records = (
+                    retained.journal.borrow().len(),
+                    retained.logs.borrow().len(),
+                );
+                sender.send(records).unwrap();
+            });
+            assert_eq!(device.journal.borrow().len(), 1);
+        })
+        .join()
+        .unwrap();
+        assert_eq!(receiver.recv().unwrap(), (0, 0));
+    }
 
     #[test]
     fn ordinary_launches_require_an_exact_symbol_declaration() {

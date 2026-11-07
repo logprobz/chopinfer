@@ -43,10 +43,12 @@ fn commit_trace_separates_scheduler_and_model_scopes() {
 }
 
 /// Samples token 7 for every row. Each execute reports the next queued
-/// prepared-gather wait, as a host completing its gathers would.
+/// prepared-gather wait, as a host completing its gathers would, and first
+/// blocks on the device for `device_wait`, as a host readback would.
 #[derive(Default)]
 struct SampledExecutor {
     gather_waits: std::collections::VecDeque<u64>,
+    device_wait: Duration,
 }
 
 impl ModelExecutor for SampledExecutor {
@@ -57,6 +59,10 @@ impl ModelExecutor for SampledExecutor {
         items: &[ModelBatchItem],
         _: &PreparedAppendBatch,
     ) -> Result<ModelTransaction<Self::TransactionState<'a>>, ExecutorError> {
+        if !self.device_wait.is_zero() {
+            let _wait = profile::PhaseTimer::new(profile::StepPhase::DeviceWait);
+            std::thread::sleep(self.device_wait);
+        }
         if let Some(nanoseconds) = self.gather_waits.pop_front() {
             profile::record_mapped_gather_exposed(nanoseconds);
         }
@@ -187,6 +193,35 @@ fn traced_steps_report_the_prepared_gather_waits_their_execution_completed() {
         assert!(!engine.drain_events().is_empty());
     }
     assert_eq!(exposed, [0, 2, 0, 0]);
+}
+
+/// `boundary_us` runs from the previous step's last device wait ending to
+/// this step's first one starting: at least the gap between the executor
+/// calls, and short of the waits themselves.
+#[test]
+fn traced_steps_bound_device_idle_between_their_device_waits() {
+    let wait = Duration::from_millis(20);
+    let mut engine = engine(4, 0, true);
+    engine.executor.device_wait = wait;
+    let mut hosts = Vec::new();
+    for _ in 0..4 {
+        let _totals = profile::TraceTotals::begin();
+        engine.host_clock.step_entered();
+        assert_eq!(
+            engine.step_scheduled_batch(&mut |_| {}).unwrap(),
+            StepStatus::Progressed
+        );
+        hosts.push(engine.pending_step_trace.take().unwrap().host);
+        assert!(!engine.drain_events().is_empty());
+    }
+    assert_eq!(hosts[0].boundary, None, "no earlier step waited");
+    for host in &hosts {
+        assert!(host.device_wait >= wait.as_micros() as u64);
+    }
+    for host in &hosts[1..] {
+        let (boundary, gap) = (host.boundary.unwrap(), host.gap.unwrap());
+        assert!(gap <= boundary && boundary < gap + wait.as_micros() as u64);
+    }
 }
 
 #[test]

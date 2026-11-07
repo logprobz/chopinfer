@@ -105,6 +105,27 @@ pub fn device_wait_started(at: Instant) {
     }
 }
 
+/// The current step's device waits so far: their summed host time and the
+/// window the step trace's `boundary_us` is measured between.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct DeviceWaits {
+    pub micros: u64,
+    pub first_started: Option<Instant>,
+    pub last_ended: Option<Instant>,
+}
+
+/// The current step's device waits so far, or after a step the last step's.
+/// Reads no clock and waits on nothing.
+#[must_use]
+pub fn device_waits() -> DeviceWaits {
+    let (first_started, last_ended) = WAITS.get();
+    DeviceWaits {
+        micros: TOTALS.get()[StepPhase::DeviceWait as usize],
+        first_started,
+        last_ended,
+    }
+}
+
 /// Phase totals of the current step so far, and its device-wait window.
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct PhaseSnapshot {
@@ -416,6 +437,14 @@ mod tests {
             window
                 .last_wait_ended
                 .is_some_and(|ended| ended >= deferred)
+        );
+        assert_eq!(
+            device_waits(),
+            DeviceWaits {
+                micros: window.totals[StepPhase::DeviceWait as usize],
+                first_started: window.first_wait_started,
+                last_ended: window.last_wait_ended,
+            }
         );
         drop(totals);
         assert!(!is_tracing());

@@ -270,3 +270,79 @@ fn refused_pages_submit_nothing() {
     instance.retire_request(7).unwrap();
     instance.destroy().unwrap();
 }
+
+/// The pinned Flash journals of each topology and KV layout with the
+/// candidate on (`journal_steps_with`). Each rank also allocates its table
+/// and resolves the kernel's symbol at acquire, and releases the table, the
+/// symbol and the module at destroy: five lines a rank. The lifecycle
+/// captures no snapshot, so nothing else changes.
+#[test]
+fn the_flash_journals_add_each_ranks_kernel_and_table() {
+    let mut mismatches = Vec::new();
+    for (topology, storage, (default_lines, _)) in super::FLASH_JOURNALS {
+        let shape = crate::shape::topologies()
+            .into_iter()
+            .find(|shape| shape.topology() == topology)
+            .unwrap();
+        let kv = KV_LAYOUTS
+            .into_iter()
+            .find(|kv| kv.storage == storage)
+            .unwrap();
+        let host = FakeHost::new(shape, kv);
+        super::journal_steps_with(&host, &[(PREFIX_SNAPSHOT_COPY_KERNEL, true.into())]);
+        assert_eq!(host.acquired.get(), host.released.get(), "{topology}");
+        let lines = host.device.journal.borrow().clone();
+        assert_eq!(
+            lines.len(),
+            default_lines + 5 * shape.ranks() as usize,
+            "{topology} {storage:?}"
+        );
+        let layout = format!("{storage:?}").to_lowercase();
+        let (_, _, expected) = KERNEL_JOURNALS
+            .iter()
+            .find(|(id, kind, _)| *id == topology && *kind == storage)
+            .unwrap();
+        if let Err(observed) = bundle_runtime::fake_host::check_journal(
+            &lines,
+            *expected,
+            &format!("{topology}.{layout}.snapshot-kernel.journal"),
+        ) {
+            mismatches.push(format!("{topology} {layout}: {observed}"));
+        }
+    }
+    assert!(mismatches.is_empty(), "{mismatches:#?}");
+}
+
+/// The pins of [`the_flash_journals_add_each_ranks_kernel_and_table`].
+const KERNEL_JOURNALS: [(&str, KvStorage, (usize, u64)); 6] = [
+    (
+        "deepseek41-flash-tp1",
+        KvStorage::Native,
+        (15530, 0x29f7335e333d1126),
+    ),
+    (
+        "deepseek41-flash-tp1",
+        KvStorage::Bf16,
+        (15384, 0xcac404178240be70),
+    ),
+    (
+        "deepseek41-flash-tp2",
+        KvStorage::Native,
+        (30985, 0x000e95084ddb42cf),
+    ),
+    (
+        "deepseek41-flash-tp2",
+        KvStorage::Bf16,
+        (30693, 0x0c75b58efb5ba8e3),
+    ),
+    (
+        "deepseek41-flash-tp4",
+        KvStorage::Native,
+        (76821, 0x16235ecfd35b978b),
+    ),
+    (
+        "deepseek41-flash-tp4",
+        KvStorage::Bf16,
+        (75201, 0x8a84acb7af55eb6b),
+    ),
+];

@@ -142,6 +142,23 @@ fn catch_up_graphs_reuse_exact_rows_across_slots_and_commits() {
 /// pinned; the verify step's fusions are `verify_rows`' to check.
 #[test]
 fn prefix_capture_catch_up_quantizes_small_writes_with_the_row_fusions() {
+    prefix_capture_catch_up(false);
+}
+
+/// The same lifetime with the `prefix_snapshot_copy_kernel` candidate on.
+/// Its journal is the device copies' plus each rank's snapshot copy symbol
+/// and table and their releases, with each snapshot's copies on a rank made
+/// by one table upload and one launch, whose `kernel copy` lines are the
+/// device copies' lines.
+#[test]
+fn prefix_capture_catch_up_with_the_snapshot_copy_kernel() {
+    super::super::snapshot_kernel::with_kernel(|| prefix_capture_catch_up(true));
+}
+
+/// The prefix capture lifetime, its journal checked against the pin with
+/// the snapshot copy candidate on (`kernel`, which the caller turns on) or
+/// off.
+fn prefix_capture_catch_up(kernel: bool) {
     use model_deepseek41_contract::execution_options::DSPARK_GRAPH_HANDLES_PER_RANK;
     const SERIAL: &str = "chop_deepseek41_latent_ceil32_v1 ";
     const PARALLEL: &str = "chop_deepseek41_latent_ceil32_parallel_v1 ";
@@ -182,10 +199,18 @@ fn prefix_capture_catch_up_quantizes_small_writes_with_the_row_fusions() {
             .count()
     };
     assert_eq!((launches(SERIAL), launches(PARALLEL)), (0, 12));
-    let name = "flash-tp4-dspark-prefix-capture.journal";
-    if let Err(error) =
-        bundle_runtime::fake_host::check_journal(&lines, (40260, 0x285bf685078676d9), name)
-    {
+    let (name, expected) = if kernel {
+        (
+            "flash-tp4-dspark-prefix-capture-snapshot-kernel.journal",
+            (40296, 0x49f4b18e3bcd732b),
+        )
+    } else {
+        (
+            "flash-tp4-dspark-prefix-capture.journal",
+            (40260, 0x285bf685078676d9),
+        )
+    };
+    if let Err(error) = bundle_runtime::fake_host::check_journal(&lines, expected, name) {
         panic!("{name}: {error}");
     }
 }

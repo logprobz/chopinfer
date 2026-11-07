@@ -186,7 +186,9 @@ enum Model {
 /// Every shape's description on `model` against its pin, with DMA as
 /// `dma`. Every mismatch is reported together: an unpinned shape as a
 /// table entry, a differing one with its digest, the first with the file
-/// of its lines.
+/// of its lines. Until the first mismatch each pinned description is
+/// checked as a journal, so a journal capture of a passing run records
+/// every pin.
 fn check(model: Model, dma: bool, pins: &[(&str, (usize, u64))]) {
     let host = host(matches!(model, Model::DSpark));
     if matches!(model, Model::ArMapped) {
@@ -203,13 +205,14 @@ fn check(model: Model, dma: bool, pins: &[(&str, (usize, u64))]) {
             .unwrap_or_else(|e| panic!("{model:?} dma={dma} {name}: {e}"));
         let (count, hash) = bundle_runtime::fake_host::journal_digest(&lines);
         match pins.iter().find(|(n, _)| *n == name) {
-            Some(&(_, pin)) if pin == (count, hash) => {}
             // Only the first mismatch writes its lines (about 10 MB).
             Some(&(_, pin)) if mismatches.is_empty() => {
-                let file = format!("prefill-plan-metadata-{model:?}-{dma}-{name}");
-                let error = bundle_runtime::fake_host::check_journal(&lines, pin, &file);
-                mismatches.push(format!("{name}: {}", error.unwrap_err()));
+                let file = format!("prefill-plan-metadata-{model:?}-{dma}-{name}.txt");
+                if let Err(error) = bundle_runtime::fake_host::check_journal(&lines, pin, &file) {
+                    mismatches.push(format!("{name}: {error}"));
+                }
             }
+            Some(&(_, pin)) if pin == (count, hash) => {}
             Some(_) => mismatches.push(format!("{name}: ({count}, {hash:#018x})")),
             None => mismatches.push(format!(
                 "{name}: unpinned, (\"{name}\", ({count}, {hash:#018x})),"
@@ -248,8 +251,8 @@ fn restored(model: Model, prefix: u64) -> BundleInstanceV1 {
 /// on a fresh instance, with DMA as `dma`: the streamed plan and its Engram
 /// plan (`skip::describing_streamed`) hold the shape's pin, or, for a
 /// shape no pin holds, describe as a fresh lowering does
-/// (`plan_timing::describe`). Mismatches are reported together, as
-/// `check` reports them.
+/// (`plan_timing::describe`). Mismatches are reported together, and pinned
+/// plans checked as journals, as `check` reports and checks them.
 fn check_streamed(model: Model, dma: bool, pins: &[(&str, (usize, u64))]) {
     let mut mismatches = Vec::new();
     for shape in served() {
@@ -288,14 +291,17 @@ fn check_streamed(model: Model, dma: bool, pins: &[(&str, (usize, u64))]) {
             bundle_runtime::fake_host::journal_digest(&fresh)
         };
         let (count, hash) = bundle_runtime::fake_host::journal_digest(lines);
-        if pin == (count, hash) {
+        // A plan that describes as a fresh lowering does has no pin of its
+        // own to check.
+        if !shape.pinned && pin == (count, hash) {
             continue;
         }
         if mismatches.is_empty() {
-            let file = format!("prefill-plan-metadata-streamed-{model:?}-{dma}-{name}");
-            let error = bundle_runtime::fake_host::check_journal(lines, pin, &file);
-            mismatches.push(format!("{name}: {}", error.unwrap_err()));
-        } else {
+            let file = format!("prefill-plan-metadata-streamed-{model:?}-{dma}-{name}.txt");
+            if let Err(error) = bundle_runtime::fake_host::check_journal(lines, pin, &file) {
+                mismatches.push(format!("{name}: {error}"));
+            }
+        } else if pin != (count, hash) {
             mismatches.push(format!("{name}: ({count}, {hash:#018x})"));
         }
     }

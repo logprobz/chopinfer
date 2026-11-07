@@ -85,7 +85,7 @@ mod linux {
             Self(path)
         }
         fn cache(&self) -> Cache {
-            Cache::open(&self.0.join("cache")).unwrap()
+            Cache::open(&self.0.join("cache"), Kind::Plans).unwrap()
         }
     }
     impl Drop for Temp {
@@ -373,10 +373,10 @@ mod linux {
         assert!(cache.read(&key).is_none());
         assert!(cache.publish(&key, &plan().encode(), 1024, 3).is_err());
         symlink(temp.0.join("cache"), temp.0.join("link")).unwrap();
-        assert!(Cache::open(&temp.0.join("link")).is_err());
-        assert!(Cache::open(&temp.0.join("link/child")).is_err());
+        assert!(Cache::open(&temp.0.join("link"), Kind::Plans).is_err());
+        assert!(Cache::open(&temp.0.join("link/child"), Kind::Plans).is_err());
         fs::set_permissions(temp.0.join("cache"), fs::Permissions::from_mode(0o755)).unwrap();
-        assert!(Cache::open(&temp.0.join("cache")).is_err());
+        assert!(Cache::open(&temp.0.join("cache"), Kind::Plans).is_err());
     }
 
     #[test]

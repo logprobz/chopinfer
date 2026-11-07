@@ -935,6 +935,145 @@ fn census_items_of_one_scale_tensor_share_one_read() {
     assert_eq!(measured.iter().map(|(_, read)| read).sum::<u64>(), 2 * 2048);
 }
 
+/// Measured census counts are reused only over the same files and
+/// implementation, for the same documents or the same requests, and stored
+/// only from files that settled before the measurement began.
+#[cfg(target_os = "linux")]
+#[test]
+fn census_counts_are_reused_only_for_the_files_they_measured() {
+    use super::plan_cache::census::{MeasuredV1, ReuseV1};
+    use super::plan_cache::{Cache, Kind};
+    use runtime_bundle_abi::weight_plan::{
+        CENSUS_SCALE_ROW_OFFSET_V1, CensusItemV1, WeightCensusV1,
+    };
+    use std::cell::Cell;
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
+    let (root, plans, _, _) = fixture(2);
+    let checkpoint = DirectCheckpointV1::open(&root.0).unwrap();
+    let mut documents: Vec<(u32, WeightCensusV1, Vec<u8>)> = plans
+        .iter()
+        .map(|plan| {
+            let items = plan
+                .records
+                .iter()
+                .filter_map(|record| {
+                    let WeightTransform::PackedOperand(operand) =
+                        WeightTransform::decode(record.transform, &record.params).unwrap()
+                    else {
+                        unreachable!("the fixture packs every record");
+                    };
+                    (operand.section == PackedSection::LocalScales).then(|| {
+                        let (rows, groups) = operand.plan.scale_shape();
+                        CensusItemV1 {
+                            kind: CENSUS_SCALE_ROW_OFFSET_V1,
+                            rows: rows as u64,
+                            groups: groups as u64,
+                            record: WeightRecordV1 {
+                                arena_offset: 0,
+                                ..record.clone()
+                            },
+                        }
+                    })
+                })
+                .collect();
+            let census = WeightCensusV1 {
+                ranks: plan.ranks,
+                rank: plan.rank,
+                items,
+            };
+            let bytes = census.encode();
+            (plan.rank, census, bytes)
+        })
+        .collect();
+    let measurements = Cell::new(0);
+    // One answer for `documents` and how many measurements it took.
+    let answer = |reuse: &ReuseV1<'_>,
+                  requests: &[[u8; 32]],
+                  documents: &[(u32, WeightCensusV1, Vec<u8>)],
+                  settled_before: SystemTime| {
+        let (measured, reused) = reuse
+            .for_documents(requests, documents, settled_before, || {
+                measurements.set(measurements.get() + 1);
+                let (answer, unique, bytes_read) = census_counts_v1(&checkpoint, documents)?;
+                Ok(MeasuredV1 {
+                    answer,
+                    unique: unique as u64,
+                    bytes_read,
+                })
+            })
+            .unwrap();
+        (measured, reused, measurements.replace(0))
+    };
+    let requests = [[3; 32], [4; 32], [5; 32], [6; 32]];
+    let other_requests = [[3; 32], [4; 32], [5; 32], [7; 32]];
+    // The checkpoint skips hidden directories.
+    let cache = Cache::open(&root.0.join(".census"), Kind::Census).unwrap();
+    assert!(ReuseV1::new(None, &checkpoint, [1; 32]).is_none());
+    let reuse = ReuseV1::new(Some(&cache), &checkpoint, [1; 32]).unwrap();
+    assert!(reuse.for_requests(&requests).is_none());
+    let (fresh, reused, measured) = answer(&reuse, &requests, &documents, SystemTime::now());
+    assert_eq!((reused, measured), (false, 1));
+    assert_eq!(fresh.bytes_read, 2 * 2048);
+    assert_eq!(reuse.for_requests(&requests).as_ref(), Some(&fresh));
+    // Other requests asking the same census reuse it, and are answered next.
+    assert!(reuse.for_requests(&other_requests).is_none());
+    let (again, reused, measured) = answer(&reuse, &other_requests, &documents, SystemTime::now());
+    assert_eq!((reused, measured), (true, 0));
+    assert_eq!(again, fresh);
+    assert_eq!(reuse.for_requests(&other_requests).as_ref(), Some(&fresh));
+    // Another implementation answers from neither key.
+    let other = ReuseV1::new(Some(&cache), &checkpoint, [2; 32]).unwrap();
+    assert!(other.for_requests(&requests).is_none());
+    assert_eq!(
+        answer(&other, &requests, &documents, SystemTime::now()).2,
+        1
+    );
+    // Another document is another census.
+    let mut fewer = documents.clone();
+    fewer[0].1.items.pop();
+    fewer[0].2 = fewer[0].1.encode();
+    let (smaller, reused, _) = answer(&reuse, &[[8; 32]; 4], &fewer, SystemTime::now());
+    assert!(!reused);
+    assert_eq!(
+        smaller.answer[0].counts.len(),
+        fresh.answer[0].counts.len() - 1
+    );
+    // Files that changed after the given instant leave nothing stored.
+    let unsettled = Cache::open(&root.0.join(".unsettled"), Kind::Census).unwrap();
+    let reuse_unsettled = ReuseV1::new(Some(&unsettled), &checkpoint, [1; 32]).unwrap();
+    for _ in 0..2 {
+        let (_, reused, measured) = answer(&reuse_unsettled, &requests, &documents, UNIX_EPOCH);
+        assert_eq!((reused, measured), (false, 1));
+    }
+    assert!(reuse_unsettled.for_requests(&requests).is_none());
+    // A changed file stamp names other files.
+    std::fs::File::options()
+        .write(true)
+        .open(root.0.join("model.safetensors"))
+        .unwrap()
+        .set_modified(SystemTime::now() - Duration::from_secs(60))
+        .unwrap();
+    let touched = ReuseV1::new(Some(&cache), &checkpoint, [1; 32]).unwrap();
+    assert!(touched.for_requests(&requests).is_none());
+    let (_, reused, measured) = answer(&touched, &requests, &documents, SystemTime::now());
+    assert_eq!((reused, measured), (false, 1));
+    assert!(touched.for_requests(&requests).is_some());
+    // A census that measures nothing is never stored.
+    for document in &mut documents {
+        document.1.items.clear();
+        document.2 = document.1.encode();
+    }
+    let empty = Cache::open(&root.0.join(".empty"), Kind::Census).unwrap();
+    let reuse_empty = ReuseV1::new(Some(&empty), &checkpoint, [1; 32]).unwrap();
+    for _ in 0..2 {
+        assert_eq!(
+            answer(&reuse_empty, &requests, &documents, SystemTime::now()).2,
+            1
+        );
+    }
+    assert_eq!(std::fs::read_dir(root.0.join(".empty")).unwrap().count(), 0);
+}
+
 /// A bank planned in row tiles, or in quad-lane row tiles, loads each
 /// rank's row-major share in its tiles (the codes in quad-lane order),
 /// through the reused, independent-scale and shared paths alike, and plans

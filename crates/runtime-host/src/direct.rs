@@ -2675,7 +2675,8 @@ pub fn plan_image_v1(
         &components,
         &host_views,
     )?;
-    let cache = plan_cache::Cache::selected();
+    let census_seconds = started.elapsed().as_secs_f64();
+    let cache = plan_cache::Cache::selected(plan_cache::Kind::Plans);
     let mut validation_seconds = 0.0;
     let result = plan_cache::prepare(
         cache.as_ref(),
@@ -2721,6 +2722,7 @@ pub fn plan_image_v1(
         serde_json::json!({
             "image_role": image_role,
             "seconds": started.elapsed().as_secs_f64(), "plan_seconds": planned_seconds,
+            "census_seconds": census_seconds, "validation_seconds": validation_seconds,
             "ranks": ranks, "records": records, "shared_outputs": image.inner.shared.len(),
             "metadata_cache_enabled": cache.is_some(), "metadata_cache_hits": cache_hits,
             "checkpoint_identity": image.checkpoint().identity_hex(),
@@ -2741,7 +2743,8 @@ fn census_enabled_v1() -> bool {
 }
 
 /// Asks the bundle what to measure for every rank of `image_role`, measures
-/// each distinct item once on the CPU and answers with every rank's counts,
+/// each distinct item once on the CPU, or reuses the counts measured for the
+/// same files ([`plan_cache::census`]), and answers with every rank's counts,
 /// empty when the bundle exports no census, measures nothing, or the census
 /// is turned off.
 fn census_v1(
@@ -2757,37 +2760,85 @@ fn census_v1(
         return Ok(Vec::new());
     }
     let started = Instant::now();
-    let mut documents = Vec::new();
-    for rank in 0..ranks {
-        let request = checkpoint.request(
+    let settled_before = std::time::SystemTime::now()
+        .checked_sub(plan_cache::census::SETTLED)
+        .unwrap_or(std::time::UNIX_EPOCH);
+    let request = |rank| {
+        checkpoint.request(
             image_role,
             ranks,
             rank,
             implementation,
             components.to_vec(),
             host_views.to_vec(),
-        );
-        if let Some((census, bytes)) = library
-            .weight_census(&request)
-            .map_err(|error| format!("{image_role} rank {rank} weight census: {error}"))?
-        {
-            documents.push((rank, census, bytes));
+        )
+    };
+    let cache = plan_cache::Cache::selected(plan_cache::Kind::Census);
+    let reuse = plan_cache::census::ReuseV1::new(
+        cache.as_ref(),
+        checkpoint,
+        implementation.shared_transforms,
+    );
+    let requests: Vec<[u8; 32]> = match reuse {
+        Some(_) => (0..ranks)
+            .map(|rank| plan_cache::census::request_digest_v1(&request(rank)))
+            .collect(),
+        None => Vec::new(),
+    };
+    let stored = reuse
+        .as_ref()
+        .and_then(|reuse| reuse.for_requests(&requests));
+    let (measured, cache_key, documents_seconds) = match stored {
+        Some(stored) => (stored, Some("requests"), None),
+        None => {
+            let mut documents = Vec::new();
+            for rank in 0..ranks {
+                if let Some((census, bytes)) = library
+                    .weight_census(&request(rank))
+                    .map_err(|error| format!("{image_role} rank {rank} weight census: {error}"))?
+                {
+                    documents.push((rank, census, bytes));
+                }
+            }
+            let documents_seconds = started.elapsed().as_secs_f64();
+            let measure = || {
+                let (answer, unique, bytes_read) = census_counts_v1(checkpoint, &documents)?;
+                Ok(plan_cache::census::MeasuredV1 {
+                    answer,
+                    unique: unique as u64,
+                    bytes_read,
+                })
+            };
+            let (measured, reused) = match &reuse {
+                Some(reuse) => {
+                    reuse.for_documents(&requests, &documents, settled_before, measure)?
+                }
+                None => (measure()?, false),
+            };
+            (
+                measured,
+                reused.then_some("documents"),
+                Some(documents_seconds),
+            )
         }
-    }
-    let (answer, unique, bytes_read) = census_counts_v1(checkpoint, &documents)?;
+    };
     runtime_log::info!(
         "startup weight_census: {}",
         serde_json::json!({
             "image_role": image_role,
             "ranks": ranks,
-            "items": documents.iter().map(|(_, census, _)| census.items.len()).sum::<usize>(),
-            "unique_items": unique,
-            "bytes_read": bytes_read,
+            "items": measured.answer.iter().map(|rank| rank.counts.len()).sum::<usize>(),
+            "unique_items": measured.unique,
+            "bytes_read": if cache_key.is_some() { 0 } else { measured.bytes_read },
             "seconds": started.elapsed().as_secs_f64(),
+            "documents_seconds": documents_seconds,
+            "cache_enabled": cache.is_some(),
+            "cache_hit": cache_key.is_some(),
+            "cache_key": cache_key,
             "checkpoint_identity": checkpoint.identity_hex(),
         })
     );
-    Ok(answer)
+    Ok(measured.answer)
 }
 
 /// Every rank's measured census for the census documents `documents`

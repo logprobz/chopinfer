@@ -1,22 +1,72 @@
-//! Bounded metadata reuse. Cached plans still pass ordinary image validation.
+//! Bounded metadata reuse. Cached plans still pass ordinary image validation;
+//! reused census counts are bound to the files they were measured from
+//! ([`census`]).
 
 use super::{WeightPlanRequestV1, WeightPlanV1};
 
+pub(super) mod census;
 #[cfg(target_os = "linux")]
 mod files;
 #[cfg(target_os = "linux")]
 pub(super) use files::Cache;
 
+/// What one cache directory holds: validated plans, or measured census
+/// counts. Each kind has its own directory, so a host that knows only plans
+/// finds nothing else in its directory.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum Kind {
+    Plans,
+    Census,
+}
+
+// Only the Linux cache reads files.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+impl Kind {
+    /// The variable naming the directory (`0` turns the cache off).
+    const fn variable(self) -> &'static str {
+        match self {
+            Self::Plans => "CHOPINFER_WEIGHT_PLAN_CACHE",
+            Self::Census => "CHOPINFER_WEIGHT_CENSUS_CACHE",
+        }
+    }
+
+    /// The directory under the model cache when the variable is unset.
+    const fn directory(self) -> &'static str {
+        match self {
+            Self::Plans => "weight-plans-v1",
+            Self::Census => "weight-census-v1",
+        }
+    }
+
+    const fn suffix(self) -> &'static str {
+        match self {
+            Self::Plans => ".plan",
+            Self::Census => ".census",
+        }
+    }
+
+    const fn magic(self) -> &'static [u8; 8] {
+        match self {
+            Self::Plans => b"CHOPWPC1",
+            Self::Census => b"CHOPWCC1",
+        }
+    }
+}
+
 #[cfg(not(target_os = "linux"))]
 pub(super) struct Cache;
 #[cfg(not(target_os = "linux"))]
 impl Cache {
-    pub fn selected() -> Option<Self> {
+    pub fn selected(_kind: Kind) -> Option<Self> {
         None
     }
     pub fn read(&self, _key: &str) -> Option<WeightPlanV1> {
         None
     }
+    pub fn read_bytes(&self, _key: &str) -> Option<Vec<u8>> {
+        None
+    }
+    pub fn write(&self, _key: &str, _bytes: &[u8]) {}
     pub fn write_plan(&self, _key: &str, _plan: &WeightPlanV1) {}
 }
 

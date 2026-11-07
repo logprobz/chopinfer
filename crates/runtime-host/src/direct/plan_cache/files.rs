@@ -3,14 +3,13 @@
 // SAFETY-REVIEWED: the only foreign calls read the effective uid or lock a live fd.
 #![allow(unsafe_code)]
 
-use super::WeightPlanV1;
+use super::{Kind, WeightPlanV1};
 use std::fs::{self, DirBuilder, File, Metadata, OpenOptions};
 use std::io::{self, Read, Write};
 use std::os::fd::AsRawFd;
 use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt};
 use std::path::{Component, Path, PathBuf};
 
-const MAGIC: &[u8; 8] = b"CHOPWPC1";
 const HEADER_BYTES: u64 = 8 + 64 + 8 + 64;
 const ENTRY_BYTES: u64 = 256 << 20;
 const CACHE_BYTES: u64 = 1 << 30;
@@ -19,21 +18,22 @@ const CACHE_ENTRIES: usize = 64;
 pub(in crate::direct) struct Cache {
     directory: File,
     uid: u32,
+    kind: Kind,
 }
 
 impl Cache {
-    pub fn selected() -> Option<Self> {
-        let path = match std::env::var_os("CHOPINFER_WEIGHT_PLAN_CACHE") {
+    pub fn selected(kind: Kind) -> Option<Self> {
+        let path = match std::env::var_os(kind.variable()) {
             Some(value) if value == "0" || value.is_empty() => return None,
             Some(value) => PathBuf::from(value),
             None => runtime_bundle::preparation::default_cache_root()
                 .ok()?
-                .join("weight-plans-v1"),
+                .join(kind.directory()),
         };
-        Self::open(&path).ok()
+        Self::open(&path, kind).ok()
     }
 
-    pub(super) fn open(path: &Path) -> io::Result<Self> {
+    pub(in crate::direct) fn open(path: &Path, kind: Kind) -> io::Result<Self> {
         if !path.is_absolute() || path == Path::new("/") {
             return Err(io::Error::other("cache needs an absolute directory"));
         }
@@ -70,14 +70,23 @@ impl Cache {
         if metadata.uid() != uid || metadata.mode() & 0o077 != 0 {
             return Err(io::Error::other("cache directory is not private"));
         }
-        Ok(Self { directory, uid })
+        Ok(Self {
+            directory,
+            uid,
+            kind,
+        })
     }
 
     pub fn read(&self, key: &str) -> Option<WeightPlanV1> {
+        WeightPlanV1::decode(&self.read_bytes(key)?).ok()
+    }
+
+    /// The entry stored under `key`, whole and matching its digest.
+    pub fn read_bytes(&self, key: &str) -> Option<Vec<u8>> {
         self.read_checked(key).ok()
     }
 
-    fn read_checked(&self, key: &str) -> io::Result<WeightPlanV1> {
+    fn read_checked(&self, key: &str) -> io::Result<Vec<u8>> {
         let mut file = OpenOptions::new()
             .read(true)
             .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
@@ -90,7 +99,7 @@ impl Cache {
         let mut header = [0; HEADER_BYTES as usize];
         file.read_exact(&mut header)?;
         let length = u64::from_le_bytes(header[72..80].try_into().unwrap());
-        if &header[..8] != MAGIC
+        if &header[..8] != self.kind.magic()
             || &header[8..72] != key.as_bytes()
             || length != metadata.len() - HEADER_BYTES
         {
@@ -101,7 +110,7 @@ impl Cache {
         if runtime_weights::sha256_bytes(&bytes).as_bytes() != &header[80..] {
             return Err(io::Error::other("cache digest mismatch"));
         }
-        WeightPlanV1::decode(&bytes).map_err(io::Error::other)
+        Ok(bytes)
     }
 
     pub fn write_plan(&self, key: &str, plan: &WeightPlanV1) {
@@ -146,7 +155,10 @@ impl Cache {
             }
             let entry = entry?;
             let name = entry.file_name();
-            let Some(name) = name.to_str().and_then(|name| name.strip_suffix(".plan")) else {
+            let Some(name) = name
+                .to_str()
+                .and_then(|name| name.strip_suffix(self.kind.suffix()))
+            else {
                 return Err(io::Error::other("unexpected cache file"));
             };
             let metadata = fs::symlink_metadata(entry.path())?;
@@ -178,7 +190,7 @@ impl Cache {
                 .mode(0o600)
                 .custom_flags(libc::O_NOFOLLOW)
                 .open(&pending)?;
-            file.write_all(MAGIC)?;
+            file.write_all(self.kind.magic())?;
             file.write_all(key.as_bytes())?;
             file.write_all(&(bytes.len() as u64).to_le_bytes())?;
             file.write_all(runtime_weights::sha256_bytes(bytes).as_bytes())?;
@@ -193,7 +205,7 @@ impl Cache {
     }
 
     pub(super) fn path(&self, key: &str) -> PathBuf {
-        fd_path(&self.directory).join(format!("{key}.plan"))
+        fd_path(&self.directory).join(format!("{key}{}", self.kind.suffix()))
     }
 
     fn private_file(&self, metadata: &Metadata) -> bool {

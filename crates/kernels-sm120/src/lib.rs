@@ -26,6 +26,7 @@ pub mod row;
 pub mod sampling;
 pub mod selected_partials;
 pub mod sinkhorn_hc;
+pub mod snapshot_copy;
 
 pub use catalogs::{ByProfile, Catalogs, ModelCatalog, ProjectionInventory};
 pub use kernel_core::rank_shape::{ModelConfig, RankShape};

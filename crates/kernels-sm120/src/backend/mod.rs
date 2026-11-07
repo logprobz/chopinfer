@@ -146,6 +146,7 @@ mod sinkhorn_lagged;
 mod sinkhorn_prefill;
 mod sinkhorn_prefill_expand_mix;
 mod sinkhorn_round_expand_mix;
+mod snapshot_copies;
 
 pub use attention::AttentionEntries;
 pub use bf16_all_reduce::{
@@ -236,6 +237,7 @@ pub struct Sm120 {
     context_parallel: context_parallel::Selection,
     row_copies: Vec<crate::row::copy::Entry>,
     row_gathers: Vec<String>,
+    snapshot_copies: Vec<crate::snapshot_copy::Entry>,
     draft_noise: Vec<crate::row::draft_noise::Entry>,
     mxfp8_row_decoders: Vec<String>,
     row_rmsnorms: Vec<crate::row::RowInstantiation>,
@@ -1433,6 +1435,15 @@ impl Sm120 {
     /// every stream broadcast or every column slice SM120 takes.
     pub fn with_row_copy(mut self, entry: crate::row::copy::Entry) -> Self {
         self.row_copies.push(entry);
+        self
+    }
+
+    /// A snapshot copy entry the model's build compiles
+    /// (`snapshot_copy::cubin_spec`, the shared symbol of
+    /// `snapshot_copy::entries` or its own), which serves every snapshot
+    /// copy SM120 takes.
+    pub fn with_snapshot_copy(mut self, entry: crate::snapshot_copy::Entry) -> Self {
+        self.snapshot_copies.push(entry);
         self
     }
 
@@ -2790,6 +2801,14 @@ impl Backend for Sm120 {
         need: Need,
     ) -> Result<Prepared<GatherByIndexBuffers<View>>, Refused> {
         row_gather::gather_by_index(&self.row_gathers, op, need)
+    }
+
+    fn snapshot_copy(
+        &self,
+        op: &kernel_core::snapshot_copy::SnapshotCopy,
+        need: Need,
+    ) -> Result<Prepared<kernel_core::snapshot_copy::SnapshotCopyBuffers<View>>, Refused> {
+        snapshot_copies::snapshot_copy(&self.snapshot_copies, op, need)
     }
 }
 

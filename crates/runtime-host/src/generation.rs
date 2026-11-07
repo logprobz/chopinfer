@@ -4588,6 +4588,24 @@ fn retire_live_request<E: ModelExecutor>(
     }
 }
 
+/// What becomes of a live generation once it has handled one engine event.
+enum Handled {
+    /// It stays live.
+    Live,
+    /// It leaves the worker: its request ended or failed.
+    Ended,
+    /// It leaves the worker once its engine request is cancelled.
+    Cancel,
+    /// It leaves the worker once its engine request stops, its output
+    /// complete.
+    Stop,
+}
+
+/// Handles one engine event on its request's live generation, if any.
+///
+/// The generation handles the event where it lives; one that leaves is
+/// removed, and dropped only after its engine request is cancelled or
+/// stopped.
 fn handle_engine_event<E: ModelExecutor>(
     tokenizer: &Tokenizer,
     engine: &mut Engine<E>,
@@ -4595,14 +4613,34 @@ fn handle_engine_event<E: ModelExecutor>(
     event: EngineEvent,
 ) -> bool {
     let id = event.request_id();
-    let Some(mut generation) = active.remove(&id) else {
+    let Some(generation) = active.get_mut(&id) else {
         return true;
     };
-    match event.kind() {
+    let handled = handle_generation_event(tokenizer, engine, id, generation, event.kind());
+    if matches!(handled, Handled::Live) {
+        return true;
+    }
+    let generation = active.remove(&id);
+    let retired = match handled {
+        Handled::Live | Handled::Ended => true,
+        Handled::Cancel => cancel_live_request(engine, id),
+        Handled::Stop => retire_live_request(engine, id, true),
+    };
+    drop(generation);
+    retired
+}
+
+fn handle_generation_event<E: ModelExecutor>(
+    tokenizer: &Tokenizer,
+    engine: &mut Engine<E>,
+    id: RequestId,
+    generation: &mut ActiveGeneration,
+    event: &EngineEventKind,
+) -> Handled {
+    match event {
         EngineEventKind::PromptCached { tokens } => {
             generation.cached_tokens = Some(*tokens as u64);
-            active.insert(id, generation);
-            true
+            Handled::Live
         }
         EngineEventKind::PromptLogprobs { positions } => {
             let rows = positions
@@ -4653,15 +4691,14 @@ fn handle_engine_event<E: ModelExecutor>(
                     .try_emit(GenerationEvent::PromptLogprobs(rows))
                     .is_ok()
             }) {
-                active.insert(id, generation);
-                true
+                Handled::Live
             } else {
                 fail_output(
-                    &generation,
+                    generation,
                     "prompt logprobs could not be decoded or delivered",
                     None,
                 );
-                cancel_live_request(engine, id)
+                Handled::Cancel
             }
         }
         EngineEventKind::Token {
@@ -4673,22 +4710,22 @@ fn handle_engine_event<E: ModelExecutor>(
                 Ok(ordinal) => ordinal,
                 Err(_) => {
                     fail_output(
-                        &generation,
+                        generation,
                         "the generated token's ordinal overflowed",
                         Some((None, *token_id)),
                     );
-                    return cancel_live_request(engine, id);
+                    return Handled::Cancel;
                 }
             };
             let decoded = match generated_token_v1(tokenizer, ordinal, *token_id) {
                 Ok(token) => token,
                 Err(_) => {
                     fail_output(
-                        &generation,
+                        generation,
                         "the tokenizer could not decode the generated token",
                         Some((Some(ordinal), *token_id)),
                     );
-                    return cancel_live_request(engine, id);
+                    return Handled::Cancel;
                 }
             };
             let record = if generation.logprobs_enabled {
@@ -4703,11 +4740,11 @@ fn handle_engine_event<E: ModelExecutor>(
                     Ok(record) => Some(record),
                     Err(()) => {
                         fail_output(
-                            &generation,
+                            generation,
                             "the generated token's logprob labels could not be decoded",
                             Some((Some(ordinal), *token_id)),
                         );
-                        return cancel_live_request(engine, id);
+                        return Handled::Cancel;
                     }
                 }
             } else {
@@ -4717,11 +4754,11 @@ fn handle_engine_event<E: ModelExecutor>(
                 Some(count) => count,
                 None => {
                     fail_output(
-                        &generation,
+                        generation,
                         "the generated token count overflowed",
                         Some((Some(ordinal), *token_id)),
                     );
-                    return cancel_live_request(engine, id);
+                    return Handled::Cancel;
                 }
             };
             if let Some(record) = record
@@ -4730,8 +4767,8 @@ fn handle_engine_event<E: ModelExecutor>(
                     .try_emit(GenerationEvent::GeneratedTokenLogprobs(vec![record]))
                     .is_err()
             {
-                handle_delivery_error(&generation, UpdateDeliveryError::Overflow);
-                return cancel_live_request(engine, id);
+                handle_delivery_error(generation, UpdateDeliveryError::Overflow);
+                return Handled::Cancel;
             }
             if generation.return_token_ids
                 && generation
@@ -4739,8 +4776,8 @@ fn handle_engine_event<E: ModelExecutor>(
                     .try_emit(GenerationEvent::GeneratedTokenIds(vec![*token_id]))
                     .is_err()
             {
-                handle_delivery_error(&generation, UpdateDeliveryError::Overflow);
-                return cancel_live_request(engine, id);
+                handle_delivery_error(generation, UpdateDeliveryError::Overflow);
+                return Handled::Cancel;
             }
             generation.logprob_context.rotate_left(1);
             generation.logprob_context[3] = Some(*token_id);
@@ -4763,11 +4800,11 @@ fn handle_engine_event<E: ModelExecutor>(
                 Ok(updates) => updates,
                 Err(message) => {
                     fail_output(
-                        &generation,
+                        generation,
                         loggable_refusal_v1(&message),
                         Some((Some(ordinal), *token_id)),
                     );
-                    return cancel_live_request(engine, id);
+                    return Handled::Cancel;
                 }
             };
             // Client stop strings and legacy suffixes without stop IDs can
@@ -4776,21 +4813,16 @@ fn handle_engine_event<E: ModelExecutor>(
             let terminal = updates
                 .iter()
                 .any(|update| matches!(update, CompletionUpdateV1::Finished(_)));
-            if let Err(error) = deliver_engine_updates(
-                engine,
-                id,
-                &mut generation,
-                updates,
-                observed_end == Some(true),
-            ) {
-                handle_delivery_error(&generation, error);
-                return cancel_live_request(engine, id);
+            if let Err(error) =
+                deliver_engine_updates(engine, id, generation, updates, observed_end == Some(true))
+            {
+                handle_delivery_error(generation, error);
+                return Handled::Cancel;
             }
             if terminal {
-                return retire_live_request(engine, id, true);
+                return Handled::Stop;
             }
-            active.insert(id, generation);
-            true
+            Handled::Live
         }
         EngineEventKind::Finished {
             reason: reason @ (EngineFinishReason::Length | EngineFinishReason::Stop),
@@ -4802,23 +4834,22 @@ fn handle_engine_event<E: ModelExecutor>(
             } {
                 Ok(updates) => updates,
                 Err(message) => {
-                    fail_output(&generation, loggable_refusal_v1(&message), None);
-                    return cancel_live_request(engine, id);
+                    fail_output(generation, loggable_refusal_v1(&message), None);
+                    return Handled::Cancel;
                 }
             };
-            if let Err(error) = deliver_engine_updates(engine, id, &mut generation, updates, false)
-            {
-                handle_delivery_error(&generation, error);
-                return cancel_live_request(engine, id);
+            if let Err(error) = deliver_engine_updates(engine, id, generation, updates, false) {
+                handle_delivery_error(generation, error);
+                return Handled::Cancel;
             }
-            true
+            Handled::Ended
         }
         EngineEventKind::Finished {
             reason: EngineFinishReason::Cancelled,
-        } => true,
+        } => Handled::Ended,
         EngineEventKind::Error { message } => {
-            fail_generation(&generation, message, FAILURE_CODE);
-            true
+            fail_generation(generation, message, FAILURE_CODE);
+            Handled::Ended
         }
     }
 }

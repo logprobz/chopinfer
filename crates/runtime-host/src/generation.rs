@@ -2799,13 +2799,7 @@ pub(crate) fn completion_decoder_v1(
     }
     decoder.set_minimum_new_tokens(request.sampling.minimum_new_tokens());
     decoder.set_decoding_options(request.decoding.clone(), request.chat.is_none());
-    let prompt_bytes = prompt.iter().try_fold(Vec::new(), |mut bytes, id| {
-        if !request.decoding.skip_special_tokens || !tokenizer.token_is_special(*id)? {
-            bytes.extend_from_slice(tokenizer.token_bytes(*id)?);
-        }
-        Ok::<_, runtime_tokenizer::TokenizerError>(bytes)
-    });
-    prompt_bytes
+    prompt_tail_bytes_v1(tokenizer, prompt, request.decoding.skip_special_tokens)
         .map_err(|error| error.to_string())
         .and_then(|bytes| decoder.prime_prompt_bytes(&bytes))
         .map_err(|_| AdmissionError::InvalidPrompt)?;
@@ -2820,6 +2814,35 @@ pub(crate) fn completion_decoder_v1(
             .map_err(|_| AdmissionError::InvalidPrompt)?;
     }
     Ok(decoder)
+}
+
+/// The last bytes of the prompt's bytes, special tokens left out when
+/// `skip_special` is set, as many as the decoder reads when it is primed.
+///
+/// Every token is checked first, as reading all of the prompt's bytes
+/// checks it: an identifier outside the vocabulary has no bytes and no
+/// special flag, so it is refused wherever it stands.
+fn prompt_tail_bytes_v1(
+    tokenizer: &Tokenizer,
+    prompt: &[u32],
+    skip_special: bool,
+) -> Result<Vec<u8>, runtime_tokenizer::TokenizerError> {
+    for id in prompt {
+        tokenizer.token_bytes(*id)?;
+    }
+    let mut pieces = Vec::new();
+    let mut length = 0;
+    for id in prompt.iter().rev() {
+        if length >= CompletionDecoderV1::PROMPT_TAIL_BYTES {
+            break;
+        }
+        if !skip_special || !tokenizer.token_is_special(*id)? {
+            let bytes = tokenizer.token_bytes(*id)?;
+            length += bytes.len();
+            pieces.push(bytes);
+        }
+    }
+    Ok(pieces.into_iter().rev().flatten().copied().collect())
 }
 
 /// The token identifiers the served declaration names as boundaries: the

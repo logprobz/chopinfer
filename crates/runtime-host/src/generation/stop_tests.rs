@@ -2042,3 +2042,123 @@ fn admission_phases_are_timed_only_while_tracing_and_change_no_event() {
         );
     }
 }
+
+/// A completion request without a chat that skips special tokens or not.
+fn raw_request(skip_special_tokens: bool) -> PreparedRequest {
+    PreparedRequest {
+        request_id: "primed".into(),
+        client_request_id: None,
+        model: "fixture/alpha-1".into(),
+        prompt: PreparedPrompt::TokenIds(Vec::new()),
+        max_new_tokens: 8,
+        stop: vec![],
+        decoding: runtime_server::DecodingOptions {
+            skip_special_tokens,
+            ..Default::default()
+        },
+        sampling: SamplingParameters::new(0.0).unwrap(),
+        seed: 7,
+        logprobs: runtime_server::RequestedLogprobs {
+            enabled: false,
+            top: 0,
+            echo: false,
+            prompt_top: None,
+            return_token_ids: false,
+        },
+        chat: None,
+        constraint: None,
+        cache_salt: None,
+        cancellation: CancellationSignal::new(),
+    }
+}
+
+/// Primed from the prompt's last bytes, the decoder decodes every
+/// continuation as one primed from all of the prompt's bytes: characters
+/// split across tokens and around special tokens, skipped or not.
+#[test]
+fn the_decoder_primed_from_the_prompt_tail_decodes_as_the_whole_prompt() {
+    let tokenizer = tokenizer();
+    let mut descriptor =
+        FrontendDescriptorV1::from_component_bytes(declarations::KEY_VALUE.as_bytes()).unwrap();
+    descriptor.vocabulary.size = 259;
+    let policy = EngineModelPolicyV1::from_declaration(&descriptor);
+    let byte = |value: u8| u32::from(value) + 3;
+    // Text, the bytes of a three- and a four-byte character, and specials.
+    let pool = [
+        byte(b'a'),
+        byte(0xe4),
+        byte(0xb8),
+        byte(0xad),
+        byte(0xf0),
+        byte(0x9f),
+        byte(0x80),
+        0,
+        1,
+    ];
+    let continuations = [
+        [byte(0xb8), byte(0xad), byte(b'k')],
+        [byte(0x98), byte(0x80), byte(b'k')],
+    ];
+    let mut prompts = Vec::new();
+    for length in 0..=4u32 {
+        for mut index in 0..pool.len().pow(length) {
+            let mut prompt = Vec::new();
+            for _ in 0..length {
+                prompt.push(pool[index % pool.len()]);
+                index /= pool.len();
+            }
+            prompts.push(prompt);
+        }
+    }
+    // Long prompts reach the same ends after many tokens.
+    let long = (0..5000).map(|index| pool[index % 7]).collect::<Vec<_>>();
+    for end in [
+        &[byte(0xe4)][..],
+        &[byte(0xe4), 1, byte(0xb8)],
+        &[byte(0xf0), 0, 1],
+    ] {
+        prompts.push([long.as_slice(), end].concat());
+    }
+    let mut kept = 0;
+    for skip in [false, true] {
+        let request = raw_request(skip);
+        for prompt in &prompts {
+            let whole = prompt
+                .iter()
+                .filter(|id| !skip || !tokenizer.token_is_special(**id).unwrap())
+                .flat_map(|id| tokenizer.token_bytes(*id).unwrap().to_vec())
+                .collect::<Vec<_>>();
+            for continuation in &continuations {
+                let mut primed = completion_decoder_v1(&tokenizer, &policy, &request, prompt)
+                    .expect("a valid prompt primes");
+                let mut reference =
+                    completion_decoder_v1(&tokenizer, &policy, &request, &[]).unwrap();
+                reference.prime_prompt_bytes(&whole).unwrap();
+                let mut updates = [Vec::new(), Vec::new()];
+                for (decoder, updates) in
+                    [&mut primed, &mut reference].into_iter().zip(&mut updates)
+                {
+                    for (ordinal, id) in continuation.iter().enumerate() {
+                        let token = generated_token_v1(&tokenizer, ordinal as u64, *id).unwrap();
+                        updates.push(format!("{:?}", decoder.push_engine_token(token)));
+                    }
+                    updates.push(format!("{:?}", decoder.finish_length()));
+                }
+                assert_eq!(updates[0], updates[1], "{prompt:?} skip={skip}");
+                kept += usize::from(!updates[0][0].contains("Content"));
+            }
+        }
+    }
+    assert!(kept > 100, "{kept}");
+    // An identifier outside the vocabulary is refused wherever it stands.
+    for skip in [false, true] {
+        for at in [0, 2500, 4999] {
+            let mut prompt = long.clone();
+            prompt[at] = 259;
+            assert!(matches!(
+                completion_decoder_v1(&tokenizer, &policy, &raw_request(skip), &prompt),
+                Err(AdmissionError::InvalidPrompt)
+            ));
+        }
+    }
+}

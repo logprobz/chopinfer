@@ -328,19 +328,22 @@ impl CompletionDecoderV1 {
         self.raw = raw;
     }
 
+    /// The most bytes, from the end of a prompt, that
+    /// [`Self::prime_prompt_bytes`] reads. An incomplete character is at most
+    /// three bytes, and decoding starts a character at every byte that does
+    /// not continue one, so earlier bytes never change what it keeps.
+    pub const PROMPT_TAIL_BYTES: usize = 3;
+
     /// Primes byte decoding before generation, without parsing prompt markup.
-    /// Retain only an incomplete trailing character, never preceding prompt text.
+    /// Retain only an incomplete trailing character, never preceding prompt
+    /// text, read from the last [`Self::PROMPT_TAIL_BYTES`] bytes.
     pub fn prime_prompt_bytes(&mut self, bytes: &[u8]) -> Result<(), String> {
         if !self.tokens.is_empty() || self.prompt_context_bytes != 0 {
             return Err(sequence_v1("prompt context must precede generation"));
         }
-        if let Some(chunk) = bytes.utf8_chunks().last() {
-            let tail = chunk.invalid();
-            if std::str::from_utf8(tail).is_err_and(|error| error.error_len().is_none()) {
-                self.bytes.extend_from_slice(tail);
-                self.prompt_context_bytes = tail.len();
-            }
-        }
+        let tail = incomplete_tail_v1(bytes);
+        self.bytes.extend_from_slice(tail);
+        self.prompt_context_bytes = tail.len();
         Ok(())
     }
 
@@ -953,8 +956,84 @@ pub(crate) fn source_offset(bytes: &[u8], decoded_offset: usize) -> usize {
     source
 }
 
+/// The incomplete character `bytes` end with, or nothing, read from their
+/// last [`CompletionDecoderV1::PROMPT_TAIL_BYTES`] bytes.
+fn incomplete_tail_v1(bytes: &[u8]) -> &[u8] {
+    let start = bytes
+        .len()
+        .saturating_sub(CompletionDecoderV1::PROMPT_TAIL_BYTES);
+    match bytes[start..].utf8_chunks().last() {
+        Some(chunk)
+            if std::str::from_utf8(chunk.invalid())
+                .is_err_and(|error| error.error_len().is_none()) =>
+        {
+            chunk.invalid()
+        }
+        _ => &[],
+    }
+}
+
 #[cfg(test)]
 pub(crate) use frontend_format::test_support::fixtures as test_common;
+
+#[cfg(test)]
+mod prompt_tail_tests {
+    use super::*;
+
+    /// What priming kept when it read every prompt byte.
+    fn whole_prompt_tail(bytes: &[u8]) -> &[u8] {
+        match bytes.utf8_chunks().last() {
+            Some(chunk)
+                if std::str::from_utf8(chunk.invalid())
+                    .is_err_and(|error| error.error_len().is_none()) =>
+            {
+                chunk.invalid()
+            }
+            _ => &[],
+        }
+    }
+
+    /// Every string of up to five bytes from each UTF-8 byte class, and long
+    /// pseudo-random strings, keep the same incomplete character.
+    #[test]
+    fn the_prompt_tail_keeps_what_the_whole_prompt_keeps() {
+        const CLASSES: [u8; 18] = [
+            b'a', 0x7f, 0x80, 0x8f, 0x90, 0x9f, 0xa0, 0xbf, 0xc0, 0xc2, 0xdf, 0xe0, 0xe1, 0xed,
+            0xef, 0xf0, 0xf4, 0xf5,
+        ];
+        let mut tested = 0;
+        let mut kept = 0;
+        let mut bytes = Vec::new();
+        for length in 0..=5u32 {
+            for mut index in 0..CLASSES.len().pow(length) {
+                bytes.clear();
+                for _ in 0..length {
+                    bytes.push(CLASSES[index % CLASSES.len()]);
+                    index /= CLASSES.len();
+                }
+                let tail = incomplete_tail_v1(&bytes);
+                assert_eq!(tail, whole_prompt_tail(&bytes), "{bytes:x?}");
+                tested += 1;
+                kept += usize::from(!tail.is_empty());
+            }
+        }
+        let mut state = 0x9e37_79b9_7f4a_7c15_u64;
+        for length in [64, 1000, 4097] {
+            for _ in 0..200 {
+                bytes.clear();
+                for _ in 0..length {
+                    state = state
+                        .wrapping_mul(6_364_136_223_846_793_005)
+                        .wrapping_add(1_442_695_040_888_963_407);
+                    bytes.push(CLASSES[(state >> 59) as usize % CLASSES.len()]);
+                }
+                assert_eq!(incomplete_tail_v1(&bytes), whole_prompt_tail(&bytes));
+                tested += 1;
+            }
+        }
+        assert!(tested > 1_000_000 && kept > 10_000, "{tested} {kept}");
+    }
+}
 
 #[cfg(test)]
 mod host_tests {

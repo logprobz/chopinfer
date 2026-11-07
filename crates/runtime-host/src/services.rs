@@ -9,6 +9,8 @@
 mod acquisition;
 #[cfg(all(test, feature = "fake-host-services"))]
 mod acquisition_tests;
+#[cfg(all(test, feature = "fake-host-services"))]
+mod device_wait_tests;
 mod weight_content;
 use acquisition::{CompoundCleanupV1, ConstructionRankV1, RankAllocationV1, RankOwnerV1};
 
@@ -5367,6 +5369,12 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
         if range.length != destination.len() as u64 {
             return Err(BundleStatusV1::InvalidArgument);
         }
+        // The copy returns once the stream's earlier work and the copy have
+        // finished, so its host time is a device wait, as a stream
+        // synchronization's is.
+        let _profile = runtime_engine::profile::PhaseTimer::new(
+            runtime_engine::profile::StepPhase::DeviceWait,
+        );
         state
             .device
             .copy_device_to_host(stream_object, destination, range)

@@ -88,6 +88,7 @@ mod query_window_serving;
 pub mod replicated_embedding;
 #[cfg(test)]
 mod small_row_qualification;
+pub mod snapshot_copy;
 #[cfg(test)]
 pub(crate) mod test_symbols;
 pub mod window_fused;

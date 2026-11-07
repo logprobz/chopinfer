@@ -1,0 +1,70 @@
+[
+  {
+    "name": "snapshot_copy_sm120",
+    "line_info": false,
+    "toolchain_version": "nvcc: NVIDIA (R) Cuda compiler driver\nCopyright (c) 2005-2026 NVIDIA Corporation\nBuilt on Fri_May_08_10:53:34_AM_PDT_2026\nCuda compilation tools, release 13.2, V13.2.86\nBuild cuda_13.2.r13.2/compiler.37953736_0",
+    "nvcc_sha256": "e0341e832da4c4c9c412c0722ac1a9e6944d0c0fcb36f3cd51d2fe11435f46e5",
+    "flags": [
+      "-arch=sm_120f",
+      "-cubin",
+      "-std=c++20",
+      "-O3",
+      "-Xptxas=-warn-spills,-warn-lmem-usage"
+    ],
+    "defines": [],
+    "entries": [
+      {
+        "symbol": "chop_snapshot_copy_v1",
+        "params": [
+          {
+            "kind": "PointerArray",
+            "name": "views",
+            "slots": 8,
+            "cxx_type": "uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "pool",
+            "cxx_type": "uint8_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "table",
+            "cxx_type": "const uint64_t"
+          },
+          {
+            "kind": "U32",
+            "name": "segments"
+          },
+          {
+            "kind": "U32",
+            "name": "pages"
+          },
+          {
+            "kind": "U64",
+            "name": "page_bytes"
+          },
+          {
+            "kind": "U32",
+            "name": "to_pages"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      }
+    ],
+    "cubin_sha256": "625bdbb439bbc911f8242713436a9e0ce5dc032697abc9cdd57a4f3bf7494859",
+    "resources": [
+      {
+        "symbol": "chop_snapshot_copy_v1",
+        "registers": 40,
+        "shared_static_bytes": 0,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      }
+    ]
+  }
+]

@@ -125,6 +125,7 @@ mod retain_rows_entries;
 mod ring_gather_cubin;
 mod ring_gather_entries;
 mod single_entry_cubin;
+mod snapshot_copy;
 #[allow(dead_code)]
 mod window_fused;
 // The build compiles the entries; the bundle launches them.
@@ -284,6 +285,7 @@ pub fn selection(
         retain_rows_entries::FAMILY,
         retain_rows_cubin::cubin_spec(manifest),
     ));
+    specs.push((snapshot_copy::FAMILY, snapshot_copy::cubin_spec()));
     specs.push((
         engram_hash_entries::FAMILY,
         engram_hash_cubin::cubin_spec(manifest),

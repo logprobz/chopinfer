@@ -2889,14 +2889,15 @@ fn census_counts_read_v1(
     )],
     reader: &CensusReaderV1,
 ) -> Result<(Vec<CensusRankV1>, usize, u64), String> {
-    // Ranks that read the same bytes the same way share one measurement.
+    // Ranks that read the same bytes the same way share one measurement:
+    // equal items, field by field, in the order they first occur.
     let mut unique: Vec<&CensusItemV1> = Vec::new();
-    let mut slots = BTreeMap::new();
+    let mut slots = std::collections::HashMap::new();
     let mut indices = Vec::with_capacity(documents.len());
     for (_, census, _) in documents {
         let mut slot_of = Vec::with_capacity(census.items.len());
         for item in &census.items {
-            let slot = *slots.entry(format!("{item:?}")).or_insert_with(|| {
+            let slot = *slots.entry(item).or_insert_with(|| {
                 unique.push(item);
                 unique.len() - 1
             });

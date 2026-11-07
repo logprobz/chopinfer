@@ -943,6 +943,73 @@ fn census_items_of_one_scale_tensor_share_one_read() {
     }
 }
 
+/// Items several ranks ask for alike are measured once: the same distinct
+/// items a comparison of their whole descriptions finds, each rank answered
+/// with what its items count alone.
+#[test]
+fn equal_census_items_of_several_ranks_are_measured_once() {
+    use runtime_bundle_abi::weight_plan::{
+        CENSUS_SCALE_ROW_OFFSET_V1, CensusItemV1, WeightCensusV1,
+    };
+    let (root, plans, _, _) = fixture(2);
+    let checkpoint = Arc::new(DirectCheckpointV1::open(&root.0).unwrap());
+    let items: Vec<Vec<CensusItemV1>> = plans
+        .iter()
+        .map(|plan| {
+            plan.records
+                .iter()
+                .filter_map(|record| {
+                    let WeightTransform::PackedOperand(operand) =
+                        WeightTransform::decode(record.transform, &record.params).unwrap()
+                    else {
+                        unreachable!("the fixture packs every record");
+                    };
+                    (operand.section == PackedSection::LocalScales).then(|| {
+                        let (rows, groups) = operand.plan.scale_shape();
+                        CensusItemV1 {
+                            kind: CENSUS_SCALE_ROW_OFFSET_V1,
+                            rows: rows as u64,
+                            groups: groups as u64,
+                            record: WeightRecordV1 {
+                                arena_offset: 0,
+                                ..record.clone()
+                            },
+                        }
+                    })
+                })
+                .collect()
+        })
+        .collect();
+    // Each document asks for two ranks' items; neighbours share one rank's.
+    let documents: Vec<(u32, WeightCensusV1, Vec<u8>)> = (0..3_u32)
+        .map(|rank| {
+            let census = WeightCensusV1 {
+                ranks: 3,
+                rank,
+                items: [&items[rank as usize][..], &items[rank as usize + 1][..]].concat(),
+            };
+            let bytes = census.encode();
+            (rank, census, bytes)
+        })
+        .collect();
+    let (answer, unique, read) = census_counts_v1(&checkpoint, &documents).unwrap();
+    let described: std::collections::BTreeSet<String> = documents
+        .iter()
+        .flat_map(|(_, census, _)| census.items.iter().map(|item| format!("{item:?}")))
+        .collect();
+    assert_eq!(unique, described.len());
+    assert_eq!(unique, items.iter().map(Vec::len).sum::<usize>());
+    // Two scale tensors, each read once for every rank's slice of it.
+    assert_eq!(read, 2 * 2048);
+    for ((_, census, _), answered) in documents.iter().zip(&answer) {
+        for (item, counts) in census.items.iter().zip(&answered.counts) {
+            let alone =
+                measure_census_v1(&checkpoint, &[item], &CensusReaderV1::default()).unwrap();
+            assert_eq!(alone[0].0, *counts);
+        }
+    }
+}
+
 /// Measured census counts are reused only over the same files and
 /// implementation, for the same documents or the same requests, and stored
 /// only from files that settled before the measurement began.

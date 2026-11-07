@@ -186,7 +186,7 @@ pub struct WeightPlanRequestV1 {
 
 /// One item of a bundle's census: bytes the host produces as it would a
 /// plan record's, stores nowhere and measures as `kind` says.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct CensusItemV1 {
     /// [`CENSUS_SCALE_ROW_OFFSET_V1`].
     pub kind: u32,
@@ -258,7 +258,7 @@ pub struct PlannedViewV1 {
 }
 
 /// One checkpoint tensor a record reads.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct RecordSourceV1 {
     /// Index into the request's `files`.
     pub file: u32,
@@ -266,7 +266,7 @@ pub struct RecordSourceV1 {
 }
 
 /// One placed piece.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct WeightRecordV1 {
     pub arena_offset: u64,
     pub byte_length: u64,

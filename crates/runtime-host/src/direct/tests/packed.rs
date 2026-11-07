@@ -857,7 +857,9 @@ fn census_items_measure_raw_scale_sections() {
                     ..record.clone()
                 },
             };
-            let [(counts, read)] = measure_census_v1(&checkpoint, &[&item]).unwrap()[..] else {
+            let [(counts, read)] =
+                measure_census_v1(&checkpoint, &[&item], &CensusReaderV1::default()).unwrap()[..]
+            else {
                 panic!("one item measured");
             };
             let bytes = &raw[record.arena_offset as usize..][..record.byte_length as usize];
@@ -931,8 +933,14 @@ fn census_items_of_one_scale_tensor_share_one_read() {
     // Two experts, four ranks each: two scale tensors of 2048 bytes.
     assert_eq!(items.len(), 8);
     let borrowed: Vec<&CensusItemV1> = items.iter().collect();
-    let measured = measure_census_v1(&checkpoint, &borrowed).unwrap();
+    let measured = measure_census_v1(&checkpoint, &borrowed, &CensusReaderV1::default()).unwrap();
     assert_eq!(measured.iter().map(|(_, read)| read).sum::<u64>(), 2 * 2048);
+    // Beside the other slices of their tensor, which share one check of it,
+    // the items count what each counts alone.
+    for (item, (counts, _)) in borrowed.iter().zip(&measured) {
+        let alone = measure_census_v1(&checkpoint, &[item], &CensusReaderV1::default()).unwrap();
+        assert_eq!(alone[0].0, *counts);
+    }
 }
 
 /// Measured census counts are reused only over the same files and

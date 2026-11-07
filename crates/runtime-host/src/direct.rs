@@ -2808,6 +2808,7 @@ fn census_v1(
     let stored = reuse
         .as_ref()
         .and_then(|reuse| reuse.for_requests(&requests));
+    let reader = CensusReaderV1::default();
     let (measured, cache_key, documents_seconds) = match stored {
         Some(stored) => (stored, Some("requests"), None),
         None => {
@@ -2822,7 +2823,8 @@ fn census_v1(
             }
             let documents_seconds = started.elapsed().as_secs_f64();
             let measure = || {
-                let (answer, unique, bytes_read) = census_counts_v1(checkpoint, &documents)?;
+                let (answer, unique, bytes_read) =
+                    census_counts_read_v1(checkpoint, &documents, &reader)?;
                 Ok(plan_cache::census::MeasuredV1 {
                     answer,
                     unique: unique as u64,
@@ -2850,6 +2852,7 @@ fn census_v1(
             "items": measured.answer.iter().map(|rank| rank.counts.len()).sum::<usize>(),
             "unique_items": measured.unique,
             "bytes_read": if cache_key.is_some() { 0 } else { measured.bytes_read },
+            "direct_bytes": reader.direct_bytes.load(Ordering::Relaxed),
             "seconds": started.elapsed().as_secs_f64(),
             "documents_seconds": documents_seconds,
             "cache_enabled": cache.is_some(),
@@ -2873,6 +2876,19 @@ pub fn census_counts_v1(
         Vec<u8>,
     )],
 ) -> Result<(Vec<CensusRankV1>, usize, u64), String> {
+    census_counts_read_v1(checkpoint, documents, &CensusReaderV1::default())
+}
+
+/// [`census_counts_v1`], reading through `reader`.
+fn census_counts_read_v1(
+    checkpoint: &DirectCheckpointV1,
+    documents: &[(
+        u32,
+        runtime_bundle_abi::weight_plan::WeightCensusV1,
+        Vec<u8>,
+    )],
+    reader: &CensusReaderV1,
+) -> Result<(Vec<CensusRankV1>, usize, u64), String> {
     // Ranks that read the same bytes the same way share one measurement.
     let mut unique: Vec<&CensusItemV1> = Vec::new();
     let mut slots = BTreeMap::new();
@@ -2888,7 +2904,7 @@ pub fn census_counts_v1(
         }
         indices.push(slot_of);
     }
-    let measured = measure_census_v1(checkpoint, &unique)?;
+    let measured = measure_census_v1(checkpoint, &unique, reader)?;
     let bytes_read: u64 = measured.iter().map(|(_, bytes)| bytes).sum();
     let answer = documents
         .iter()
@@ -2982,13 +2998,14 @@ fn census_record_v1<'a>(
     })
 }
 
-/// Measures `items` on worker threads: each one's counts and the source
-/// bytes it read. Items whose packed scales stand alone and come from one
-/// tensor (every rank's slice of a matrix) are measured together from one
-/// read of it.
+/// Measures `items` on worker threads, reading through `reader`: each one's
+/// counts and the source bytes it read. Items whose packed scales stand
+/// alone and come from one tensor (every rank's slice of a matrix) are
+/// measured together from one read and one check of it.
 fn measure_census_v1(
     checkpoint: &DirectCheckpointV1,
     items: &[&CensusItemV1],
+    reader: &CensusReaderV1,
 ) -> Result<Vec<CensusMeasureV1>, String> {
     let records = items
         .iter()
@@ -3018,7 +3035,9 @@ fn measure_census_v1(
                         let Some(group) = work.get(index) else {
                             return Ok(done);
                         };
-                        done.extend(measure_census_group_v1(checkpoint, &records, group)?);
+                        done.extend(measure_census_group_v1(
+                            checkpoint, &records, group, reader,
+                        )?);
                     }
                 })
             })
@@ -3043,11 +3062,13 @@ fn measure_census_v1(
 
 /// Measures the items of `group`, which share their standalone scale source
 /// when there are several: each record produced as the load would produce
-/// it (from that source alone when it can be) and measured as its kind says.
+/// it (from that source alone when it can be, read and checked once for the
+/// group) and measured as its kind says.
 fn measure_census_group_v1(
     checkpoint: &DirectCheckpointV1,
     records: &[CensusRecordV1<'_>],
     group: &[usize],
+    reader: &CensusReaderV1,
 ) -> Result<Vec<(usize, CensusMeasureV1)>, String> {
     let read_at = |(shard, begin, length): (usize, u64, u64), offset: u64, buffer: &mut [u8]| {
         if offset
@@ -3059,17 +3080,31 @@ fn measure_census_group_v1(
             ));
         }
         let shard = &checkpoint.shards[shard];
-        shard
-            .file
-            .read_exact_at(buffer, begin + offset)
+        reader
+            .read(shard, begin + offset, buffer)
             .map_err(|e| WeightTransformError(format!("read {}: {e}", shard.name)))
     };
-    // The shared standalone scale tensor, read once for the group.
-    let mut shared = None;
+    // The shared standalone scale tensor: a group of several items is one
+    // tensor's, so its first item names it.
+    let first = &records[group[0]];
+    let shared = first
+        .scales
+        .map(|source| {
+            let mut scales = vec![0; first.sources[source].2 as usize];
+            read_at(first.sources[source], 0, &mut scales).map_err(|e| first.error(e.0))?;
+            Ok::<_, String>(scales)
+        })
+        .transpose()?;
+    let checks = shared
+        .as_deref()
+        .map(kernel_core::weight_transform::StandaloneScales::new);
     let mut measured = Vec::with_capacity(group.len());
-    for &index in group {
+    for (position, &index) in group.iter().enumerate() {
         let record = &records[index];
-        let mut read_bytes = 0;
+        let mut read_bytes = match (&shared, position) {
+            (Some(scales), 0) => scales.len() as u64,
+            _ => 0,
+        };
         let whole = |record: &CensusRecordV1<'_>, read_bytes: &mut u64| {
             let mut read = |source: usize, offset: u64, buffer: &mut [u8]| {
                 read_at(record.sources[source], offset, buffer)?;
@@ -3081,29 +3116,21 @@ fn measure_census_group_v1(
                 .produce_whole(&mut read)
                 .map_err(|e| record.error(e.0))
         };
-        let bytes = match record.scales {
-            Some(source) => {
-                if shared.is_none() {
-                    let mut scales = vec![0; record.sources[source].2 as usize];
-                    read_at(record.sources[source], 0, &mut scales)
-                        .map_err(|e| record.error(e.0))?;
-                    read_bytes += scales.len() as u64;
-                    shared = Some(scales);
-                }
+        let bytes = match (record.scales, &checks) {
+            (Some(_), Some(checks)) => {
                 let WeightTransform::PackedOperand(operand) = &record.prepared.record().transform
                 else {
                     unreachable!("standalone scales come from packed operands");
                 };
-                let scales = shared.as_deref().expect("read above");
                 match operand
-                    .independent_scales(record.prepared.record(), scales, Vec::new())
+                    .independent_scales_of(record.prepared.record(), checks, Vec::new())
                     .map_err(|e| record.error(e.0))?
                 {
                     Some(bytes) => bytes,
                     None => whole(record, &mut read_bytes)?,
                 }
             }
-            None => whole(record, &mut read_bytes)?,
+            _ => whole(record, &mut read_bytes)?,
         };
         let counts = kernel_core::precision::scale_offset::census(
             &bytes,
@@ -3114,6 +3141,90 @@ fn measure_census_group_v1(
         measured.push((index, (counts, read_bytes)));
     }
     Ok(measured)
+}
+
+/// Reads census sources without adding to the page cache, as a direct load
+/// reads its sources: runs the cache holds are copied from it, cold runs are
+/// read with `O_DIRECT` past it, and so is the rest of a cached run from the
+/// first page the cache lacks, so neither a read nor its read-ahead brings
+/// pages in and none another process cached is dropped. A file without
+/// direct reads is read through the cache.
+#[derive(Default)]
+struct CensusReaderV1 {
+    buffers: Mutex<Vec<Vec<u8>>>,
+    /// Bytes read with `O_DIRECT`.
+    direct_bytes: AtomicU64,
+}
+
+impl CensusReaderV1 {
+    fn read(&self, shard: &ShardV1, at: u64, buffer: &mut [u8]) -> std::io::Result<()> {
+        let Some(direct) = shard.direct_file() else {
+            return shard.file.read_exact_at(buffer, at);
+        };
+        let (mut begin, mut run_at) = (0, at);
+        for (length, cold) in residency_runs_v1(&shard.file, at, buffer.len() as u64) {
+            let part = &mut buffer[begin..begin + length as usize];
+            let cached = if cold {
+                0
+            } else {
+                read_cached_prefix_v1(&shard.file, part, run_at)
+            };
+            self.read_direct(shard, direct, run_at + cached as u64, &mut part[cached..])?;
+            begin += length as usize;
+            run_at += length;
+        }
+        Ok(())
+    }
+
+    fn read_direct(
+        &self,
+        shard: &ShardV1,
+        direct: &DirectFileV1,
+        at: u64,
+        buffer: &mut [u8],
+    ) -> std::io::Result<()> {
+        if buffer.is_empty() {
+            return Ok(());
+        }
+        if !direct.off.load(Ordering::Relaxed) {
+            match read_direct_v1(&self.buffers, direct, at, buffer, None) {
+                Ok(_) => {
+                    self.direct_bytes
+                        .fetch_add(buffer.len() as u64, Ordering::Relaxed);
+                    return Ok(());
+                }
+                // As in a load, a refused direct read turns them off for the
+                // shard, which is then read through the cache.
+                Err(error) if refused_direct_read(&error) => {
+                    direct.refused.fetch_add(1, Ordering::Relaxed);
+                    if !direct.off.swap(true, Ordering::Relaxed) {
+                        runtime_log::warn!(
+                            "weight census: {} refused a direct read ({error}); reading it through the page cache",
+                            shard.name
+                        );
+                    }
+                }
+                Err(error) => return Err(error),
+            }
+        }
+        shard.file.read_exact_at(buffer, at)
+    }
+}
+
+/// Copies into `buffer` the bytes from `at` of `file` that the page cache
+/// holds, up to the first page it lacks: the count copied. Any refusal ends
+/// the copy, and the caller reads the rest itself.
+fn read_cached_prefix_v1(file: &std::fs::File, buffer: &mut [u8], at: u64) -> usize {
+    let mut done = 0;
+    while done < buffer.len() {
+        match crate::page_cache::read_cached_v1(file, &mut buffer[done..], at + done as u64) {
+            Ok(0) => break,
+            Ok(count) => done += count,
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
+            Err(_) => break,
+        }
+    }
+    done
 }
 
 /// The checkpoint this process loads (`serve --model` or `--checkpoint`),
@@ -3474,6 +3585,77 @@ mod tests {
             },
         )
         .unwrap()
+    }
+
+    /// Which pages of `file` the page cache holds.
+    fn resident_pages(file: &std::fs::File) -> Vec<bool> {
+        let pages = file.metadata().unwrap().len().div_ceil(4096);
+        (0..pages)
+            .map(|page| cached_pages_v1(file, page * 4096, 1).unwrap().0 == 1)
+            .collect()
+    }
+
+    /// A census reads the bytes a buffered read does, whatever the page
+    /// cache holds of them, and leaves the cache as it found it: cold pages
+    /// stay out, cached ones stay in, and only bytes the cache lacked are
+    /// read directly.
+    #[test]
+    fn census_reads_leave_the_page_cache_as_they_found_it() {
+        let length = 3 << 20;
+        let data: Vec<u8> = (0..length).map(|i| (i * 13 + i / 4099) as u8).collect();
+        let root = checkpoint(&[("t", "U8", vec![length as u64], data.clone())]);
+        let checkpoint = Arc::new(DirectCheckpointV1::open(&root.0).unwrap());
+        if !direct_reads_supported(&checkpoint) {
+            eprintln!("skipped: no residency report or O_DIRECT on this file system");
+            return;
+        }
+        let shard = &checkpoint.shards[0];
+        let begin = shard.tensors["t"].1;
+        // An unaligned range from inside the tensor to the end of the file.
+        let ranges = [
+            (4097, 1_000_001),
+            (1 << 20, 1 << 20),
+            (length - 12_345, 12_345),
+        ];
+        let read = |range: (usize, usize)| {
+            let reader = CensusReaderV1::default();
+            let mut buffer = vec![0; range.1];
+            reader
+                .read(shard, begin + range.0 as u64, &mut buffer)
+                .unwrap();
+            assert_eq!(buffer, data[range.0..range.0 + range.1]);
+            reader.direct_bytes.load(Ordering::Relaxed)
+        };
+        // Cold: read directly, and nothing comes into the cache.
+        evict(&checkpoint);
+        for range in ranges {
+            assert_eq!(read(range), range.1 as u64);
+        }
+        assert!(resident_pages(&shard.file).iter().all(|cached| !cached));
+        // Cached: copied from the cache, which keeps every page.
+        let mut warm = vec![0; shard.byte_length as usize];
+        shard.file.read_exact_at(&mut warm, 0).unwrap();
+        let before = resident_pages(&shard.file);
+        if before.iter().all(|cached| *cached) {
+            for range in ranges {
+                assert_eq!(read(range), 0);
+            }
+            assert_eq!(resident_pages(&shard.file), before);
+        }
+        // Partly cached, in runs and single pages: the same pages after.
+        evict(&checkpoint);
+        for page in [1_u64, 2, 3, 40, 41, 200, 300, 301, 302, 500, 767] {
+            let mut one = [0; 1];
+            shard.file.read_exact_at(&mut one, page * 4096).unwrap();
+        }
+        let mut run = vec![0; 600 << 10];
+        shard.file.read_exact_at(&mut run, 1 << 20).unwrap();
+        let before = resident_pages(&shard.file);
+        assert!(before.iter().any(|cached| *cached) && before.iter().any(|cached| !cached));
+        for range in ranges {
+            read(range);
+        }
+        assert_eq!(resident_pages(&shard.file), before);
     }
 
     /// A direct read the file system refuses after opening (here, one kept to

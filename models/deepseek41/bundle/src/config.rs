@@ -372,6 +372,12 @@ pub(crate) mod tests {
         body()
     }
 
+    /// The model options [`with_record_options`] adds to this thread's
+    /// records: a helper that writes a record's options itself adds them.
+    pub(crate) fn record_options() -> Vec<(&'static str, serde_json::Value)> {
+        RECORD_OPTIONS.with(|extra| extra.borrow().clone())
+    }
+
     /// `record` with its model options replaced by `options`.
     pub(crate) fn with_options(
         mut record: Vec<u8>,

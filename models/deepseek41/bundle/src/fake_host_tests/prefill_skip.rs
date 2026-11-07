@@ -68,6 +68,9 @@ pub(super) fn try_create_profile_with_options(
         "text_config.candidate_topk_blocks": host.shape.runtime.candidate_topk_blocks,
         "prefill_chunk_tokens": chunk, "prefill_upper_skip": skip,
     });
+    for (name, value) in crate::config::tests::record_options() {
+        values[name] = value;
+    }
     for (name, value) in options {
         values[*name] = value.clone();
     }
@@ -254,6 +257,23 @@ fn exact_prefill_profiles_execute_capture_restore_and_continue() {
 
 #[test]
 fn shared_prefix_endpoint_captures_restores_and_returns_to_the_grid() {
+    shared_prefix_endpoint(false);
+}
+
+/// The shared prefix endpoint with the `prefix_snapshot_copy_kernel`
+/// candidate on (`super::snapshot_kernel`). Its journals are the device
+/// copies' plus each rank's snapshot copy symbol, table buffer and their
+/// releases, with each snapshot's copies on a rank made by one table upload
+/// and one launch, whose `kernel copy` lines are the device copies' lines.
+#[test]
+fn shared_prefix_endpoint_captures_restores_with_the_snapshot_copy_kernel() {
+    super::snapshot_kernel::with_kernel(|| shared_prefix_endpoint(true));
+}
+
+/// Captures a 4032-token shared prefix at its scheduler cut, restores it
+/// and finishes the prompt on the grid, checking each journal against its
+/// pin with the snapshot copy candidate on (`kernel`) or off.
+fn shared_prefix_endpoint(kernel: bool) {
     let mut mismatches = Vec::new();
     for dspark in [false, true] {
         let host = FakeHost::new(Shape::new(&FLASH, Ranks::TP4).unwrap(), KV_LAYOUTS[0]);
@@ -318,16 +338,23 @@ fn shared_prefix_endpoint_captures_restores_and_returns_to_the_grid() {
         instance.retire_request(2).unwrap();
         instance.destroy().unwrap();
         assert_eq!(host.acquired.get(), host.released.get());
-        let (name, expected) = if dspark {
-            (
+        let (name, expected) = match (dspark, kernel) {
+            (true, false) => (
                 "flash-tp4-dspark-shared-anchor.journal",
                 (78110, 0xaef5ea8f2a389592),
-            )
-        } else {
-            (
+            ),
+            (false, false) => (
                 "flash-tp4-ar-shared-anchor.journal",
                 (75164, 0x8bde46b16fdd6ffc),
-            )
+            ),
+            (true, true) => (
+                "flash-tp4-dspark-shared-anchor-snapshot-kernel.journal",
+                (78146, 0x027c692bfed0ef6d),
+            ),
+            (false, true) => (
+                "flash-tp4-ar-shared-anchor-snapshot-kernel.journal",
+                (75200, 0x73a8558a014c0b85),
+            ),
         };
         if let Err(error) =
             bundle_runtime::fake_host::check_journal(&host.device.journal.borrow(), expected, name)
@@ -619,5 +646,22 @@ fn anchor_flags_require_a_supported_instance_and_cuts_entry() {
         }
         instance.destroy().unwrap();
         assert_eq!(host.acquired.get(), host.released.get());
+    }
+}
+
+/// The skip tests that capture and restore, with the
+/// `prefix_snapshot_copy_kernel` candidate on (`super::super::snapshot_kernel`).
+mod snapshot_kernel {
+    use super::super::snapshot_kernel::with_kernel;
+
+    #[test]
+    fn exact_prefill_profiles_execute_capture_restore_and_continue() {
+        with_kernel(super::exact_prefill_profiles_execute_capture_restore_and_continue);
+    }
+
+    #[cfg(feature = "diagnostic-taps")]
+    #[test]
+    fn profile_capture_contains_chunk_state_snapshot_and_raw_logits() {
+        with_kernel(super::profile_capture_contains_chunk_state_snapshot_and_raw_logits);
     }
 }

@@ -171,11 +171,18 @@ fn spans_of_previous(stores: &[&String], rings: DeviceBufferSpanV1) -> Option<Ve
     (spans.len() == 9 && inside(spans[5], rings)).then_some(spans)
 }
 
-/// The copies of `lines`: (source, destination).
+/// Whether `line` is a device copy or one of the copies a snapshot copy
+/// kernel launch makes (`FakeHost::run_snapshot_copy`).
+fn is_copy(line: &str) -> bool {
+    line.starts_with("copy ") || line.starts_with("kernel copy ")
+}
+
+/// The copies of `lines`, a snapshot copy kernel's among them: (source,
+/// destination).
 pub(super) fn copies(lines: &[String]) -> Vec<(Span, Span)> {
     lines
         .iter()
-        .filter(|line| line.starts_with("copy "))
+        .filter(|line| is_copy(line))
         .map(|line| {
             let spans = spans(line);
             assert_eq!(spans.len(), 2, "{line}");
@@ -1319,7 +1326,7 @@ fn replay_ring_writes(host: &Host, memory: &mut Memory, lines: &[String]) {
     };
     for line in lines {
         let views = spans(line);
-        if line.starts_with("copy ") {
+        if is_copy(line) {
             memory.copy(span(views[0]), span(views[1]));
         } else if line.starts_with("launch ") && line.contains(STORE) && views.len() == 9 {
             let positions = views[2];
@@ -1472,4 +1479,67 @@ fn odd_restored_continuation_matches_the_split_snapshot_and_slot() {
         (anchor, end)
     };
     assert_eq!(run(true), run(false));
+}
+
+/// The anchor tests with the `prefix_snapshot_copy_kernel` candidate on:
+/// each snapshot of a slot or an anchor item's spares moves in one launch a
+/// rank (`super::super::snapshot_kernel`).
+mod snapshot_kernel {
+    use super::super::snapshot_kernel::with_kernel;
+
+    #[test]
+    fn an_anchored_prompt_keeps_its_rounded_end_in_one_step() {
+        with_kernel(super::an_anchored_prompt_keeps_its_rounded_end_in_one_step);
+    }
+
+    #[test]
+    fn an_anchor_near_its_item_start_seeds_the_rings_and_restores() {
+        with_kernel(super::an_anchor_near_its_item_start_seeds_the_rings_and_restores);
+    }
+
+    #[test]
+    fn tp4_anchored_prompt_captures_restores_and_continues() {
+        with_kernel(super::tp4_anchored_prompt_captures_restores_and_continues);
+    }
+
+    #[test]
+    fn anchor_seeds_precede_the_tails_own_seed_copies() {
+        with_kernel(super::anchor_seeds_precede_the_tails_own_seed_copies);
+    }
+
+    #[test]
+    fn dspark_anchored_prompt_keeps_its_raw_history_at_the_anchor() {
+        with_kernel(super::dspark_anchored_prompt_keeps_its_raw_history_at_the_anchor);
+    }
+
+    #[test]
+    fn dspark_anchor_near_its_item_start_keeps_every_earlier_row() {
+        with_kernel(super::dspark_anchor_near_its_item_start_keeps_every_earlier_row);
+    }
+
+    #[test]
+    fn anchored_items_of_one_step_each_keep_their_own_spare() {
+        with_kernel(super::anchored_items_of_one_step_each_keep_their_own_spare);
+    }
+
+    #[test]
+    fn a_cancelled_anchored_step_keeps_no_anchor() {
+        with_kernel(super::a_cancelled_anchored_step_keeps_no_anchor);
+    }
+
+    #[cfg(feature = "diagnostic-taps")]
+    #[test]
+    fn anchor_state_dumps_read_their_spares() {
+        with_kernel(super::anchor_state_dumps_read_their_spares);
+    }
+
+    #[test]
+    fn dma_anchors_capture_restore_and_continue_with_both_completion_modes() {
+        with_kernel(super::dma_anchors_capture_restore_and_continue_with_both_completion_modes);
+    }
+
+    #[test]
+    fn odd_restored_continuation_matches_the_split_snapshot_and_slot() {
+        with_kernel(super::odd_restored_continuation_matches_the_split_snapshot_and_slot);
+    }
 }

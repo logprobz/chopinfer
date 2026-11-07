@@ -95,7 +95,8 @@ fn origins(host: &FakeHost, pages: &[u64]) -> Vec<Vec<(u64, Origin)>> {
 /// A capture and a restore through the kernel leave every page of the
 /// snapshot and every byte of the state view with the origins the device
 /// copies give them, at TP2 and TP4 in both KV layouts; each rank issues
-/// one table upload and one launch per snapshot and no device copy.
+/// one table upload and one launch per snapshot and no device copy, and
+/// its launches make the device copies, in their order.
 #[test]
 fn the_kernel_leaves_the_pages_and_slots_the_device_copies_leave() {
     for (ranks, kv) in PREFIX_RANKS
@@ -103,6 +104,7 @@ fn the_kernel_leaves_the_pages_and_slots_the_device_copies_leave() {
         .flat_map(|ranks| KV_LAYOUTS.map(|kv| (ranks, kv)))
     {
         let mut after = Vec::new();
+        let mut moved = Vec::new();
         for kernel in [false, true] {
             let (host, mut instance, pages) = prefilled(ranks, kv, kernel);
             let start = host.device.journal.borrow().len();
@@ -126,12 +128,21 @@ fn the_kernel_leaves_the_pages_and_slots_the_device_copies_leave() {
                 assert!(launches.is_empty());
                 assert!(copies.len() > 2 * all.len());
             }
+            let kind = if kernel { "kernel copy " } else { "copy " };
+            moved.push(
+                host.device.journal.borrow()[start..]
+                    .iter()
+                    .filter_map(|line| line.strip_prefix(kind).map(str::to_owned))
+                    .collect::<Vec<_>>(),
+            );
             after.push((captured, origins(&host, &pages)));
             instance.retire_request(9).unwrap();
             instance.destroy().unwrap();
             assert_eq!(host.acquired.get(), host.released.get());
         }
         assert!(after[0] == after[1], "{ranks:?} {kv:?}");
+        assert!(!moved[0].is_empty());
+        assert_eq!(moved[0], moved[1], "{ranks:?} {kv:?}");
     }
 }
 

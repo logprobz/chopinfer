@@ -394,3 +394,51 @@ fn prefill_phase_records_preserve_device_boundaries() {
         "clocks must not add device operations"
     );
 }
+
+/// A restore whose snapshot copy fails poisons the drafter, whether the
+/// snapshot moves through device copies (a failed copy) or through the
+/// snapshot copy kernel (a failed launch): the slot stays free and a live
+/// request's next drafted step is refused.
+#[test]
+fn a_failed_snapshot_restore_poisons_the_drafter_with_or_without_the_kernel() {
+    use model_deepseek41_contract::execution_options::PREFIX_SNAPSHOT_COPY_KERNEL;
+    for kernel in [false, true] {
+        let (host, mut instance) = create_with_options(
+            Shape::new(&FLASH, Ranks::TP1).unwrap(),
+            4,
+            32,
+            &[(PREFIX_SNAPSHOT_COPY_KERNEL, kernel.into())],
+        );
+        for (request, slot) in [(7, 0), (9, 1)] {
+            execute(
+                &mut instance,
+                &host,
+                &super::super::prompt(request, slot, 0, 3, true),
+            );
+            instance.commit().unwrap();
+        }
+        let pages = (0..instance.describe_prefix_state().unwrap())
+            .map(|page| 40 + page)
+            .collect::<Vec<_>>();
+        instance.capture_prefix_state(7, 3, &pages).unwrap();
+        instance.retire_request(7).unwrap();
+        // The restore's first device copy, or its first launch, fails.
+        if kernel {
+            host.device.fail_launch.set(Some(0));
+        } else {
+            host.device.fail_copy.set(Some(0));
+        }
+        assert!(
+            instance
+                .restore_prefix_state_in_slot(11, &[0, 1, 2], &pages, 0)
+                .is_err(),
+            "kernel {kernel}"
+        );
+        assert!(
+            instance
+                .execute(&verify(9, 1, 3, 5), &mut Sink::default())
+                .is_err(),
+            "kernel {kernel}: a poisoned drafter drafted"
+        );
+    }
+}

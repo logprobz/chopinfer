@@ -796,8 +796,11 @@ impl FakeHost {
     /// Runs a snapshot copy kernel launch on the device memory as the
     /// device copies its arguments and uploaded table name
     /// (`bundle_runtime::snapshot::launched_copies`), so its bytes take the
-    /// origins the device copies would give them.
-    fn run_snapshot_copy(&self, arguments: &[KernelArgumentV1]) {
+    /// origins the device copies would give them. The journal notes each of
+    /// those copies after the launch as `kernel copy`, in the form of a
+    /// device copy's line, so a test can follow the snapshot's bytes either
+    /// way.
+    fn run_snapshot_copy(&self, stream: BundleStreamHandleV1, arguments: &[KernelArgumentV1]) {
         let copies = bundle_runtime::snapshot::launched_copies(arguments, |table| {
             self.uploads
                 .borrow()
@@ -809,6 +812,10 @@ impl FakeHost {
         .expect("a snapshot copy launch over a checked table");
         let mut memory = self.memory.borrow_mut();
         for (source, destination) in copies {
+            self.device.note(format!(
+                "kernel copy {} {source:?} {destination:?}",
+                stream.slot()
+            ));
             memory.copy(source, destination);
         }
         SNAPSHOT_COPY_LAUNCHES.with(|launches| launches.set(launches.get() + 1));
@@ -968,7 +975,7 @@ impl FakePackage for FakeHost {
             }
         });
         if name == kernels_sm120::snapshot_copy::SYMBOL {
-            self.run_snapshot_copy(arguments);
+            self.run_snapshot_copy(stream, arguments);
         }
         Ok(())
     }

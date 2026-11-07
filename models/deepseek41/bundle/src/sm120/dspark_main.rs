@@ -11,6 +11,9 @@ use model_deepseek41_contract::tuning::{Family, table};
 use std::ops::RangeInclusive;
 
 const SITE: &str = "dense_prefill.dspark_main.prefill";
+/// The `dspark_main_short_rows` candidate's rows, read only with its option
+/// on.
+const SHORT_SITE: &str = "dense_prefill.dspark_main_short.prefill";
 const FAMILY: &str = "dspark_main";
 
 /// One admitted range of inner rows, every count of which uses one compact
@@ -28,17 +31,28 @@ fn recipe(shape: &crate::shape::Shape, query: Mxfp8FoldGemmQuery) -> Result<Vec<
         ("ranks".into(), shape.ranks()),
     ]
     .into();
-    let rows = table.rows().iter().filter(|row| {
-        row.key.op == SITE
-            && row.key.weights == "mxfp8"
-            && row.key.shape == key
-            && row.key.bucket == query.m_capacity
-    });
-    recipe_rows(rows)
+    let sites: &[&str] = if shape.dspark_main_short_rows {
+        &[SITE, SHORT_SITE]
+    } else {
+        &[SITE]
+    };
+    let mut rows: Vec<_> = table
+        .rows()
+        .iter()
+        .filter(|row| {
+            sites.contains(&row.key.op.as_str())
+                && row.key.weights == "mxfp8"
+                && row.key.shape == key
+                && row.key.bucket == query.m_capacity
+        })
+        .collect();
+    // Each site's rows are in row order; the candidate's go between them.
+    rows.sort_by_key(|row| row.key.rows);
+    recipe_rows(rows.into_iter())
 }
 
-/// The site's rows as ranges in row order. Each row is one nonempty range on
-/// one tile; rows that overlap or come out of row order are refused.
+/// The sites' rows as ranges in row order. Each row is one nonempty range
+/// on one tile; rows that overlap or come out of row order are refused.
 fn recipe_rows<'a>(
     rows: impl Iterator<Item = &'a kernel_build::tuning::Row>,
 ) -> Result<Vec<Range>, Refusal> {
@@ -387,13 +401,30 @@ mod tests {
         assert_eq!(tags.len(), admitted.len());
     }
 
+    /// At TP4 the stage-2 m64 pair serves 129 to 511 rows and, with the
+    /// `dspark_main_short_rows` candidate on, the stage-3 m32 pair 65 to 128;
+    /// every other count and topology keeps the generic fold's launches and
+    /// routes.
     #[test]
-    fn contiguous_main_range_keeps_every_other_launch_and_layout() {
-        for ranks in [Ranks::TP1, Ranks::TP2, Ranks::TP4] {
-            let shape = crate::shape::Shape::new(&FLASH, ranks).unwrap();
+    fn main_ranges_keep_every_other_launch_and_layout() {
+        for (ranks, short) in [Ranks::TP1, Ranks::TP2, Ranks::TP4]
+            .into_iter()
+            .flat_map(|ranks| [(ranks, false), (ranks, true)])
+        {
+            let shape = crate::shape::Shape::new(&FLASH, ranks)
+                .unwrap()
+                .with_dspark_main_short_rows(short);
             let backend = crate::Kernels::new(&shape).unwrap();
             let base = main_entry(&shape);
             let q = base.query;
+            let mut ranges = Vec::new();
+            if ranks == Ranks::TP4 {
+                if short {
+                    ranges.push((65..=128, 3));
+                }
+                ranges.push((129..=511, 2));
+            }
+            assert_eq!(recipe(&shape, q).unwrap(), ranges);
             let old = backend
                 .backend
                 .mxfp8_fold_gemm(&q, Need::rows(q.m_capacity))
@@ -409,22 +440,36 @@ mod tests {
             assert_eq!(new.info().workspace, old.info().workspace);
             assert_eq!(new.info().weight_layouts, old.info().weight_layouts);
             assert_eq!(new.info().guarantees, old.info().guarantees);
+            let implementation: String = ranges
+                .iter()
+                .map(|(rows, stages)| format!(";dspark-main-compact:{rows:?}:stages={stages}"))
+                .collect();
+            assert!(new.info().implementation.ends_with(&implementation));
             let buffers = views(&base, q.m_capacity);
             for count in 1..=q.m_capacity {
                 let counts = Counts::rows(count);
                 let a = old.launches(&buffers, View::EMPTY, counts).unwrap();
                 let b = new.launches(&buffers, View::EMPTY, counts).unwrap();
-                if ranks == Ranks::TP4 && (129..=511).contains(&count) {
+                let selected = match count {
+                    65..=128 if short => Some(("m32_n128_s3", "m64_n128_s3", 65..=128)),
+                    129..=511 => Some(("m64_n128_s2", "m64_n128_s2", 129..=511)),
+                    _ => None,
+                };
+                if let (Ranks::TP4, Some((compute, admission, rows))) = (ranks, selected) {
                     assert_eq!(a.len(), 1);
                     assert_eq!(b.len(), 2);
                     assert!(
-                        b.iter()
-                            .all(|call| call.symbol.contains("_compact_m64_n128_s2_v1"))
+                        b[0].symbol
+                            .ends_with(&format!("_compact_{admission}_v1_admit_v1"))
+                    );
+                    assert!(
+                        b[1].symbol
+                            .ends_with(&format!("_compact_{compute}_v1_packed_v1"))
                     );
                     for call in b {
                         let tag = new.route(counts, &call).unwrap();
                         assert_eq!(tag.class, RouteClass::Fast);
-                        assert_eq!(tag.admitted, [129..=511]);
+                        assert_eq!(tag.admitted, std::slice::from_ref(&rows));
                         assert!(
                             new.info()
                                 .symbols
@@ -433,7 +478,7 @@ mod tests {
                         );
                     }
                 } else {
-                    assert_eq!(a, b, "rank={ranks:?} rows={count}");
+                    assert_eq!(a, b, "rank={ranks:?} short={short} rows={count}");
                     for call in &b {
                         assert_eq!(new.route(counts, call), old.route(counts, call));
                     }

@@ -52,6 +52,10 @@ pub struct Shape {
     /// route through the drafter table (the `dspark_hc_draft_rows`
     /// candidate option, which takes effect with `dspark_hc_fusion`).
     pub dspark_hc_draft_rows: bool,
+    /// Whether the Flash TP4 DSpark main projection runs the compact pair
+    /// at the inner rows the candidate table admits (the
+    /// `dspark_main_short_rows` candidate option).
+    pub dspark_main_short_rows: bool,
 }
 
 impl Shape {
@@ -71,6 +75,7 @@ impl Shape {
             dspark_confidence_staged: false,
             dspark_hc_fusion: false,
             dspark_markov_staged: false,
+            dspark_main_short_rows: false,
         })
     }
 
@@ -85,6 +90,14 @@ impl Shape {
     /// (`model_deepseek41_contract::execution_options::WIDE_VERIFY`).
     pub fn with_wide_verify(mut self, enabled: bool) -> Shape {
         self.wide_verify = enabled;
+        self
+    }
+
+    /// This shape with the DSpark main projection's candidate compact rows
+    /// on or off
+    /// (`model_deepseek41_contract::execution_options::DSPARK_MAIN_SHORT_ROWS`).
+    pub fn with_dspark_main_short_rows(mut self, enabled: bool) -> Shape {
+        self.dspark_main_short_rows = enabled;
         self
     }
 

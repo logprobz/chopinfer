@@ -43,7 +43,8 @@ pub(super) fn validate(row: &Row) -> Result<(), TuningError> {
         "dense_prefill.compact.prefill"
         | "dense_prefill.compact_range.prefill"
         | "dense_prefill.matrix.prefill"
-        | "dense_prefill.dspark_main.prefill" => (
+        | "dense_prefill.dspark_main.prefill"
+        | "dense_prefill.dspark_main_short.prefill" => (
             &["prefill_tiles"],
             &["stages", "tile_rows"],
             &["matrix_fetch"],
@@ -248,7 +249,8 @@ fn validate_values(row: &Row) -> Result<(), TuningError> {
         }
         "dense_prefill.compact.prefill"
         | "dense_prefill.compact_range.prefill"
-        | "dense_prefill.dspark_main.prefill" => {
+        | "dense_prefill.dspark_main.prefill"
+        | "dense_prefill.dspark_main_short.prefill" => {
             !flag("matrix_fetch")
                 && count("tile_rows") == compact_tile(first)
                 && count("tile_rows") == compact_tile(last)

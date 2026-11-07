@@ -128,18 +128,22 @@ fn pin_untuned_served_keys() {
     for ranks in [1, 2, 4] {
         for entry in crate::sm120::mxfp8_fold::prefill_entries(&FLASH, ranks).unwrap() {
             let q = entry.query;
-            if (q.n, q.k, q.groups) == (5120, 15360, 1) {
-                domain.insert(key(
-                    "dense_prefill.dspark_main.prefill",
-                    "mxfp8",
-                    &[
-                        ("n", q.n),
-                        ("k", q.k),
-                        ("groups", q.groups),
-                        ("ranks", ranks),
-                    ],
-                    q.m_capacity,
-                ));
+            // The served main projection rows and the
+            // `dspark_main_short_rows` candidate's.
+            for site in ["dspark_main", "dspark_main_short"] {
+                if (q.n, q.k, q.groups) == (5120, 15360, 1) {
+                    domain.insert(key(
+                        &format!("dense_prefill.{site}.prefill"),
+                        "mxfp8",
+                        &[
+                            ("n", q.n),
+                            ("k", q.k),
+                            ("groups", q.groups),
+                            ("ranks", ranks),
+                        ],
+                        q.m_capacity,
+                    ));
+                }
             }
             for site in ["compact", "matrix", "tma_scales"] {
                 let mut shape = vec![("n", q.n), ("k", q.k), ("groups", q.groups)];
@@ -169,7 +173,7 @@ fn pin_untuned_served_keys() {
             }
         }
     }
-    assert_eq!(domain.len(), 93);
+    assert_eq!(domain.len(), 96);
     assert_untuned(
         Family::DensePrefill,
         domain,
@@ -215,6 +219,9 @@ const UNTUNED: &[&str] = &[
     "dense_prefill.dspark_main.prefill mxfp8 groups=1,k=15360,n=5120,ranks=1 buckets=8192 rows=all",
     "dense_prefill.dspark_main.prefill mxfp8 groups=1,k=15360,n=5120,ranks=2 buckets=8192 rows=all",
     "dense_prefill.dspark_main.prefill mxfp8 groups=1,k=15360,n=5120,ranks=4 buckets=8192 rows=1..128,512..8192",
+    "dense_prefill.dspark_main_short.prefill mxfp8 groups=1,k=15360,n=5120,ranks=1 buckets=8192 rows=all",
+    "dense_prefill.dspark_main_short.prefill mxfp8 groups=1,k=15360,n=5120,ranks=2 buckets=8192 rows=all",
+    "dense_prefill.dspark_main_short.prefill mxfp8 groups=1,k=15360,n=5120,ranks=4 buckets=8192 rows=1..64,129..8192",
     "dense_prefill.matrix.prefill mxfp8 groups=1,k=1152,n=5120,ranks=2 buckets=8192 rows=all",
     "dense_prefill.matrix.prefill mxfp8 groups=1,k=1280,n=16384,ranks=2 buckets=8192 rows=all",
     "dense_prefill.matrix.prefill mxfp8 groups=1,k=1280,n=32768,ranks=1 buckets=8192 rows=all",

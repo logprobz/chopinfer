@@ -5147,7 +5147,12 @@ async fn long_prompt_echo_reply_cost() {
         let mut micros = Vec::new();
         let mut bytes = 0;
         for _ in 0..ROUNDS {
-            let events = long_prompt_events(echo.then(|| long_prompt_echo(TOKENS)));
+            // Without an echo of logprobs, the engine backend sends no labels.
+            let prompt = echo.then(|| {
+                let (ids, text, _) = long_prompt_echo(TOKENS);
+                (ids, text, Vec::new())
+            });
+            let events = long_prompt_events(prompt);
             *server.backend.replay.lock().unwrap() = Some(events);
             let started = std::time::Instant::now();
             let response = server.post("/v1/completions", &request).await;
@@ -5163,5 +5168,50 @@ async fn long_prompt_echo_reply_cost() {
                 "p10_us": micros[ROUNDS / 10], "p90_us": micros[ROUNDS * 9 / 10],
                 "all_us": micros})
         );
+    }
+}
+
+/// Each prompt token's text is read only to echo the prompt's logprobs: a
+/// backend may leave it out of the prompt event otherwise, and the reply is
+/// the one the labelled event gives. An echo with logprobs still needs it.
+#[tokio::test]
+async fn prompt_labels_are_required_only_to_echo_logprobs() {
+    let server = InProcessServerV1::full();
+    let prompt = || {
+        let (ids, text, labels) = long_prompt_echo(64);
+        (
+            ids[..PROMPT_TOKENS].to_vec(),
+            text,
+            labels[..PROMPT_TOKENS].to_vec(),
+        )
+    };
+    for (echo, logprobs) in [(false, false), (false, true), (true, false), (true, true)] {
+        let mut request = serde_json::json!({"model": MODEL, "prompt": "x", "max_tokens": 1,
+            "return_token_ids": true, "echo": echo});
+        if logprobs {
+            request["logprobs"] = serde_json::json!(1);
+        }
+        let mut bodies = Vec::new();
+        for labelled in [true, false] {
+            let (ids, text, labels) = prompt();
+            let labels = if labelled { labels } else { Vec::new() };
+            let mut events = long_prompt_events(Some((ids, text, labels)));
+            if !logprobs {
+                events.remove(1);
+            }
+            *server.backend.replay.lock().unwrap() = Some(events);
+            let response = server.post("/v1/completions", &request.to_string()).await;
+            let mut body = response.json();
+            body["id"] = Value::Null;
+            body["created"] = Value::Null;
+            bodies.push((response.status, body));
+        }
+        assert_eq!(bodies[0].0, 200, "{:?}", bodies[0].1);
+        if echo && logprobs {
+            assert_eq!(bodies[1].0, 500, "{:?}", bodies[1].1);
+            assert_eq!(bodies[1].1["error"]["message"], "invalid prompt metadata");
+        } else {
+            assert_eq!(bodies[1], bodies[0], "echo {echo} logprobs {logprobs}");
+        }
     }
 }

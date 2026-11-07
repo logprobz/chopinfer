@@ -1703,10 +1703,11 @@ async fn forward_events_observed(
             Some(WorkerEvent::Event(event)) => event,
             // The echo is built here, off the engine thread, before any
             // later event is relayed.
-            Some(WorkerEvent::PromptEcho(token_ids)) => {
+            Some(WorkerEvent::PromptEcho { token_ids, labels }) => {
                 let tokenizer = Arc::clone(&tokenizer);
-                let built =
-                    tokio::task::spawn_blocking(move || prompt_echo_v1(&tokenizer, token_ids));
+                let built = tokio::task::spawn_blocking(move || {
+                    prompt_echo_v1(&tokenizer, token_ids, labels)
+                });
                 match tokio::select! {
                     biased;
                     () = cancellation.cancelled() => return,
@@ -1736,19 +1737,23 @@ async fn forward_events_observed(
     }
 }
 
-/// The prompt echo event of `token_ids`: each token's text and the prompt's,
-/// as the tokenizer decodes them.
-fn prompt_echo_v1(tokenizer: &Tokenizer, token_ids: Vec<u32>) -> GenerationEvent {
-    let tokens = token_ids
-        .iter()
-        .map(|id| {
-            String::from_utf8_lossy(tokenizer.token_bytes(*id).expect("validated token"))
-                .into_owned()
-        })
-        .collect::<Vec<_>>();
+/// The prompt echo event of `token_ids`: the prompt's text as the tokenizer
+/// decodes it, or each token's text joined when it is not UTF-8, and each
+/// token's text when `labels`.
+fn prompt_echo_v1(tokenizer: &Tokenizer, token_ids: Vec<u32>, labels: bool) -> GenerationEvent {
+    let label =
+        |id: &u32| String::from_utf8_lossy(tokenizer.token_bytes(*id).expect("validated token"));
+    let tokens = if labels {
+        token_ids
+            .iter()
+            .map(|id| label(id).into_owned())
+            .collect::<Vec<_>>()
+    } else {
+        Vec::new()
+    };
     let text = tokenizer
         .decode_utf8(&token_ids)
-        .unwrap_or_else(|_| tokens.concat());
+        .unwrap_or_else(|_| token_ids.iter().map(label).collect());
     GenerationEvent::Prompt {
         token_ids,
         text,
@@ -2013,8 +2018,12 @@ struct WorkerSubmission {
 enum WorkerEvent {
     Event(GenerationEvent),
     /// The prompt's token IDs, from which the relay builds the prompt echo
-    /// event the client receives in this one's place.
-    PromptEcho(Vec<u32>),
+    /// event the client receives in this one's place, with each token's
+    /// text when `labels`: only an echo with logprobs reads it.
+    PromptEcho {
+        token_ids: Vec<u32>,
+        labels: bool,
+    },
 }
 
 #[cfg(test)]
@@ -2024,7 +2033,7 @@ impl WorkerEvent {
     fn into_event(self) -> GenerationEvent {
         match self {
             Self::Event(event) => event,
-            Self::PromptEcho(_) => panic!("the relay builds the prompt echo"),
+            Self::PromptEcho { .. } => panic!("the relay builds the prompt echo"),
         }
     }
 }
@@ -2035,7 +2044,9 @@ impl WorkerEvent {
 fn relayed(event: WorkerEvent, tokenizer: &Tokenizer) -> GenerationEvent {
     match event {
         WorkerEvent::Event(event) => event,
-        WorkerEvent::PromptEcho(token_ids) => prompt_echo_v1(tokenizer, token_ids),
+        WorkerEvent::PromptEcho { token_ids, labels } => {
+            prompt_echo_v1(tokenizer, token_ids, labels)
+        }
     }
 }
 
@@ -2048,9 +2059,9 @@ impl WorkerEvents {
         self.0.try_send(WorkerEvent::Event(event)).map_err(drop)
     }
 
-    fn try_emit_prompt_echo(&self, token_ids: Vec<u32>) -> Result<(), ()> {
+    fn try_emit_prompt_echo(&self, token_ids: Vec<u32>, labels: bool) -> Result<(), ()> {
         self.0
-            .try_send(WorkerEvent::PromptEcho(token_ids))
+            .try_send(WorkerEvent::PromptEcho { token_ids, labels })
             .map_err(drop)
     }
 
@@ -2766,7 +2777,8 @@ fn admit<E: ModelExecutor>(
     engine.defer_completion_metrics(id);
     if let Some(ids) = prompt_echo {
         let _echo = Lap::new(tracing, &mut timing.echo);
-        if events.try_emit_prompt_echo(ids).is_err() {
+        let labels = request.logprobs.enabled && request.logprobs.echo;
+        if events.try_emit_prompt_echo(ids, labels).is_err() {
             // The client is gone before its first event. Its completion
             // metrics were deferred to this host, so they are finished here
             // with the request, as every other host cancel does.
@@ -7806,9 +7818,9 @@ mod tests {
     }
 
     /// The relay turns a prompt's IDs into the echo the worker used to
-    /// build, each token's lossy text and the prompt's decoded text, or the
-    /// tokens' text when the prompt is not UTF-8, and delivers it before
-    /// the events queued after it.
+    /// build, the prompt's decoded text, or its tokens' lossy text joined
+    /// when it is not UTF-8, and each token's text when asked, and delivers
+    /// it before the events queued after it.
     #[test]
     fn the_relay_builds_the_prompt_echo_before_later_events() {
         let runtime = tokio::runtime::Builder::new_current_thread()
@@ -7819,7 +7831,7 @@ mod tests {
         let replacement = "\u{fffd}".to_owned();
         let whole = vec![byte(b'a'), byte(0xe4), byte(0xb8), byte(0xad), 1];
         let split = vec![byte(b'a'), byte(0xe4), byte(0xb8)];
-        for (ids, text, tokens) in [
+        for (ids, text, tokens, labels) in [
             (
                 whole,
                 "a\u{4e2d}[EOS]".to_owned(),
@@ -7836,12 +7848,19 @@ mod tests {
                 "a\u{fffd}\u{fffd}".to_owned(),
                 vec!["a".to_owned(), replacement.clone(), replacement.clone()],
             ),
-        ] {
+        ]
+        .into_iter()
+        .flat_map(|(ids, text, tokens)| {
+            [
+                (ids.clone(), text.clone(), Vec::new(), false),
+                (ids, text, tokens, true),
+            ]
+        }) {
             let received = runtime.block_on(async {
                 let (client, mut reader) = tokio::sync::mpsc::channel(8);
                 let (worker, forward) = tokio::sync::mpsc::channel(8);
                 let events = WorkerEvents(worker);
-                events.try_emit_prompt_echo(ids.clone()).unwrap();
+                events.try_emit_prompt_echo(ids.clone(), labels).unwrap();
                 for token in [7, 8] {
                     events
                         .try_emit(GenerationEvent::GeneratedTokenIds(vec![token]))

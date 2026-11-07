@@ -1555,7 +1555,9 @@ async fn nonstreaming_response(
                 text,
                 tokens,
             } => {
-                if token_ids.len() != tokens.len()
+                let labelled = token_ids.len() == tokens.len()
+                    || (tokens.is_empty() && !echoes_logprobs(metadata.logprobs));
+                if !labelled
                     || prompt.is_some()
                     || (metadata.logprobs.prompt_top.is_none()
                         && !metadata.logprobs.return_token_ids)
@@ -2964,6 +2966,12 @@ fn completion_top_logprobs(token: &GeneratedTokenLogprob) -> Value {
     )
 }
 
+/// Whether a reply echoes the prompt's logprobs, the one place it reads
+/// each prompt token's text.
+const fn echoes_logprobs(requested: RequestedLogprobs) -> bool {
+    requested.enabled && requested.echo
+}
+
 fn completion_logprobs_with_prompt(
     tokens: &[GeneratedTokenLogprob],
     requested: RequestedLogprobs,
@@ -2973,7 +2981,7 @@ fn completion_logprobs_with_prompt(
     if !requested.enabled {
         return Value::Null;
     }
-    let Some((ids, _, prompt_tokens)) = prompt.filter(|_| requested.echo) else {
+    let Some((ids, _, prompt_tokens)) = prompt.filter(|_| echoes_logprobs(requested)) else {
         return completion_logprobs(tokens, 0);
     };
     let mut token_scores = vec![Value::Null; ids.len()];

@@ -228,7 +228,8 @@ fn long_prompt_admission_bench() {
                             token_ids, tokens, ..
                         } => {
                             assert_eq!(token_ids.len(), PROMPT_TOKENS);
-                            assert_eq!(tokens.len(), PROMPT_TOKENS);
+                            // Only an echo with logprobs reads each token's text.
+                            assert!(tokens.is_empty());
                             prompt_event = Some(started.elapsed());
                         }
                         GenerationEvent::Finished { .. } => {

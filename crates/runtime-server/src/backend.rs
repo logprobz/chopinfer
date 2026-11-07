@@ -377,9 +377,12 @@ pub enum GenerationEvent {
     /// Logprob records of newly generated tokens, in generation order, sent
     /// before any text those tokens produce.
     GeneratedTokenLogprobs(Vec<GeneratedTokenLogprob>),
+    /// The prompt, for a request that returns its token IDs or scores it.
     Prompt {
         token_ids: Vec<u32>,
         text: String,
+        /// Each token's text, one per ID. Only an echo with logprobs reads
+        /// it, so it may be empty for any other request.
         tokens: Vec<String>,
     },
     PromptLogprobs(Vec<PromptTokenLogprob>),

@@ -778,10 +778,14 @@ fn compare(a: &Capture, b: &Capture) -> BTreeSet<Key> {
 }
 
 /// Runs the lifecycle of `layout` with `corrupt` in a child process and
-/// reads its capture.
+/// reads its capture. The directory names the snapshot copy mode, so the
+/// tests with the kernel on and off may run at once in one process.
 fn capture(name: &str, layout: usize, corrupt: Option<&str>, kernel: bool) -> Capture {
-    let directory =
-        std::env::temp_dir().join(format!("deepseek41-kv-taps-{name}-{}", std::process::id()));
+    let mode = if kernel { "snapshot-kernel" } else { "copies" };
+    let directory = std::env::temp_dir().join(format!(
+        "deepseek41-kv-taps-{name}-{mode}-{}",
+        std::process::id()
+    ));
     let _ = std::fs::remove_dir_all(&directory);
     let layout = layout.to_string();
     let layers = LAYERS.map(|layer| layer.to_string()).join(",");

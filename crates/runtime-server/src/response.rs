@@ -9,6 +9,7 @@ use axum::extract::State;
 use axum::http::header::{CACHE_CONTROL, CONTENT_TYPE};
 use axum::http::{HeaderValue, Request, StatusCode};
 use axum::response::{IntoResponse, Response};
+use serde::Serialize;
 use serde_json::{Value, json};
 use tokio::sync::{OwnedSemaphorePermit, mpsc};
 use tokio_stream::StreamExt;
@@ -1642,7 +1643,13 @@ async fn nonstreaming_response(
                         value["choices"][0]["token_ids"] = json!(token_ids);
                     }
                 }
-                return json_response(StatusCode::OK, value, &metadata.request_id);
+                let reply = PromptReply {
+                    value: &value,
+                    prompt: prompt
+                        .as_ref()
+                        .map(|(ids, text, _)| (ids.as_slice(), text.as_str())),
+                };
+                return json_response(StatusCode::OK, reply, &metadata.request_id);
             }
             GenerationEvent::Failed {
                 message,
@@ -1690,11 +1697,12 @@ fn completion_value(
         }],
         "usage": usage_value(usage),
     });
-    if let Some((ids, text, _)) = prompt {
-        value["choices"][0]["prompt_token_ids"] = json!(ids);
-        value["choices"][0]["prompt_text"] = json!(text);
-        value["prompt_token_ids"] = json!(ids);
-        value["prompt_text"] = json!(text);
+    // The reply writes each prompt member from the prompt in its place.
+    if let Some((ids, _, _)) = prompt {
+        value["choices"][0]["prompt_token_ids"] = Value::Null;
+        value["choices"][0]["prompt_text"] = Value::Null;
+        value["prompt_token_ids"] = Value::Null;
+        value["prompt_text"] = Value::Null;
         if metadata.logprobs.prompt_top.is_some() {
             let positions = prompt_logprob_positions(ids, prompt_logprobs);
             value["choices"][0]["prompt_logprobs"] = positions.clone();
@@ -1776,14 +1784,98 @@ fn chat_value(metadata: &ResponseMetadata, input: ChatValueInput<'_>) -> Value {
         "usage": usage_value(usage),
     });
     if let Some((ids, _, _)) = prompt {
+        // The reply writes the prompt's IDs in their place.
         if metadata.logprobs.return_token_ids {
-            value["prompt_token_ids"] = json!(ids);
+            value["prompt_token_ids"] = Value::Null;
         }
         if metadata.logprobs.prompt_top.is_some() {
             value["prompt_logprobs"] = prompt_logprob_positions(ids, prompt_logprobs);
         }
     }
     value
+}
+
+/// A reply value whose `prompt_token_ids` and `prompt_text` members, at the
+/// top level and in the first choice, are written from the prompt.
+///
+/// The value holds each such member as a null in its place. A long prompt's
+/// IDs copied into the value would be one number value per token, each a
+/// heap string under the transport's arbitrary-precision JSON, for every
+/// member that carries them. The prompt's IDs and text serialize as the
+/// values they stand for would, and every other value as it is, so the
+/// reply's bytes are the same.
+#[derive(Clone, Copy)]
+struct PromptReply<'a> {
+    value: &'a Value,
+    prompt: Option<(&'a [u32], &'a str)>,
+}
+
+impl PromptReply<'_> {
+    fn object<S: serde::Serializer>(
+        &self,
+        value: &Value,
+        choices: bool,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeMap;
+        let (Value::Object(members), Some((ids, text))) = (value, self.prompt) else {
+            return value.serialize(serializer);
+        };
+        let mut map = serializer.serialize_map(Some(members.len()))?;
+        for (key, member) in members {
+            match (key.as_str(), member) {
+                ("prompt_token_ids", Value::Null) => map.serialize_entry(key, ids)?,
+                ("prompt_text", Value::Null) => map.serialize_entry(key, text)?,
+                ("choices", Value::Array(items)) if choices => {
+                    map.serialize_entry(key, &FirstChoice { reply: self, items })?;
+                }
+                _ => map.serialize_entry(key, member)?,
+            }
+        }
+        map.end()
+    }
+}
+
+impl Serialize for PromptReply<'_> {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        self.object(self.value, true, serializer)
+    }
+}
+
+/// A reply's choices, the first with its prompt members written.
+struct FirstChoice<'a> {
+    reply: &'a PromptReply<'a>,
+    items: &'a [Value],
+}
+
+impl Serialize for FirstChoice<'_> {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeSeq;
+        let mut sequence = serializer.serialize_seq(Some(self.items.len()))?;
+        for (index, item) in self.items.iter().enumerate() {
+            if index == 0 {
+                sequence.serialize_element(&Choice {
+                    reply: self.reply,
+                    value: item,
+                })?;
+            } else {
+                sequence.serialize_element(item)?;
+            }
+        }
+        sequence.end()
+    }
+}
+
+/// The first choice, with its prompt members written.
+struct Choice<'a> {
+    reply: &'a PromptReply<'a>,
+    value: &'a Value,
+}
+
+impl Serialize for Choice<'_> {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        self.reply.object(self.value, false, serializer)
+    }
 }
 
 fn prompt_logprob_positions(ids: &[u32], rows: &[PromptTokenLogprob]) -> Value {
@@ -1821,7 +1913,23 @@ struct CompletionIdStream {
     ids: Vec<u32>,
     records: Vec<GeneratedTokenLogprob>,
     text_offset: usize,
-    chunk: Option<Value>,
+    chunk: Option<StagedChunk>,
+}
+
+/// A staged completion chunk, and the prompt IDs its first choice carries,
+/// which its reply writes in place of their null member.
+struct StagedChunk {
+    value: Value,
+    prompt_ids: Option<Vec<u32>>,
+}
+
+impl StagedChunk {
+    fn reply(&self) -> PromptReply<'_> {
+        PromptReply {
+            value: &self.value,
+            prompt: self.prompt_ids.as_deref().map(|ids| (ids, "")),
+        }
+    }
 }
 
 impl CompletionIdStream {
@@ -1829,7 +1937,7 @@ impl CompletionIdStream {
         !self.ids.is_empty() || !self.records.is_empty()
     }
 
-    fn stage(&mut self, metadata: &ResponseMetadata, text: &str) -> Option<Value> {
+    fn stage(&mut self, metadata: &ResponseMetadata, text: &str) -> Option<StagedChunk> {
         let logprobs = if let Some(prompt) = self.prompt.take() {
             metadata.logprobs.enabled.then(|| {
                 completion_logprobs_with_prompt(
@@ -1849,11 +1957,14 @@ impl CompletionIdStream {
         self.positions.clear();
         let mut chunk = stream_chunk(metadata, json!(text), None, logprobs);
         chunk["choices"][0]["token_ids"] = json!(std::mem::take(&mut self.ids));
-        chunk["choices"][0]["prompt_token_ids"] = json!(self.prompt_ids.take());
+        chunk["choices"][0]["prompt_token_ids"] = Value::Null;
         // vLLM suppresses echoed text with return_token_ids. Subsequent
         // offsets count only the generated text, even after prompt rows.
         self.text_offset += text.chars().count();
-        self.chunk.replace(chunk)
+        self.chunk.replace(StagedChunk {
+            value: chunk,
+            prompt_ids: self.prompt_ids.take(),
+        })
     }
 }
 
@@ -1951,7 +2062,7 @@ fn streaming_response(
                         if !metadata.logprobs.enabled
                             && stream.has_pending_tokens()
                             && let Some(chunk) = stream.stage(&metadata, "")
-                            && !send_sse(&body_tx, &chunk).await
+                            && !send_sse(&body_tx, &chunk.reply()).await
                         {
                             return;
                         }
@@ -2021,7 +2132,7 @@ fn streaming_response(
                     if let Some(stream) = &mut completion_ids {
                         if stream.has_pending_tokens()
                             && let Some(chunk) = stream.stage(&metadata, "")
-                            && !send_sse(&body_tx, &chunk).await
+                            && !send_sse(&body_tx, &chunk.reply()).await
                         {
                             return;
                         }
@@ -2071,7 +2182,7 @@ fn streaming_response(
                     }
                     if let Some(stream) = &mut completion_ids {
                         if let Some(chunk) = stream.stage(&metadata, &content_event.delta)
-                            && !send_sse(&body_tx, &chunk).await
+                            && !send_sse(&body_tx, &chunk.reply()).await
                         {
                             return;
                         }
@@ -2286,7 +2397,7 @@ fn streaming_response(
                     let terminal = if let Some(stream) = &mut completion_ids {
                         if (stream.has_pending_tokens() || stream.chunk.is_none())
                             && let Some(chunk) = stream.stage(&metadata, "")
-                            && !send_sse(&body_tx, &chunk).await
+                            && !send_sse(&body_tx, &chunk.reply()).await
                         {
                             return;
                         }
@@ -2294,17 +2405,20 @@ fn streaming_response(
                             .chunk
                             .take()
                             .expect("completion has a terminal chunk");
-                        chunk["choices"][0]["finish_reason"] = json!(finish_reason(reason));
+                        chunk.value["choices"][0]["finish_reason"] = json!(finish_reason(reason));
                         chunk
                     } else {
-                        stream_chunk(
-                            &metadata,
-                            empty_delta,
-                            Some(finish_reason(reason)),
-                            logprobs,
-                        )
+                        StagedChunk {
+                            value: stream_chunk(
+                                &metadata,
+                                empty_delta,
+                                Some(finish_reason(reason)),
+                                logprobs,
+                            ),
+                            prompt_ids: None,
+                        }
                     };
-                    if !send_sse(&body_tx, &terminal).await {
+                    if !send_sse(&body_tx, &terminal.reply()).await {
                         return;
                     }
                     if metadata.include_usage {
@@ -2430,7 +2544,7 @@ fn stream_chunk(
     value
 }
 
-async fn send_sse(sender: &SseSender, value: &Value) -> bool {
+async fn send_sse(sender: &SseSender, value: &impl Serialize) -> bool {
     let mut frame = String::from("data: ");
     match serde_json::to_string(value) {
         Ok(json) => frame.push_str(&json),
@@ -2461,10 +2575,14 @@ async fn send_chat_start(
         None,
         None,
     );
-    if let Some(ids) = prompt_ids {
-        initial["prompt_token_ids"] = json!(ids);
+    if prompt_ids.is_some() {
+        initial["prompt_token_ids"] = Value::Null;
     }
-    if send_sse(sender, &initial).await {
+    let reply = PromptReply {
+        value: &initial,
+        prompt: prompt_ids.map(|ids| (ids, "")),
+    };
+    if send_sse(sender, &reply).await {
         *started = true;
         true
     } else {
@@ -2976,7 +3094,7 @@ fn stream_object(endpoint: Endpoint) -> &'static str {
     }
 }
 
-fn json_response(status: StatusCode, body: Value, request_id: &str) -> Response {
+fn json_response(status: StatusCode, body: impl Serialize, request_id: &str) -> Response {
     let mut response = (status, Json(body)).into_response();
     insert_request_id(&mut response, request_id);
     response
@@ -3056,6 +3174,92 @@ mod tests {
         assert_eq!(error.value()["error"]["message"], message);
         let tokenization = admission_error(AdmissionError::InvalidPrompt);
         assert_ne!(error.message, tokenization.message);
+    }
+
+    /// A reply's bytes with its prompt members written from the prompt are
+    /// the bytes of the value holding copies of them, the way the reply was
+    /// built before: completion and chat replies, a streamed first chunk,
+    /// prompt members of other choices left as they are, and later chunks
+    /// whose null member is no placeholder.
+    #[test]
+    fn prompt_replies_write_the_bytes_of_the_values_they_stand_for() {
+        let texts = [
+            String::new(),
+            "plain".to_owned(),
+            "q\"u\\o\nte\t\u{1}\u{7f}/\u{fffd}\u{4e2d}\u{1f600}\u{2028}".to_owned(),
+            "word ".repeat(5000),
+        ];
+        let ids = [
+            Vec::new(),
+            vec![0],
+            vec![7, 8, u32::MAX, 0, 100_000],
+            (0..20_000).map(|id| id * 7919).collect(),
+        ];
+        for (ids, text) in ids.iter().zip(&texts) {
+            let completion = json!({"id": "cmpl_x", "object": "text_completion", "created": 1,
+                "model": "m", "choices": [
+                    {"text": "a", "index": 0, "logprobs": null, "finish_reason": "stop",
+                     "prompt_token_ids": null, "prompt_text": null, "prompt_logprobs": [null],
+                     "token_ids": [11]},
+                    {"text": "b", "index": 1, "prompt_token_ids": null}],
+                "usage": {"prompt_tokens": 3}, "prompt_token_ids": null, "prompt_text": null});
+            let chat = json!({"id": "c", "choices": [{"index": 0, "message": {"content": "x"}}],
+                "usage": {}, "prompt_token_ids": null});
+            let chunk = json!({"id": "s", "choices": [{"text": "", "index": 0,
+                "token_ids": [1], "prompt_token_ids": null}]});
+            let filled = |value: &Value, paths: &[(&[&str], Value)]| {
+                let mut value = value.clone();
+                for (path, member) in paths {
+                    let mut target = &mut value;
+                    for step in *path {
+                        target = match step.parse::<usize>() {
+                            Ok(index) => &mut target[index],
+                            Err(_) => &mut target[*step],
+                        };
+                    }
+                    *target = member.clone();
+                }
+                serde_json::to_vec(&value).unwrap()
+            };
+            let reply = |value: &Value| {
+                serde_json::to_vec(&PromptReply {
+                    value,
+                    prompt: Some((ids, text)),
+                })
+                .unwrap()
+            };
+            assert_eq!(
+                reply(&completion),
+                filled(
+                    &completion,
+                    &[
+                        (&["choices", "0", "prompt_token_ids"], json!(ids)),
+                        (&["choices", "0", "prompt_text"], json!(text)),
+                        (&["prompt_token_ids"], json!(ids)),
+                        (&["prompt_text"], json!(text)),
+                    ]
+                )
+            );
+            assert_eq!(
+                reply(&chat),
+                filled(&chat, &[(&["prompt_token_ids"], json!(ids))])
+            );
+            assert_eq!(
+                reply(&chunk),
+                filled(
+                    &chunk,
+                    &[(&["choices", "0", "prompt_token_ids"], json!(ids))]
+                )
+            );
+            let later = PromptReply {
+                value: &chunk,
+                prompt: None,
+            };
+            assert_eq!(
+                serde_json::to_vec(&later).unwrap(),
+                serde_json::to_vec(&chunk).unwrap()
+            );
+        }
     }
 
     #[derive(Debug)]

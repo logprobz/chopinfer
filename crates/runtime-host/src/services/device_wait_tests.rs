@@ -1,9 +1,11 @@
 //! What a traced step counts as device waits when a bundle blocks on the
 //! device through the host services, called through the C ABI table a bundle
-//! holds. The fake device runs each launched graph for an emulated time, so a
-//! host wait blocks for as long as a device would hold it. The step trace's
-//! `boundary_us` runs from the previous step's last device wait ending to
-//! the step's first one starting; these tests compute it the same way.
+//! holds. The fake device gives each launched graph work that completes only
+//! while a host wait needs it, so a wait blocks for that work's run time
+//! wherever the scheduler puts the test thread, and the assertions check the
+//! order of calls and waits rather than deadlines. The step trace's
+//! `boundary_us` runs from the previous step's last device wait ending to the
+//! step's first one starting; these tests compute it the same way.
 
 use super::*;
 use crate::fake::FakeHostDeviceV1;
@@ -16,7 +18,7 @@ use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 /// How long a target graph runs.
-const TARGET: Duration = Duration::from_millis(40);
+const TARGET: Duration = Duration::from_millis(20);
 /// How long a successor drafter graph runs.
 const SUCCESSOR: Duration = Duration::from_millis(5);
 /// Host work between two steps: commit, event delivery and scheduling.
@@ -100,12 +102,36 @@ fn launch_time(backend: &Backend, time: Duration) {
     backend.with_device_mut(|device| device.set_launch_time(time));
 }
 
-/// One step's device waits and when its blocking readback was called and
-/// returned.
+/// How many of `stream`'s launches have not completed.
+fn pending(backend: &Backend, stream: BundleStreamHandleV1) -> u64 {
+    let object = backend.state.borrow().stream_object(stream).unwrap();
+    backend.with_device(|device| device.pending_launches(object))
+}
+
+fn micros(duration: Duration) -> u64 {
+    duration.as_micros() as u64
+}
+
+/// Whether `instant` lies within `window`, ends included.
+fn within(instant: Instant, (start, end): (Instant, Instant)) -> bool {
+    start <= instant && instant <= end
+}
+
+/// `boundary_us` as the step trace computes it.
+fn boundary(previous: &DeviceWaits, next: &DeviceWaits) -> Duration {
+    next.first_started
+        .unwrap()
+        .saturating_duration_since(previous.last_ended.unwrap())
+}
+
+/// One boundary step's device waits, the calls and returns of its blocking
+/// readback and final collection, and the target work the readback found
+/// unfinished.
 struct Step {
     waits: DeviceWaits,
     readback: (Instant, Instant),
-    launched: Instant,
+    collection: (Instant, Instant),
+    unfinished: u64,
 }
 
 /// A multi-rank drafting decode step whose main wait is one blocking
@@ -121,7 +147,6 @@ fn boundary_step(
 ) -> Step {
     let step = profile::TraceTotals::begin();
     launch_time(backend, TARGET);
-    let launched = Instant::now();
     for rank in ranks {
         host.launch_graph(rank.stream, rank.target).unwrap();
     }
@@ -147,39 +172,39 @@ fn boundary_step(
         }
         .unwrap();
     }
+    let unfinished = ranks.iter().map(|rank| pending(backend, rank.stream)).sum();
     let mut output = vec![0; packet.length as usize];
     let called = Instant::now();
     host.copy_device_to_host(lead.stream, &mut output, packet)
         .unwrap();
-    let returned = Instant::now();
+    let readback = (called, Instant::now());
     let expected = (0..ranks.len())
         .flat_map(|rank| [rank as u8 + 1; STATUS as usize])
         .collect::<Vec<_>>();
     assert_eq!(output, expected, "the packet holds every rank's status");
+    for rank in ranks {
+        assert_eq!(
+            pending(backend, rank.stream),
+            0,
+            "the readback needed every target"
+        );
+    }
     launch_time(backend, SUCCESSOR);
     host.record_event(lead.ready, lead.stream).unwrap();
     for rank in ranks {
         host.launch_graph(rank.stream, rank.successor).unwrap();
     }
+    let called = Instant::now();
     host.synchronize_event(lead.ready).unwrap();
+    let collection = (called, Instant::now());
     let waits = profile::device_waits();
     drop(step);
     Step {
         waits,
-        readback: (called, returned),
-        launched,
+        readback,
+        collection,
+        unfinished,
     }
-}
-
-/// `boundary_us` as the step trace computes it.
-fn boundary(previous: &DeviceWaits, next: &DeviceWaits) -> Duration {
-    next.first_started
-        .unwrap()
-        .saturating_duration_since(previous.last_ended.unwrap())
-}
-
-fn micros(duration: Duration) -> u64 {
-    duration.as_micros() as u64
 }
 
 #[test]
@@ -192,30 +217,30 @@ fn a_gathered_boundary_readback_is_the_steps_device_wait() {
     std::thread::sleep(BETWEEN);
     let second = boundary_step(&backend, host, &ranks, packet);
     for step in [&first, &second] {
-        let (called, returned) = step.readback;
-        // The readback blocks until every rank's target has finished, and
-        // that time is the step's device wait. Its window opens at the
-        // readback, not at the step's final collection.
+        // Every rank's target was unfinished when the readback was called
+        // and the readback ran it, so the step's device wait holds its run, and
+        // the wait window opens at the readback, not at the final collection.
+        assert!(step.unfinished >= 4);
+        assert!(step.waits.micros >= micros(TARGET));
         let started = step.waits.first_started.expect("the readback waited");
-        assert!(called <= started && started <= returned);
-        let remaining = (step.launched + TARGET).saturating_duration_since(started);
-        assert!(!remaining.is_zero() && returned - started >= remaining);
-        assert!(step.waits.micros >= micros(remaining));
-        assert!(step.waits.micros <= micros(returned - called) + 1_000);
+        assert!(within(started, step.readback));
+        let ended = step.waits.last_ended.unwrap();
+        assert!(within(ended, step.collection));
     }
     // Between the steps the device was idle at most from the first step's
-    // collection to the second step's readback: the host work between them
-    // and the second step's launches, never the target it then ran.
+    // collection to the second step's readback. That interval and the second
+    // step's waits are disjoint, so the target the second step ran, which
+    // its waits hold, lies outside the boundary.
     let between = boundary(&first.waits, &second.waits);
     assert!(between >= BETWEEN);
-    assert!(between < second.readback.1 - second.launched);
-    assert!(between < TARGET);
+    let span = second.collection.1 - first.waits.last_ended.unwrap();
+    assert!(micros(between) + second.waits.micros <= micros(span));
 }
 
 /// A step that reads its tokens back with a blocking copy, as a drafting
 /// bundle reading back its proposals does, counts that copy as its device
 /// wait. One that synchronizes first counts the wait once: the readback after
-/// it adds only its own copy.
+/// it finds the work done.
 #[test]
 fn a_token_readback_counts_once_with_or_without_a_synchronization_first() {
     for synchronize in [false, true] {
@@ -230,25 +255,29 @@ fn a_token_readback_counts_once_with_or_without_a_synchronization_first() {
             launch_time(&backend, TARGET);
             let launched = Instant::now();
             host.launch_graph(rank.stream, rank.target).unwrap();
+            let called = Instant::now();
             if synchronize {
                 host.record_event(rank.ready, rank.stream).unwrap();
                 host.synchronize_event(rank.ready).unwrap();
+                assert_eq!(pending(&backend, rank.stream), 0);
             }
             let mut tokens = vec![0; packet.length as usize];
             host.copy_device_to_host(rank.stream, &mut tokens, packet)
                 .unwrap();
             let returned = Instant::now();
+            assert_eq!(pending(&backend, rank.stream), 0);
             let waits = profile::device_waits();
             drop(step);
-            let started = waits.first_started.expect("the step waited");
-            assert!(started >= launched && started < launched + TARGET);
-            assert!(waits.micros >= micros(launched + TARGET - started));
+            assert!(within(waits.first_started.unwrap(), (called, returned)));
+            assert!(waits.micros >= micros(TARGET));
             assert!(waits.micros <= micros(returned - launched));
-            steps.push(waits);
+            steps.push((waits, returned));
             std::thread::sleep(BETWEEN);
         }
-        let between = boundary(&steps[0], &steps[1]);
-        assert!(between >= BETWEEN && between < TARGET, "{between:?}");
+        let between = boundary(&steps[0].0, &steps[1].0);
+        assert!(between >= BETWEEN);
+        let span = steps[1].1 - steps[0].0.last_ended.unwrap();
+        assert!(micros(between) + steps[1].0.micros <= micros(span));
     }
 }
 
@@ -264,20 +293,21 @@ fn an_untraced_readback_records_nothing() {
     drop(step);
     let before = profile::device_waits();
     launch_time(&backend, SUCCESSOR);
-    let launched = Instant::now();
     host.launch_graph(ranks[0].stream, ranks[0].target).unwrap();
     let mut bytes = vec![0; packet.length as usize];
+    let called = Instant::now();
     host.copy_device_to_host(ranks[0].stream, &mut bytes, packet)
         .unwrap();
-    assert!(launched.elapsed() >= SUCCESSOR);
+    assert!(called.elapsed() >= SUCCESSOR);
+    assert_eq!(pending(&backend, ranks[0].stream), 0);
     assert_eq!(profile::device_waits(), before);
 }
 
 /// With step overlap (`CHOPINFER_STEP_OVERLAP=1`) the events queued after a
 /// step are sent at the next blocking wait after a launch. In a boundary step
-/// that is the gathered readback, while the target still runs, rather than
-/// the final collection after the successor drafter is queued; the step's
-/// wait window opens where the deferred work starts.
+/// that is the gathered readback, while the target is still unfinished,
+/// rather than the final collection after the successor drafter is queued;
+/// the step's wait window opens where the deferred work starts.
 #[test]
 fn deferred_delivery_runs_at_the_readback_while_the_target_runs() {
     let backend = backend(4);
@@ -286,16 +316,14 @@ fn deferred_delivery_runs_at_the_readback_while_the_target_runs() {
     let (ranks, packet) = ranks(host, 4);
     let delivered = Rc::new(std::cell::Cell::new(None));
     let job = Rc::clone(&delivered);
-    crate::overlap::defer(move || job.set(Some(Instant::now())));
+    let device = Rc::clone(&backend);
+    let lead = ranks[0].stream;
+    crate::overlap::defer(move || job.set(Some((Instant::now(), pending(&device, lead)))));
     let step = boundary_step(&backend, host, &ranks, packet);
     assert_eq!(crate::overlap::pending(), 0);
-    let delivered = delivered.get().expect("the step delivered the queued work");
-    let (called, returned) = step.readback;
-    assert!(called <= delivered && delivered < returned);
-    assert!(
-        delivered < step.launched + TARGET,
-        "the target was still running"
-    );
+    let (delivered, unfinished) = delivered.get().expect("the step delivered the queued work");
+    assert!(within(delivered, step.readback));
+    assert_eq!(unfinished, 1, "the lead rank's target had not run");
     let started = step.waits.first_started.unwrap();
-    assert!(called <= started && started <= delivered);
+    assert!(within(started, (step.readback.0, delivered)));
 }

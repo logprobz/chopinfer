@@ -191,13 +191,13 @@ pub struct FakeHostDeviceV1 {
     skip_collective_ordering: bool,
     /// Whether a launch this backend checked is reported as accepted.
     accept_launches: bool,
-    /// How long each graph launch keeps its stream busy; zero completes it
-    /// at once.
+    /// How long each later graph launch's work runs; zero completes it at
+    /// once.
     launch_time: std::time::Duration,
-    /// When each stream's launched work completes, by stream object.
-    stream_busy: BTreeMap<u64, std::time::Instant>,
-    /// When the launched work each recorded event follows completes.
-    event_ready: BTreeMap<u64, std::time::Instant>,
+    /// Each stream's launched work, by stream object.
+    stream_work: BTreeMap<u64, FakeStreamWorkV1>,
+    /// The work each recorded event follows: (stream, launch count) marks.
+    event_marks: BTreeMap<u64, Vec<(u64, u64)>>,
     /// What `cluster_residency` reports; `None` reports it unsupported.
     cluster_residency: Option<runtime_bundle_abi::BundleRawClusterResidencyV1>,
     sparse_probe_allocations: bool,
@@ -241,6 +241,17 @@ pub struct FakeHostDeviceV1 {
     /// How many held lendable allocations ([`HostDeviceBackendV1::hold_device_buffer`])
     /// are not yet dropped, wherever they went; made by the first hold.
     held: Option<std::sync::Arc<std::sync::atomic::AtomicUsize>>,
+}
+
+/// One stream's launched work under [`FakeHostDeviceV1::set_launch_time`].
+#[derive(Default)]
+struct FakeStreamWorkV1 {
+    launched: u64,
+    completed: u64,
+    /// The run time of each launch not yet completed, oldest first.
+    remaining: std::collections::VecDeque<std::time::Duration>,
+    /// Work on other streams this stream waited on through events.
+    after: Vec<(u64, u64)>,
 }
 
 /// A fake held allocation: it only counts itself.
@@ -303,8 +314,8 @@ impl FakeHostDeviceV1 {
             skip_collective_ordering: false,
             accept_launches: false,
             launch_time: std::time::Duration::ZERO,
-            stream_busy: BTreeMap::new(),
-            event_ready: BTreeMap::new(),
+            stream_work: BTreeMap::new(),
+            event_marks: BTreeMap::new(),
             cluster_residency: None,
             sparse_probe_allocations: false,
             pool_peer_access: BTreeSet::new(),
@@ -514,20 +525,66 @@ impl FakeHostDeviceV1 {
         self.accept_launches = accept;
     }
 
-    /// Makes each graph launch keep its stream busy for `time` after the
-    /// stream's earlier work, as a device running the graph would. A stream
-    /// or event synchronization and a device-to-host copy then block until
-    /// the work they follow would have finished, and an event wait carries
-    /// that completion to the waiting stream. Zero, the default, completes
-    /// launched work at once.
+    /// Gives each later graph launch `time` of work that runs only while the
+    /// host waits for it, so a test, not the scheduler, decides when launched
+    /// work completes. A stream or event synchronization or a device-to-host
+    /// copy that needs unfinished work blocks for its remaining time (the
+    /// longest any one needed stream has left) and completes it, and an event
+    /// wait makes the waiting stream need the work the event follows. Zero,
+    /// the default, completes launched work at once.
     pub fn set_launch_time(&mut self, time: std::time::Duration) {
         self.launch_time = time;
     }
 
-    /// Sleeps until `ready`, the completion of work a host wait follows.
-    fn block_until(ready: Option<std::time::Instant>) {
-        if let Some(ready) = ready {
-            std::thread::sleep(ready.saturating_duration_since(std::time::Instant::now()));
+    /// How many of `stream`'s launches under a launch time have not completed.
+    #[must_use]
+    pub fn pending_launches(&self, stream: DeviceObjectV1) -> u64 {
+        self.stream_work
+            .get(&stream.get())
+            .map_or(0, |work| work.launched - work.completed)
+    }
+
+    /// The marks a wait on everything ordered on `stream` so far needs.
+    fn stream_marks(&self, stream: DeviceObjectV1) -> Vec<(u64, u64)> {
+        self.stream_work
+            .get(&stream.get())
+            .map(|work| {
+                let mut marks = work.after.clone();
+                marks.push((stream.get(), work.launched));
+                marks
+            })
+            .unwrap_or_default()
+    }
+
+    /// Runs the work `marks` name to completion, blocking for as long as the
+    /// longest of their streams has left.
+    fn complete(&mut self, marks: &[(u64, u64)]) {
+        let mut through = BTreeMap::new();
+        for &(stream, count) in marks {
+            let entry = through.entry(stream).or_insert(0);
+            *entry = count.max(*entry);
+        }
+        let mut longest = std::time::Duration::ZERO;
+        for (stream, count) in through {
+            let Some(work) = self.stream_work.get_mut(&stream) else {
+                continue;
+            };
+            let mut total = std::time::Duration::ZERO;
+            while work.completed < count {
+                total += work.remaining.pop_front().unwrap_or_default();
+                work.completed += 1;
+            }
+            longest = longest.max(total);
+        }
+        std::thread::sleep(longest);
+    }
+
+    /// Completes everything ordered on `stream`, as a host wait on it does.
+    fn complete_stream(&mut self, stream: DeviceObjectV1) {
+        let marks = self.stream_marks(stream);
+        self.complete(&marks);
+        if let Some(work) = self.stream_work.get_mut(&stream.get()) {
+            work.after.clear();
         }
     }
 
@@ -1461,14 +1518,14 @@ impl HostDeviceBackendV1 for FakeHostDeviceV1 {
         self.require(stream, FakeObjectKindV1::Stream)?;
         self.check(FakeRefusalV1::SynchronizeStream)?;
         self.synchronizations += 1;
-        Self::block_until(self.stream_busy.get(&stream.get()).copied());
+        self.complete_stream(stream);
         self.drain_deferred(stream)
     }
 
     fn release_stream(&mut self, stream: DeviceObjectV1) -> HostDeviceResultV1<()> {
         self.check(FakeRefusalV1::ReleaseStream)?;
         self.destroy(stream, FakeObjectKindV1::Stream)?;
-        self.stream_busy.remove(&stream.get());
+        self.stream_work.remove(&stream.get());
         // A released stream's staging chunk goes with it.
         self.fill_streams.remove(&stream.get());
         Ok(())
@@ -1501,9 +1558,9 @@ impl HostDeviceBackendV1 for FakeHostDeviceV1 {
         self.require(stream, FakeObjectKindV1::Stream)?;
         self.require(graph, FakeObjectKindV1::Graph)?;
         if !self.launch_time.is_zero() {
-            let now = std::time::Instant::now();
-            let busy = self.stream_busy.entry(stream.get()).or_insert(now);
-            *busy = (*busy).max(now) + self.launch_time;
+            let work = self.stream_work.entry(stream.get()).or_default();
+            work.launched += 1;
+            work.remaining.push_back(self.launch_time);
         }
         Ok(())
     }
@@ -1526,10 +1583,8 @@ impl HostDeviceBackendV1 for FakeHostDeviceV1 {
     ) -> HostDeviceResultV1<()> {
         self.require(event, FakeObjectKindV1::Event)?;
         self.require(stream, FakeObjectKindV1::Stream)?;
-        match self.stream_busy.get(&stream.get()) {
-            Some(&busy) => self.event_ready.insert(event.get(), busy),
-            None => self.event_ready.remove(&event.get()),
-        };
+        let marks = self.stream_marks(stream);
+        self.event_marks.insert(event.get(), marks);
         Ok(())
     }
 
@@ -1540,23 +1595,32 @@ impl HostDeviceBackendV1 for FakeHostDeviceV1 {
     ) -> HostDeviceResultV1<()> {
         self.require(stream, FakeObjectKindV1::Stream)?;
         self.require(event, FakeObjectKindV1::Event)?;
-        if let Some(&ready) = self.event_ready.get(&event.get()) {
-            let busy = self.stream_busy.entry(stream.get()).or_insert(ready);
-            *busy = (*busy).max(ready);
+        if let Some(marks) = self.event_marks.get(&event.get()).filter(|m| !m.is_empty()) {
+            let marks = marks.clone();
+            self.stream_work
+                .entry(stream.get())
+                .or_default()
+                .after
+                .extend(marks);
         }
         Ok(())
     }
 
     fn synchronize_event(&mut self, event: DeviceObjectV1) -> HostDeviceResultV1<()> {
         self.require(event, FakeObjectKindV1::Event)?;
-        Self::block_until(self.event_ready.get(&event.get()).copied());
+        let marks = self
+            .event_marks
+            .get(&event.get())
+            .cloned()
+            .unwrap_or_default();
+        self.complete(&marks);
         Ok(())
     }
 
     fn release_event(&mut self, event: DeviceObjectV1) -> HostDeviceResultV1<()> {
         self.check(FakeRefusalV1::ReleaseEvent)?;
         self.destroy(event, FakeObjectKindV1::Event)?;
-        self.event_ready.remove(&event.get());
+        self.event_marks.remove(&event.get());
         Ok(())
     }
 
@@ -1633,7 +1697,7 @@ impl HostDeviceBackendV1 for FakeHostDeviceV1 {
             return Err(BundleStatusV1::InvalidArgument);
         }
         // The copy is stream-ordered and returns once it has landed.
-        Self::block_until(self.stream_busy.get(&stream.get()).copied());
+        self.complete_stream(stream);
         destination.copy_from_slice(&bytes);
         Ok(())
     }

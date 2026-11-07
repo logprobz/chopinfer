@@ -8,7 +8,7 @@ use runtime_engine::{
     ExecutorError, LogitsRow, ModelBatchItem, ModelExecutor, ModelTransaction,
     ModelTransactionState, MonotonicClock, RequestId,
 };
-use runtime_kv::{BlockId, KvGeometry, PreparedAppendBatch};
+use runtime_kv::{BlockId, KvGeometry, PrefixChainV1, PreparedAppendBatch};
 use runtime_model_api::ModelVocabulary;
 use runtime_sampling::SamplingParameters;
 use runtime_scheduler::SchedulerConfig;
@@ -367,6 +367,46 @@ fn a_cache_salt_shares_prefixes_only_with_the_same_salt() {
     let (tokens, cached) = run_request(&mut engine, salted(4, &second, b"tenant-a"), 4);
     assert_eq!(cached, Some(10), "the same salt hits");
     assert_eq!(tokens, cold(&second, 2));
+}
+
+/// A chain hashed off the engine thread keys a prompt only when it is the
+/// chain submission builds: one from other tokens, another salt or another
+/// page size changes nothing, whether the capturing request or the
+/// restoring one offers it.
+#[test]
+fn an_offered_prefix_chain_keys_only_the_prompt_it_was_built_from() {
+    let salt = b"tenant-a".as_slice();
+    let first = words(10, 2);
+    let mut second = first.clone();
+    second.extend(words(7, 4));
+    let chain = |tokens: &[u32], block, salt: Option<&[u8]>| {
+        Arc::new(PrefixChainV1::salted(block, Arc::from(tokens), Vec::new(), salt).unwrap())
+    };
+    let offers = |tokens: &[u32]| {
+        [
+            None,
+            Some(chain(tokens, 4, Some(salt))),
+            Some(chain(&words(tokens.len() as u32, 9), 4, Some(salt))),
+            Some(chain(tokens, 4, Some(b"tenant-b"))),
+            Some(chain(tokens, 4, None)),
+            Some(chain(tokens, 8, Some(salt))),
+        ]
+    };
+    let pairs = offers(&first)
+        .into_iter()
+        .flat_map(|capturing| offers(&second).map(|restoring| (capturing.clone(), restoring)));
+    for (capturing, restoring) in pairs {
+        let mut engine = Engine::new(config(true), FoldingExecutor::default()).unwrap();
+        for (id, prompt, offer) in [(1, &first, capturing), (2, &second, restoring)] {
+            let mut offered = request(id, prompt, 2).with_cache_salt(salt.to_vec());
+            if let Some(chain) = offer {
+                offered = offered.with_prefix_chain(chain);
+            }
+            let (tokens, cached) = run_request(&mut engine, offered, id);
+            assert_eq!(cached, (id == 2).then_some(10));
+            assert_eq!(tokens, cold(prompt, 2));
+        }
+    }
 }
 
 /// A clock that moves 5 microseconds every time it is read.

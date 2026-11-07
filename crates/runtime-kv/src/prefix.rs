@@ -87,15 +87,7 @@ impl PrefixChainV1 {
         digests
             .try_reserve_exact(full_blocks + 1)
             .map_err(|_| KvError::MetadataAllocationFailed)?;
-        let mut root = Sha256::new();
-        root.update(ROOT_DOMAIN);
-        root.update((block_tokens as u64).to_le_bytes());
-        if let Some(salt) = salt {
-            root.update(SALT_DOMAIN);
-            root.update((salt.len() as u64).to_le_bytes());
-            root.update(salt);
-        }
-        digests.push(PrefixCacheKeyV1::new(root.finalize().into()));
+        digests.push(root_digest(block_tokens, salt));
         let mut chain = Self {
             block_tokens,
             tokens,
@@ -112,6 +104,26 @@ impl PrefixChainV1 {
                 .push(PrefixCacheKeyV1::new(sha.finalize().into()));
         }
         Ok(chain)
+    }
+
+    /// Whether this is the chain [`Self::salted`] builds from these inputs.
+    ///
+    /// Every digest after the root follows from the root, the block size,
+    /// the tokens and the media, and the root from the block size and the
+    /// salt, so comparing those checks a chain built elsewhere without
+    /// hashing its tokens again.
+    #[must_use]
+    pub fn is_salted(
+        &self,
+        block_tokens: usize,
+        tokens: &[u32],
+        media: &[PrefixMediaSpanV1],
+        salt: Option<&[u8]>,
+    ) -> bool {
+        self.block_tokens == block_tokens
+            && *self.tokens == *tokens
+            && *self.media == *media
+            && self.digests[0] == root_digest(block_tokens, salt)
     }
 
     #[must_use]
@@ -246,6 +258,20 @@ impl PrefixChainV1 {
             sha.update(span.media_row.to_le_bytes());
         }
     }
+}
+
+/// The digest of a chain's first zero blocks, which names its block size
+/// and salt.
+fn root_digest(block_tokens: usize, salt: Option<&[u8]>) -> PrefixCacheKeyV1 {
+    let mut root = Sha256::new();
+    root.update(ROOT_DOMAIN);
+    root.update((block_tokens as u64).to_le_bytes());
+    if let Some(salt) = salt {
+        root.update(SALT_DOMAIN);
+        root.update((salt.len() as u64).to_le_bytes());
+        root.update(salt);
+    }
+    PrefixCacheKeyV1::new(root.finalize().into())
 }
 
 /// Hashes each token's little-endian bytes in order. A digest depends only on
@@ -476,6 +502,36 @@ mod tests {
                     assert_eq!(actual, expected, "{block_tokens} {length} {salt:?}");
                 }
             }
+        }
+    }
+
+    /// A chain is the one its own inputs build, and no other's.
+    #[test]
+    fn a_chain_is_salted_only_from_its_own_inputs() {
+        let tokens = prompt(1000);
+        let media = vec![PrefixMediaSpanV1 {
+            identity: [3; 32],
+            start: 10,
+            rows: 20,
+            media_row: 0,
+        }];
+        let build = |block: usize, tokens: &[u32], media: &[PrefixMediaSpanV1], salt| {
+            PrefixChainV1::salted(block, Arc::from(tokens), media.to_vec(), salt).unwrap()
+        };
+        let salt = Some(b"scope".as_slice());
+        let chain = build(64, &tokens, &media, salt);
+        assert!(chain.is_salted(64, &tokens, &media, salt));
+        let mut other = tokens.clone();
+        other[999] += 1;
+        for (block, tokens, media, salt) in [
+            (32, &tokens, &media[..], salt),
+            (64, &other, &media[..], salt),
+            (64, &tokens, &[][..], salt),
+            (64, &tokens, &media[..], None),
+            (64, &tokens, &media[..], Some(b"other".as_slice())),
+        ] {
+            assert!(!chain.is_salted(block, tokens, media, salt));
+            assert_ne!(chain, build(block, tokens, media, salt));
         }
     }
 

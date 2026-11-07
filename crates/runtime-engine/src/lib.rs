@@ -384,6 +384,7 @@ pub struct EngineRequest {
     constraint: Option<ConstraintState>,
     cache_salt: Option<Vec<u8>>,
     pinned_draft_tokens: Option<usize>,
+    prefix_chain: Option<Arc<PrefixChainV1>>,
 }
 
 impl EngineRequest {
@@ -474,6 +475,7 @@ impl EngineRequest {
             constraint: None,
             cache_salt: None,
             pinned_draft_tokens: None,
+            prefix_chain: None,
         })
     }
 
@@ -561,6 +563,16 @@ impl EngineRequest {
     #[must_use]
     pub fn with_cache_salt(mut self, salt: Vec<u8>) -> Self {
         self.cache_salt = Some(salt);
+        self
+    }
+
+    /// Offers a prefix chain hashed off the engine thread. Submission keys
+    /// the prompt with it only when it is the chain submission would build
+    /// ([`PrefixChainV1::is_salted`]), and builds that chain otherwise, so
+    /// the keys never depend on the offer.
+    #[must_use]
+    pub fn with_prefix_chain(mut self, chain: Arc<PrefixChainV1>) -> Self {
+        self.prefix_chain = Some(chain);
         self
     }
 
@@ -2219,7 +2231,7 @@ impl<E: ModelExecutor> Engine<E> {
         let hashing =
             (self.step_trace && self.prefix_block_tokens.is_some()).then(std::time::Instant::now);
         let prefix_chain = match self.prefix_block_tokens {
-            Some(block_tokens) => Some(Arc::new(prefix_request(block_tokens, &request)?)),
+            Some(block_tokens) => Some(prefix_request(block_tokens, &request)?),
             None => None,
         };
         if let Some(started) = hashing {
@@ -2337,6 +2349,16 @@ impl<E: ModelExecutor> Engine<E> {
             )
         });
         Ok(())
+    }
+
+    /// The page tokens of the prefix chain a submission builds for its
+    /// prompt, when it builds one: to key the prefix cache, or to observe
+    /// reply history. A chain offered with
+    /// [`EngineRequest::with_prefix_chain`] counts only at this size.
+    #[must_use]
+    pub fn prefix_chain_block_tokens(&self) -> Option<usize> {
+        (self.prefix_block_tokens.is_some() || self.reply_history.is_some())
+            .then(|| self.scheduler.kv_geometry().block_tokens())
     }
 
     /// Whether step tracing reads host clocks (`CHOPINFER_STEP_TRACE=1`), so
@@ -3806,10 +3828,12 @@ impl<E: ModelExecutor> Engine<E> {
 ///
 /// A request that asks for prompt logprobs needs every prompt row, so it never
 /// resumes from an anchor, though its prompt can still become one.
+/// The prompt's prefix chain: the one the request offers when it is the
+/// chain these inputs build, else that chain, hashed here.
 fn prefix_request(
     block_tokens: usize,
     request: &EngineRequest,
-) -> Result<PrefixChainV1, EngineError> {
+) -> Result<Arc<PrefixChainV1>, EngineError> {
     let media = request
         .spans
         .iter()
@@ -3828,6 +3852,16 @@ fn prefix_request(
             })
         })
         .collect::<Result<Vec<_>, EngineError>>()?;
+    if let Some(chain) = &request.prefix_chain
+        && chain.is_salted(
+            block_tokens,
+            &request.prompt_tokens,
+            &media,
+            request.cache_salt.as_deref(),
+        )
+    {
+        return Ok(Arc::clone(chain));
+    }
     let chain = PrefixChainV1::salted(
         block_tokens,
         Arc::from(request.prompt_tokens.as_slice()),
@@ -3835,7 +3869,7 @@ fn prefix_request(
         request.cache_salt.as_deref(),
     )
     .map_err(|error| EngineError::Scheduler(ScheduleError::Kv(error)))?;
-    Ok(chain)
+    Ok(Arc::new(chain))
 }
 
 fn executor_error_fixed(message: &'static str) -> ExecutorError {

@@ -7,9 +7,12 @@
 //! cache read all their rows the same way ([`copy_large`]).
 pub(crate) mod legacy;
 mod pool;
+mod readers;
 #[cfg(test)]
 mod scripted;
 mod source;
+
+pub(crate) use readers::ReaderFiles;
 
 use super::MappedRowsV1;
 use std::collections::BTreeMap;
@@ -21,6 +24,7 @@ const READERS_ENV: &str = "CHOPINFER_MAPPED_MISS_READERS";
 const START_ENV: &str = "CHOPINFER_MAPPED_MISS_START";
 const JOINT_ENV: &str = "CHOPINFER_MAPPED_MISS_JOINT_PLANES";
 const LARGE_ENV: &str = "CHOPINFER_MAPPED_LARGE_GATHER_FETCH";
+const READER_FILES_ENV: &str = "CHOPINFER_MAPPED_READER_FILES";
 /// Reader threads one batch's rows are split across. A drafted DSpark step
 /// gathers its first Engram layer after the drafter, and at 32 rows on rows
 /// no request read before about 450 of each plane's 768 rows miss; with 16
@@ -46,6 +50,7 @@ static JOINT: AtomicU64 = AtomicU64::new(0);
 static LARGE_GATHERS: AtomicU64 = AtomicU64::new(0);
 static LARGE_ROWS: AtomicU64 = AtomicU64::new(0);
 static FANOUT_COPIES: AtomicU64 = AtomicU64::new(0);
+static READER_FILE_GATHERS: AtomicU64 = AtomicU64::new(0);
 
 fn configured(value: Option<std::ffi::OsString>) -> bool {
     value.is_none_or(|value| value == "1")
@@ -128,6 +133,39 @@ pub(crate) fn large_reads() -> bool {
     enabled() && start_reads() && *LARGE.get_or_init(|| configured(std::env::var_os(LARGE_ENV)))
 }
 
+/// How a large gather ([`copy_large`]) reads its rows.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct LargeRoute {
+    /// The most descriptions of each mapping its readers read through
+    /// ([`ReaderFiles`]), or 0 for the mapping's retained descriptor alone.
+    pub(crate) reader_files: usize,
+}
+
+impl LargeRoute {
+    /// Every reader on the retained descriptor.
+    pub(crate) const SHARED: Self = Self { reader_files: 0 };
+}
+
+/// The candidate selectors' route, read once: `CHOPINFER_MAPPED_READER_FILES=1`
+/// reads each mapping of a large gather through up to
+/// [`readers::MAX_PER_MAPPING`] descriptions of its own, one per reader
+/// share; unset or anything else reads through the mapping's one retained
+/// descriptor. The bytes are the same either way.
+pub(crate) fn large_route() -> LargeRoute {
+    static ROUTE: OnceLock<LargeRoute> = OnceLock::new();
+    *ROUTE.get_or_init(|| route_for(std::env::var_os(READER_FILES_ENV)))
+}
+
+fn route_for(reader_files: Option<std::ffi::OsString>) -> LargeRoute {
+    if reader_files.is_some_and(|value| value == "1") {
+        LargeRoute {
+            reader_files: readers::MAX_PER_MAPPING,
+        }
+    } else {
+        LargeRoute::SHARED
+    }
+}
+
 /// Whether [`copy_large`] reads `bytes` output bytes of `mapping`: large
 /// reads are on, the mapping kept its descriptor, and the output fits one
 /// fetch's bound.
@@ -155,6 +193,11 @@ pub(crate) fn snapshot() -> serde_json::Value {
         "large_reads":large_reads(), "large_gathers":LARGE_GATHERS.load(Ordering::Relaxed),
         "large_rows":LARGE_ROWS.load(Ordering::Relaxed),
         "large_fanout_copies":FANOUT_COPIES.load(Ordering::Relaxed),
+        "reader_files":large_route().reader_files,
+        "reader_file_gathers":READER_FILE_GATHERS.load(Ordering::Relaxed),
+        "reader_files_held":readers::budget().held(),
+        "reader_files_budget":readers::budget().limit(),
+        "reader_file_failures":readers::failures(),
         "nowait":source::snapshot(),
         "mapped_fallback_rows":MAPPED.load(Ordering::Relaxed),
         "legacy_async_gathers":legacy_gathers, "legacy_async_misses":legacy_misses,
@@ -417,17 +460,27 @@ fn copy_planes_with(
 
 /// Copies every plane's rows as exact reads of their file ranges through the
 /// reader threads, all planes in one batch, so the gather waits for the
-/// device once: the large-gather route ([`reads_large`]). Every position is
-/// read, duplicates included, as the mapped copy reads them; the resident
-/// cache is neither consulted nor filled, so a streaming gather cannot
-/// displace the rows decode steps reuse. Refuses a bad row or a plane
-/// without a descriptor before any write.
+/// device once: the large-gather route ([`reads_large`]), read as the
+/// selectors choose ([`large_route`]). Every position is read, duplicates
+/// included, as the mapped copy reads them; the resident cache is neither
+/// consulted nor filled, so a streaming gather cannot displace the rows
+/// decode steps reuse. Refuses a bad row or a plane without a descriptor
+/// before any write.
 pub(crate) fn copy_large(planes: &mut [PlaneCopy<'_>]) -> Result<(), String> {
-    copy_large_with(planes, pool::read_groups_into)
+    copy_large_routed(planes, large_route())
+}
+
+/// [`copy_large`] on `route`.
+pub(crate) fn copy_large_routed(
+    planes: &mut [PlaneCopy<'_>],
+    route: LargeRoute,
+) -> Result<(), String> {
+    copy_large_with(planes, route, pool::read_groups_into)
 }
 
 fn copy_large_with(
     planes: &mut [PlaneCopy<'_>],
+    route: LargeRoute,
     read: impl FnOnce(&[pool::Group<'_>], &mut [&mut [u8]]) -> Result<bool, String>,
 ) -> Result<(), String> {
     let mut sources = Vec::with_capacity(planes.len());
@@ -455,10 +508,32 @@ fn copy_large_with(
                 .collect::<Vec<_>>()
         })
         .collect::<Vec<_>>();
-    let groups = sources
-        .into_iter()
+    // Each plane's descriptions: one per share of its rows the pool reads,
+    // up to the route's bound, or the retained descriptor alone.
+    let share = pool::share_rows(planes.iter().map(|plane| plane.rows.len()).sum(), readers());
+    let mut own = false;
+    let descriptions = planes
+        .iter()
+        .zip(&sources)
+        .map(|(plane, &source)| {
+            let wanted = route.reader_files.min(plane.rows.len().div_ceil(share));
+            let files = if wanted > 0 {
+                plane.mapping.readers.get(source, wanted)
+            } else {
+                Vec::new()
+            };
+            own |= !files.is_empty();
+            if files.is_empty() {
+                vec![std::sync::Arc::clone(source)]
+            } else {
+                files
+            }
+        })
+        .collect::<Vec<_>>();
+    let groups = descriptions
+        .iter()
         .zip(&requests)
-        .map(|(source, requests)| (std::slice::from_ref(source), requests.as_slice()))
+        .map(|(files, requests)| (files.as_slice(), requests.as_slice()))
         .collect::<Vec<_>>();
     let serial = read(
         &groups,
@@ -478,6 +553,9 @@ fn copy_large_with(
     }
     if planes.len() > 1 {
         JOINT.fetch_add(1, Ordering::Relaxed);
+    }
+    if own {
+        READER_FILE_GATHERS.fetch_add(1, Ordering::Relaxed);
     }
     LARGE_GATHERS.fetch_add(1, Ordering::Relaxed);
     LARGE_ROWS.fetch_add(rows, Ordering::Relaxed);

@@ -463,3 +463,113 @@ fn large_gathers_read_through_descriptors_and_zero_restores_the_mapping() {
         assert!(String::from_utf8_lossy(&output.stdout).contains("1 passed; 0 failed"));
     }
 }
+
+/// The large routes a test gathers on: every reader on the retained
+/// descriptor, then 1, 3 and 24 reader descriptions per mapping.
+fn routes() -> Vec<crate::host_rows::fetch::LargeRoute> {
+    [0, 1, 3, 24]
+        .into_iter()
+        .map(|reader_files| crate::host_rows::fetch::LargeRoute { reader_files })
+        .collect()
+}
+
+/// Four ranks' codes and scales of two shared tables ([`ranks`]), then
+/// near-twins of rank 0's codes that differ in turn in mapping, row width,
+/// index offset and length, so none may copy a leader's bytes. Each plane
+/// comes with how many fewer rows than the gather it writes.
+fn mixed(label: &str) -> Vec<(MappedGatherPlaneV1, usize)> {
+    let mut planes = ranks(label)
+        .into_iter()
+        .map(|plane| (plane, 0))
+        .collect::<Vec<_>>();
+    let codes = planes[0].0.clone();
+    planes.push((plane(&format!("{label}-other")), 0));
+    planes.push((
+        MappedGatherPlaneV1 {
+            row_bytes: 257,
+            ..codes.clone()
+        },
+        0,
+    ));
+    planes.push((
+        MappedGatherPlaneV1 {
+            index_offset: 16,
+            ..codes.clone()
+        },
+        0,
+    ));
+    planes.push((codes, 1));
+    planes
+}
+
+/// Gathers `rows` rows of `ids` on `route`, each plane's output filled with
+/// 0xa5 first.
+fn gather_mixed(
+    planes: &[(MappedGatherPlaneV1, usize)],
+    ids: &[u32],
+    rows: usize,
+    route: crate::host_rows::fetch::LargeRoute,
+) -> Result<Vec<Vec<u8>>, Vec<Vec<u8>>> {
+    let mut outputs = planes
+        .iter()
+        .map(|(plane, fewer)| vec![0xa5; (rows - fewer) * plane.row_bytes])
+        .collect::<Vec<_>>();
+    let only = planes
+        .iter()
+        .map(|(plane, _)| plane.clone())
+        .collect::<Vec<_>>();
+    match gather_planes_routed(
+        &only,
+        &input(ids),
+        &mut outputs
+            .iter_mut()
+            .map(Vec::as_mut_slice)
+            .collect::<Vec<_>>(),
+        route,
+    ) {
+        Ok(()) => Ok(outputs),
+        Err(_) => Err(outputs),
+    }
+}
+
+#[test]
+fn every_large_route_writes_each_planes_own_bytes_at_every_size() {
+    let planes = mixed("routes");
+    for rows in [1, 2, 8191, 8192, 8193, 20_000] {
+        // Duplicates, rows crossing pages, and every id inside the narrowest
+        // table (97 rows of 257 bytes); two more for the shifted planes.
+        let ids = (0..rows + 2)
+            .map(|i| (i * 7919 % 97) as u32)
+            .collect::<Vec<_>>();
+        for route in routes() {
+            let outputs = gather_mixed(&planes, &ids, rows, route).unwrap();
+            for (index, ((plane, fewer), output)) in planes.iter().zip(&outputs).enumerate() {
+                let first = (plane.index_offset - 8) / 4;
+                assert!(
+                    *output == expected(plane, &ids[first..][..rows - fewer]),
+                    "plane {index} rows {rows} {route:?}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn a_bad_id_for_any_leader_on_any_large_route_is_refused_before_every_write() {
+    let planes = mixed("routes-invalid");
+    for rows in [8191, 8193] {
+        for route in routes() {
+            // 97 is past only the widest plane's rows, 200 past the scales
+            // too, 257 past every table; at the first and last position.
+            for (bad, at) in [(97, rows - 1), (200, 0), (257, rows - 1), (97, 0)] {
+                let mut ids = vec![5; rows + 2];
+                ids[at] = bad;
+                let outputs = gather_mixed(&planes, &ids, rows, route).unwrap_err();
+                assert!(
+                    outputs.iter().flatten().all(|&byte| byte == 0xa5),
+                    "id {bad} at {at} rows {rows} {route:?}"
+                );
+            }
+        }
+    }
+}

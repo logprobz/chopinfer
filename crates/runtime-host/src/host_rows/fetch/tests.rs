@@ -52,6 +52,20 @@ fn default_is_on_and_zero_keeps_the_legacy_choice() {
 }
 
 #[test]
+fn reader_descriptions_are_selected_only_by_one() {
+    assert_eq!(route_for(None), LargeRoute::SHARED);
+    assert_eq!(
+        route_for(Some("1".into())),
+        LargeRoute {
+            reader_files: super::readers::MAX_PER_MAPPING
+        }
+    );
+    for value in ["0", "", "yes", "24"] {
+        assert_eq!(route_for(Some(value.into())), LargeRoute::SHARED, "{value}");
+    }
+}
+
+#[test]
 fn reader_window_defaults_and_accepts_only_the_reader_thread_range() {
     assert!(valid_readers(DEFAULT_READERS));
     assert_eq!(configured_readers(None), DEFAULT_READERS);
@@ -363,6 +377,7 @@ fn large_copies_read_every_position_of_every_plane_in_one_batch() {
                 out: &mut scale_out,
             },
         ],
+        LargeRoute::SHARED,
         |groups, outputs| {
             asked.push(
                 groups
@@ -414,6 +429,7 @@ fn large_copies_read_every_position_of_every_plane_in_one_batch() {
                     out: &mut poison.1,
                 },
             ],
+            LargeRoute::SHARED,
             refuse,
         )
         .is_err()
@@ -461,4 +477,234 @@ fn a_large_fanout_serves_later_ranks_the_first_ranks_bytes() {
             .rows(&f.mapping, 97, &rows, 3)
             .is_err()
     );
+}
+
+/// Each plane's descriptions in one large read, as [`copy_large_with`]
+/// hands them to the pool, read by the served pool.
+fn descriptions_of(
+    planes: &mut [PlaneCopy<'_>],
+    route: LargeRoute,
+) -> Vec<Vec<std::sync::Arc<File>>> {
+    let mut seen = Vec::new();
+    copy_large_with(planes, route, |groups, outputs| {
+        seen = groups.iter().map(|(files, _)| files.to_vec()).collect();
+        pool::read_groups_into(groups, outputs)
+    })
+    .unwrap();
+    seen
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn large_copies_read_each_mapping_through_its_own_bounded_descriptions() {
+    use std::os::unix::fs::MetadataExt;
+    let codes = Fixture::new("reader-codes", 3000, 97);
+    let scales = Fixture::new("reader-scales", 3000, 8);
+    let rows = (0..20_000_u32)
+        .map(|i| i.wrapping_mul(2_654_435_761) % 3000)
+        .collect::<Vec<_>>();
+    let share = pool::share_rows(2 * rows.len(), readers());
+    let shares = rows.len().div_ceil(share);
+    let mut code_out = vec![0xa5; rows.len() * 97];
+    let mut scale_out = vec![0xa5; rows.len() * 8];
+    let mut most = 0;
+    for (round, wanted) in [0, 1, 3, 24, 3, 24].into_iter().enumerate() {
+        most = most.max(wanted);
+        code_out.fill(0xa5);
+        scale_out.fill(0xa5);
+        let route = LargeRoute {
+            reader_files: wanted,
+        };
+        let seen = descriptions_of(
+            &mut [
+                PlaneCopy {
+                    mapping: &codes.mapping,
+                    width: 97,
+                    rows: &rows,
+                    out: &mut code_out,
+                },
+                PlaneCopy {
+                    mapping: &scales.mapping,
+                    width: 8,
+                    rows: &rows,
+                    out: &mut scale_out,
+                },
+            ],
+            route,
+        );
+        assert_eq!(code_out, codes.expected(&rows), "round {round}");
+        assert_eq!(scale_out, scales.expected(&rows), "round {round}");
+        for (fixture, files) in [&codes, &scales].into_iter().zip(&seen) {
+            let retained = fixture.mapping.source.as_ref().unwrap();
+            if wanted == 0 {
+                assert!(files.len() == 1 && Arc::ptr_eq(&files[0], retained));
+                continue;
+            }
+            // At most one description per share, never the retained one, all
+            // of the mapping's file; a smaller bound reuses the first held.
+            assert_eq!(files.len(), wanted.min(shares), "round {round}");
+            let file = retained.metadata().unwrap();
+            for description in files {
+                assert!(!Arc::ptr_eq(description, retained));
+                let metadata = description.metadata().unwrap();
+                assert_eq!((metadata.dev(), metadata.ino()), (file.dev(), file.ino()));
+            }
+            // The mapping keeps what it opened: the most any round wanted.
+            assert_eq!(
+                super::readers::tests::links(&fixture.path).len(),
+                1 + most.min(shares),
+                "round {round}"
+            );
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn dropping_a_mapping_closes_its_reader_descriptions() {
+    let path = std::env::temp_dir().join(format!("mapped-fetch-drop-{}", std::process::id()));
+    let bytes = (0..300_000_u32)
+        .map(|i| (i * 13 + 1) as u8)
+        .collect::<Vec<_>>();
+    std::fs::write(&path, &bytes).unwrap();
+    let links = || super::readers::tests::links(&path);
+    let file = File::open(&path).unwrap();
+    let mapping = super::super::map_rows_v1(&file, 0, bytes.len() as u64).unwrap();
+    drop(file);
+    assert_eq!(links().len(), 1, "the mapping's retained descriptor");
+    let rows = (0..10_000_u32).map(|i| i * 7 % 3000).collect::<Vec<_>>();
+    let mut out = vec![0; rows.len() * 100];
+    copy_large_routed(
+        &mut [PlaneCopy {
+            mapping: &mapping,
+            width: 100,
+            rows: &rows,
+            out: &mut out,
+        }],
+        LargeRoute { reader_files: 24 },
+    )
+    .unwrap();
+    assert!(
+        out.chunks(100)
+            .zip(&rows)
+            .all(|(row, &id)| *row == bytes[id as usize * 100..][..100])
+    );
+    let open = links();
+    assert!(open.len() > 1, "reader descriptions are open");
+    assert!(
+        open.iter()
+            .all(|&fd| super::readers::tests::closes_on_exec(fd))
+    );
+    drop(mapping);
+    assert!(links().is_empty(), "the mapping closed every description");
+    std::fs::remove_file(path).unwrap();
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn a_mapping_whose_reader_descriptions_failed_reads_through_its_retained_one() {
+    let codes = Fixture::new("reader-failed", 3000, 97);
+    let retained = codes.mapping.source.as_ref().unwrap();
+    let refuse = |_: &File| -> std::io::Result<File> {
+        Err(std::io::Error::from_raw_os_error(libc::EACCES))
+    };
+    let budget = Arc::new(super::readers::Budget::new(256));
+    assert!(
+        codes
+            .mapping
+            .readers
+            .get_with(retained, 24, &refuse, &budget)
+            .is_empty()
+    );
+    let rows = (0..9000_u32).map(|i| i * 31 % 3000).collect::<Vec<_>>();
+    let mut out = vec![0xa5; rows.len() * 97];
+    let seen = descriptions_of(
+        &mut [PlaneCopy {
+            mapping: &codes.mapping,
+            width: 97,
+            rows: &rows,
+            out: &mut out,
+        }],
+        LargeRoute { reader_files: 24 },
+    );
+    assert!(seen.len() == 1 && seen[0].len() == 1 && Arc::ptr_eq(&seen[0][0], retained));
+    assert_eq!(out, codes.expected(&rows));
+}
+
+/// Large copies in a process whose open-file limit is low: the soft limit
+/// 64 makes a budget of four descriptions, and `emfile` also leaves the
+/// process two free descriptors. Acquisition stops at the budget or at
+/// `EMFILE`, is not retried by later gathers, and every byte is exact.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_low_open_file_limit_bounds_reader_descriptions_and_keeps_bytes_exact() {
+    const CHILD: &str = "MAPPED_READER_LIMIT_TEST";
+    const NAME: &str = "host_rows::fetch::tests::a_low_open_file_limit_bounds_reader_descriptions_and_keeps_bytes_exact";
+    if let Some(mode) = std::env::var_os(CHILD) {
+        assert_eq!(super::super::open_files_soft_limit_v1(), Some(64));
+        assert_eq!(super::readers::budget().limit(), 4);
+        let codes = Fixture::new("limit-codes", 3000, 97);
+        let scales = Fixture::new("limit-scales", 3000, 8);
+        let mut filler = Vec::new();
+        if mode == "emfile" {
+            while let Ok(file) = File::open(&codes.path) {
+                filler.push(file);
+            }
+            filler.truncate(filler.len() - 2);
+        }
+        let rows = (0..20_000_u32).map(|i| i * 7 % 3000).collect::<Vec<_>>();
+        let held = || super::readers::budget().held();
+        let mut first = None;
+        for round in 0..4 {
+            let mut code_out = vec![0xa5; rows.len() * 97];
+            let mut scale_out = vec![0xa5; rows.len() * 8];
+            copy_large_routed(
+                &mut [
+                    PlaneCopy {
+                        mapping: &codes.mapping,
+                        width: 97,
+                        rows: &rows,
+                        out: &mut code_out,
+                    },
+                    PlaneCopy {
+                        mapping: &scales.mapping,
+                        width: 8,
+                        rows: &rows,
+                        out: &mut scale_out,
+                    },
+                ],
+                LargeRoute { reader_files: 24 },
+            )
+            .unwrap();
+            assert_eq!(code_out, codes.expected(&rows), "round {round}");
+            assert_eq!(scale_out, scales.expected(&rows), "round {round}");
+            // Both mappings failed once, in the first gather only.
+            let now = (held(), super::readers::failures());
+            assert_eq!(*first.get_or_insert(now), now, "round {round}");
+        }
+        let expected = if mode == "emfile" { 2 } else { 4 };
+        assert_eq!(first, Some((expected, 2)), "{mode:?}");
+        drop(filler);
+        runtime_engine::logging::flush();
+        return;
+    }
+    for mode in ["budget", "emfile"] {
+        let output = std::process::Command::new("sh")
+            .args(["-c", "ulimit -S -n 64 && exec \"$0\" \"$@\""])
+            .arg(std::env::current_exe().unwrap())
+            .args(["--exact", NAME, "--nocapture", "--test-threads", "1"])
+            .env(CHILD, mode)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{mode}: {}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(String::from_utf8_lossy(&output.stdout).contains("1 passed; 0 failed"));
+        // The first failure is logged once, with its reason.
+        let errors = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(errors.matches("\"reason\"").count(), 1, "{mode}: {errors}");
+    }
 }

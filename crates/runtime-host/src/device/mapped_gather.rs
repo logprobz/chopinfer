@@ -96,10 +96,21 @@ impl MappedGatherPlanV1 {
 
 /// Gather raw bytes only. Validate every index before writing any output;
 /// device-supplied indices cannot become unchecked mmap accesses.
+#[cfg(test)]
 pub fn gather_plane_v1(
     plane: &MappedGatherPlaneV1,
     input: &[u8],
     output: &mut [u8],
+) -> Result<(), String> {
+    gather_plane_routed(plane, input, output, crate::host_rows::fetch::large_route())
+}
+
+/// [`gather_plane_v1`] with a large gather read on `route`.
+pub(crate) fn gather_plane_routed(
+    plane: &MappedGatherPlaneV1,
+    input: &[u8],
+    output: &mut [u8],
+    route: crate::host_rows::fetch::LargeRoute,
 ) -> Result<(), String> {
     // Apply the complete gather's cache policy before queued resident lookups.
     // Invalid widths still reach the checked mapped path and are refused.
@@ -120,14 +131,15 @@ pub fn gather_plane_v1(
         if crate::host_rows::fetch::reads_large(&plane.mapping, output.len()) {
             let ids = checked_ids(plane, input, output.len())?;
             let _ = crate::host_rows::gather::mapped_async_read_ahead_v1();
-            return crate::host_rows::fetch::copy_large(&mut [
-                crate::host_rows::fetch::PlaneCopy {
+            return crate::host_rows::fetch::copy_large_routed(
+                &mut [crate::host_rows::fetch::PlaneCopy {
                     mapping: &plane.mapping,
                     width: plane.row_bytes,
                     rows: &ids,
                     out: output,
-                },
-            ]);
+                }],
+                route,
+            );
         }
     }
     let probe = MappedProbe::asynchronous(&plane.mapping, plane.row_bytes);
@@ -175,11 +187,26 @@ pub fn gather_planes_v1(
     input: &[u8],
     outputs: &mut [&mut [u8]],
 ) -> Result<(), String> {
+    gather_planes_routed(
+        planes,
+        input,
+        outputs,
+        crate::host_rows::fetch::large_route(),
+    )
+}
+
+/// [`gather_planes_v1`] with large gathers read on `route`.
+pub(crate) fn gather_planes_routed(
+    planes: &[MappedGatherPlaneV1],
+    input: &[u8],
+    outputs: &mut [&mut [u8]],
+    route: crate::host_rows::fetch::LargeRoute,
+) -> Result<(), String> {
     use crate::host_rows::{fetch, gather};
     if planes.len() != outputs.len() {
         return Err("mapped gather outputs differ from its planes".into());
     }
-    let route = |plane: &MappedGatherPlaneV1, bytes: usize| {
+    let lead_of = |plane: &MappedGatherPlaneV1, bytes: usize| {
         if !fetch::enabled() || plane.row_bytes == 0 {
             Lead::No
         } else if gather::use_resident(bytes / plane.row_bytes) {
@@ -196,7 +223,7 @@ pub fn gather_planes_v1(
     };
     let mut leads = vec![Lead::No; planes.len()];
     for (index, plane) in planes.iter().enumerate() {
-        let lead = route(plane, outputs[index].len());
+        let lead = lead_of(plane, outputs[index].len());
         let first = !planes[..index].iter().zip(&leads).any(|(earlier, &led)| {
             led == lead
                 && earlier.row_bytes == plane.row_bytes
@@ -245,7 +272,7 @@ pub fn gather_planes_v1(
         match kind {
             _ if copies.is_empty() => {}
             Lead::Resident => fetch::copy_planes(&mut copies)?,
-            Lead::Large => fetch::copy_large(&mut copies)?,
+            Lead::Large => fetch::copy_large_routed(&mut copies, route)?,
             Lead::No => unreachable!("only leaders copy"),
         }
     }
@@ -269,7 +296,7 @@ pub fn gather_planes_v1(
                 let _ = gather::mapped_async_read_ahead_v1();
                 rest[0].copy_from_slice(done[leader]);
             }
-            None => gather_plane_v1(plane, input, rest[0])?,
+            None => gather_plane_routed(plane, input, rest[0], route)?,
         }
     }
     Ok(())

@@ -65,6 +65,9 @@ pub struct MappedRowsV1 {
     length: usize,
     key: RowsKeyV1,
     source: Option<Arc<File>>,
+    /// More open file descriptions of `source` for the readers of large
+    /// gathers, closed with the mapping ([`fetch::ReaderFiles`]).
+    readers: fetch::ReaderFiles,
     resident: std::sync::OnceLock<resident::Plane>,
 }
 
@@ -416,6 +419,18 @@ pub fn page_bytes_v1() -> usize {
         .unwrap_or(4096)
 }
 
+/// This process's soft limit on open descriptors (`RLIMIT_NOFILE`), or
+/// `None` where it cannot be read.
+pub(crate) fn open_files_soft_limit_v1() -> Option<u64> {
+    // SAFETY-REVIEWED: getrlimit fills one zeroed plain-data struct.
+    let (result, limit) = unsafe {
+        let mut limit: libc::rlimit = std::mem::zeroed();
+        let result = libc::getrlimit(libc::RLIMIT_NOFILE, &raw mut limit);
+        (result, limit)
+    };
+    (result == 0).then_some(limit.rlim_cur)
+}
+
 /// The page-aligned range of a mapping that holds row `row` of `row_bytes`
 /// bytes, counted from `lead` bytes into the mapping: its start and length
 /// from the mapping's base, covering every page the row touches.
@@ -510,6 +525,7 @@ fn map_rows_inner(
         length,
         key,
         source: file.try_clone().ok().map(Arc::new),
+        readers: fetch::ReaderFiles::default(),
         resident: std::sync::OnceLock::new(),
     });
     mapping.advise(RowAdviceV1::Random)?;

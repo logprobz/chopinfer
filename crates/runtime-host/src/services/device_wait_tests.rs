@@ -272,3 +272,30 @@ fn an_untraced_readback_records_nothing() {
     assert!(launched.elapsed() >= SUCCESSOR);
     assert_eq!(profile::device_waits(), before);
 }
+
+/// With step overlap (`CHOPINFER_STEP_OVERLAP=1`) the events queued after a
+/// step are sent at the next blocking wait after a launch. In a boundary step
+/// that is the gathered readback, while the target still runs, rather than
+/// the final collection after the successor drafter is queued; the step's
+/// wait window opens where the deferred work starts.
+#[test]
+fn deferred_delivery_runs_at_the_readback_while_the_target_runs() {
+    let backend = backend(4);
+    let table = HostServicesTableV1::new(Rc::clone(&backend));
+    let host = table.caller();
+    let (ranks, packet) = ranks(host, 4);
+    let delivered = Rc::new(std::cell::Cell::new(None));
+    let job = Rc::clone(&delivered);
+    crate::overlap::defer(move || job.set(Some(Instant::now())));
+    let step = boundary_step(&backend, host, &ranks, packet);
+    assert_eq!(crate::overlap::pending(), 0);
+    let delivered = delivered.get().expect("the step delivered the queued work");
+    let (called, returned) = step.readback;
+    assert!(called <= delivered && delivered < returned);
+    assert!(
+        delivered < step.launched + TARGET,
+        "the target was still running"
+    );
+    let started = step.waits.first_started.unwrap();
+    assert!(called <= started && started <= delivered);
+}

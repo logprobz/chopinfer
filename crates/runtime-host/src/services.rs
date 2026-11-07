@@ -5361,6 +5361,7 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
         destination: &mut [u8],
         source: DeviceBufferSpanV1,
     ) -> HostServiceResultV1<()> {
+        crate::overlap::device_wait();
         let _range = runtime_engine::profile::ranges::Range::new(c"host.readback");
         let mut state = self.state.borrow_mut();
         state.refuse_during_capture(state.streams.get(key_of_v1!(stream))?.context)?;

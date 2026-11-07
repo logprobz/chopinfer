@@ -3,7 +3,8 @@ use super::Instance;
 #[cfg(test)]
 use crate::dspark::device::DECODE_BASE;
 use crate::dspark::device::slice;
-use crate::dspark::execution::Input;
+use crate::dspark::execution::{DraftInput, Input};
+use crate::dspark::state::{BLOCK_ROWS, DraftBlock, Kind};
 #[cfg(test)]
 use crate::dspark::transfers;
 use runtime_bundle_abi::DeviceBufferSpanV1 as Span;
@@ -72,10 +73,10 @@ impl Instance {
             .as_ref()
             .ok_or("DSpark lifecycle borrowed")?
             .state();
-        let Some(plan) = feedback.plan(
+        let Some(mut plan) = feedback.plan(
             state,
             device.shape.geometry.shape.vocab,
-            device.prefetch.items,
+            device.prefetch.successor.items,
         )?
         else {
             return Ok(());
@@ -115,8 +116,28 @@ impl Instance {
             self.prefetch_copy(rank, ring, undo)?;
         }
         let items = plan.drafts.len();
-        self.dspark.as_mut().expect("drafter").prefetch.plan = Some(plan);
-        self.prefetch_trace("queued", items, started.elapsed().as_nanos());
+        let prefetch = &mut self.dspark.as_mut().expect("drafter").prefetch;
+        plan.ring_writes = prefetch.ring_writes.get();
+        prefetch.plan = Some(plan);
+        self.prefetch_trace("queued", items, started.elapsed().as_nanos(), "");
+        Ok(())
+    }
+
+    /// Zero every item's draft IDs and confidence past `depth` on every
+    /// rank, as an inline draft of `depth` heads leaves them.
+    fn cut_successor_heads(&self, items: usize, depth: u32) -> Result<(), String> {
+        let device = self.dspark.as_ref().ok_or("DSpark absent")?;
+        let tail = u64::from(BLOCK_ROWS - depth) * 4;
+        for (rank, stored) in device.ranks.iter().enumerate() {
+            for output in [stored.draft_ids, stored.confidence] {
+                for item in 0..items as u64 {
+                    let at = (item * u64::from(BLOCK_ROWS) + u64::from(depth)) * 4;
+                    self.services
+                        .zero_device_buffer(self.ranks[rank].2, slice(output, at, tail)?)
+                        .map_err(|e| format!("DSpark successor head cut: {e:?}"))?;
+                }
+            }
+        }
         Ok(())
     }
 
@@ -125,12 +146,19 @@ impl Instance {
         inputs: &[Input],
         allocated: bool,
     ) -> Result<(), String> {
+        let logs = self.config.execution.diagnostic_step_logs;
         let device = self.dspark.as_mut().ok_or("DSpark absent")?;
         device.prefetch.feedback = None;
         device.prefetch.reused = false;
         let Some(plan) = device.prefetch.plan.take() else {
             return Ok(());
         };
+        let prefill = device.prefetch.successor.prefill;
+        let restored: Vec<_> = inputs
+            .iter()
+            .filter(|input| matches!(input.rows.kind, Kind::Prefill { .. }))
+            .map(|input| input.rows.request)
+            .collect();
         let runtime = device.runtime.as_mut().ok_or("DSpark lifecycle borrowed")?;
         let mut probe = runtime.state().clone();
         let required_positions = if allocated {
@@ -142,13 +170,28 @@ impl Instance {
                 .max()
                 .unwrap_or(0)
         };
-        if device.prefetch.computed_positions < required_positions
-            || !plan.matches(runtime.state(), inputs)
-            || probe
+        let covered = device.prefetch.computed_positions >= required_positions
+            && probe
                 .prepare(inputs.iter().map(|input| input.rows).collect())
-                .is_err()
-        {
-            self.prefetch_trace("discarded", plan.drafts.len(), 0);
+                .is_ok();
+        // Beside prefill items the state may differ by restores, so the
+        // committed ring must also be as the queue left it: the whole-ring
+        // copy below rewrites every slot.
+        let relaxed = || {
+            plan.matches_with_prefill(runtime.state(), inputs)
+                && plan.ring_writes == device.prefetch.ring_writes.get()
+        };
+        let matched = covered
+            && if prefill {
+                relaxed()
+            } else {
+                plan.matches(runtime.state(), inputs)
+            };
+        if !matched {
+            // Without the option, whether its rule would have served the step.
+            let would = logs && !prefill && covered && relaxed();
+            let extra = format!(",\"prefill_items\":{},\"relaxed\":{would}", restored.len());
+            self.prefetch_trace("discarded", plan.drafts.len(), 0, &extra);
             return Ok(());
         }
         let started = std::time::Instant::now();
@@ -178,6 +221,37 @@ impl Instance {
         for (rank, destination, source) in copies {
             self.prefetch_copy(rank, destination, source)?;
         }
+        let mut computed = self
+            .dspark
+            .as_ref()
+            .expect("drafter")
+            .prefetch
+            .computed_positions;
+        if prefill {
+            // The heads the step's own draft would compute: a five-head
+            // successor serves a compact three-head step cut to its heads.
+            let drafts: Vec<_> = inputs
+                .iter()
+                .filter(|input| input.rows.kind.drafts() > 0)
+                .map(|input| DraftInput {
+                    block: DraftBlock {
+                        request: input.rows.request,
+                        slot: input.rows.slot,
+                        main_rows: input.rows.start,
+                        compute_rows: BLOCK_ROWS,
+                        emit_rows: input.rows.kind.drafts(),
+                        verify_rows: input.rows.kind.drafts() + 1,
+                    },
+                    bonus: input.tokens[0],
+                    noise: input.noise,
+                })
+                .collect();
+            let depth = self.draft_positions(&drafts, allocated)?;
+            if depth < computed {
+                self.cut_successor_heads(drafts.len(), depth)?;
+                computed = depth;
+            }
+        }
         let device = self.dspark.as_mut().expect("drafter");
         for (rank, memory) in device.prefetch.ranks.iter().enumerate() {
             device.ranks[rank]
@@ -188,18 +262,30 @@ impl Instance {
             .runtime
             .as_mut()
             .expect("lifecycle")
-            .adopt_projections(&plan.committed, &plan.projections)?;
-        device.computed_positions = device.prefetch.computed_positions;
+            .adopt_projections(
+                &plan.committed,
+                prefill.then_some(restored.as_slice()),
+                &plan.projections,
+            )?;
+        device.computed_positions = computed;
         device.prefetch.reused = true;
-        self.prefetch_trace("reused", plan.drafts.len(), started.elapsed().as_nanos());
+        let extra = format!(",\"prefill_items\":{},\"heads\":{computed}", restored.len());
+        self.prefetch_trace(
+            "reused",
+            plan.drafts.len(),
+            started.elapsed().as_nanos(),
+            &extra,
+        );
         Ok(())
     }
 
-    fn prefetch_trace(&self, event: &str, items: usize, nanos: u128) {
+    /// A diagnostic record of the successor: `extra` adds fields after
+    /// the host time.
+    fn prefetch_trace(&self, event: &str, items: usize, nanos: u128, extra: &str) {
         if self.config.execution.diagnostic_step_logs {
             let _ = self.services.log(
                 format!(
-                    "{{\"schema\":\"chopinfer.deepseek41.step-shape.v1\",\"phase\":\"dspark-prefetch\",\"event\":\"{event}\",\"items\":{items},\"host_ns\":{nanos}}}"
+                    "{{\"schema\":\"chopinfer.deepseek41.step-shape.v1\",\"phase\":\"dspark-prefetch\",\"event\":\"{event}\",\"items\":{items},\"host_ns\":{nanos}{extra}}}"
                 ).as_bytes(),
             );
         }
@@ -221,7 +307,7 @@ pub(crate) fn for_test(
             .plan(
                 state,
                 device.shape.geometry.shape.vocab,
-                device.prefetch.items,
+                device.prefetch.successor.items,
             )
             .unwrap()
             .expect("predictable test");

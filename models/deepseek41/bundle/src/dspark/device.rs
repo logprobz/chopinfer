@@ -168,13 +168,13 @@ impl Device {
         context_tokens: u64,
         draft_chunk_items: usize,
         mode: DraftMode,
-        successor_items: u32,
+        successor: super::prefetch::Successor,
     ) -> Result<Self, String> {
         let g = shape.geometry;
         if !(1..=DECODE_BATCH as usize).contains(&draft_chunk_items) {
             return Err("DSpark draft chunk items must be between 1 and 32".into());
         }
-        if !(super::prefetch::ONE_LAUNCH_ITEMS..=MAX_SUCCESSOR_ITEMS).contains(&successor_items) {
+        if !(super::prefetch::ONE_LAUNCH_ITEMS..=MAX_SUCCESSOR_ITEMS).contains(&successor.items) {
             return Err("DSpark successor items must be between 8 and 16".into());
         }
         let config = Config {
@@ -235,7 +235,7 @@ impl Device {
             config,
             mode,
             cycle,
-            prefetch: super::prefetch::Cache::new(successor_items),
+            prefetch: super::prefetch::Cache::new(successor),
             results: super::results::Results::new(kernels.own.as_ref(), g.shape.vocab)?,
             allocation: super::allocation::Allocation::new(
                 kernels.backend.as_ref(),
@@ -417,7 +417,7 @@ impl Device {
             draft_ids: alloc(rows * 4)?,
             confidence: alloc(rows * 4)?,
             status: super::status::Status::new(alloc(
-                u64::from(super::prefetch::status_rows(self.prefetch.items)) * 8,
+                u64::from(super::prefetch::status_rows(self.prefetch.successor.items)) * 8,
             )?),
         });
         let layout = InputLayout::new::<DeepSeek>(DRAFT_ROWS.max(self.config.window), DRAFT_ROWS);

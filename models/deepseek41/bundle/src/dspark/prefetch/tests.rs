@@ -4,7 +4,7 @@ use runtime_bundle_abi::device_results::*;
 
 fn pending(items: u32, k: u32, start: u64) -> (State, Feedback) {
     let mut state = State::new(Config {
-        slots: items.max(8),
+        slots: items.max(8) + 2,
         stages: 3,
         window: 8,
         max_prefill_rows: 64,
@@ -246,6 +246,140 @@ fn successor_status_holds_the_depth_five_maximum_of_its_bound() {
                 );
             }
         }
+    }
+}
+
+/// The prefill item `request` of `rows` rows in `slot` after `start`.
+fn prefill_input(request: u64, slot: u32, start: u64, rows: u32) -> Input {
+    Input {
+        rows: Rows {
+            request,
+            slot,
+            start,
+            kind: Kind::Prefill { rows },
+        },
+        tokens: vec![5; rows as usize],
+        noise: crate::dspark::execution::Noise::GREEDY,
+    }
+}
+
+/// With `dspark_successor_prefill`, a successor serves a step that adds
+/// prefill items: they come first and name no planned request or slot, the
+/// step's decode items are the planned drafts in order, and the state is
+/// the predicted one with only restores of those prefill requests added.
+/// Adopting its projections then needs the same relation.
+#[test]
+fn a_successor_serves_a_step_that_adds_prefill_items_only_as_planned() {
+    use crate::dspark::execution::Runtime;
+    use crate::dspark::state::Snapshot;
+    for items in [1_u32, 3, 8] {
+        let (mut state, mut feedback) = pending(items, 3, 3);
+        outcome(&mut feedback, 2);
+        let plan = feedback.plan(&state, 100, 8).unwrap().unwrap();
+        let commit = state
+            .begin_commit(&(1..=u64::from(items)).map(|r| (r, 3)).collect::<Vec<_>>())
+            .unwrap();
+        state.complete_commit(commit).unwrap();
+        assert_eq!(state, plan.committed);
+        let decoders: Vec<_> = plan
+            .drafts
+            .iter()
+            .map(|draft| Input {
+                rows: Rows {
+                    request: draft.block.request,
+                    slot: draft.block.slot,
+                    start: draft.block.main_rows,
+                    kind: Kind::Decode { drafts: 3 },
+                },
+                tokens: vec![draft.bonus],
+                noise: draft.noise,
+            })
+            .collect();
+        let with = |prefills: &[Input]| -> Vec<Input> {
+            prefills.iter().chain(&decoders).cloned().collect()
+        };
+        let cold = prefill_input(100, items, 0, 5);
+        assert!(plan.matches(&state, &decoders));
+        assert!(plan.matches_with_prefill(&state, &decoders));
+        assert!(!plan.matches(&state, &with(std::slice::from_ref(&cold))));
+        assert!(plan.matches_with_prefill(&state, &with(std::slice::from_ref(&cold))));
+        let mut after = decoders.clone();
+        after.push(cold.clone());
+        assert!(
+            !plan.matches_with_prefill(&state, &after),
+            "a prefill after the decoders"
+        );
+        for named in [prefill_input(1, items, 0, 5), prefill_input(100, 0, 0, 5)] {
+            assert!(
+                !plan.matches_with_prefill(&state, &with(&[named])),
+                "a prefill of a planned request or slot"
+            );
+        }
+        let mut verify = cold.clone();
+        verify.rows.kind = Kind::Verify { rows: 2 };
+        verify.tokens = vec![5; 2];
+        let mut undrafted = cold.clone();
+        undrafted.rows.kind = Kind::Decode { drafts: 0 };
+        undrafted.tokens = vec![5];
+        for other in [verify, undrafted] {
+            let mut inputs = with(std::slice::from_ref(&cold));
+            inputs.insert(1, other.clone());
+            assert!(!plan.matches_with_prefill(&state, &inputs), "{other:?}");
+            assert!(!plan.matches_with_prefill(&state, &with(&[other])));
+        }
+        if items > 1 {
+            let mut swapped = with(std::slice::from_ref(&cold));
+            swapped.swap(1, 2);
+            assert!(!plan.matches_with_prefill(&state, &swapped));
+        }
+        let mut restored = state.clone();
+        restored
+            .restore(
+                100,
+                items,
+                Snapshot {
+                    start: 0,
+                    end: 3,
+                    window: 8,
+                    stages: 3,
+                },
+            )
+            .unwrap();
+        let hit = prefill_input(100, items, 3, 5);
+        assert!(!plan.matches(&restored, &with(std::slice::from_ref(&hit))));
+        assert!(plan.matches_with_prefill(&restored, &with(std::slice::from_ref(&hit))));
+        assert!(
+            !plan.matches_with_prefill(&restored, &with(&[prefill_input(101, items + 1, 0, 5)])),
+            "a restore of a request the step does not prefill"
+        );
+        let mut runtime = Runtime::new(restored.clone(), 100, 8).unwrap();
+        assert!(
+            runtime
+                .adopt_projections(&plan.committed, None, &plan.projections)
+                .is_err()
+        );
+        assert!(
+            runtime
+                .adopt_projections(&plan.committed, Some(&[]), &plan.projections)
+                .is_err()
+        );
+        assert_eq!(runtime.state(), &restored);
+        runtime
+            .adopt_projections(&plan.committed, Some(&[100]), &plan.projections)
+            .unwrap();
+        for draft in &plan.drafts {
+            assert!(!runtime.state().needs_catch_up(draft.block.request));
+        }
+        assert_eq!(runtime.state().context(100), restored.context(100));
+        let mut exact = Runtime::new(state.clone(), 100, 8).unwrap();
+        exact
+            .adopt_projections(&plan.committed, Some(&[]), &plan.projections)
+            .unwrap();
+        let mut adopted = Runtime::new(state.clone(), 100, 8).unwrap();
+        adopted
+            .adopt_projections(&plan.committed, None, &plan.projections)
+            .unwrap();
+        assert_eq!(exact.state(), adopted.state());
     }
 }
 

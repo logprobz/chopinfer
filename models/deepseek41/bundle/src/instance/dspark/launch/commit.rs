@@ -102,6 +102,7 @@ impl Instance {
         )?;
         let device = self.dspark.as_ref().ok_or("DSpark is absent")?;
         for batch in batches {
+            self.ring_written();
             if let Some(times) = times.as_deref_mut() {
                 times.passes += 1;
                 times.rows += u64::from(batch.rows);

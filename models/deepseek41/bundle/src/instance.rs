@@ -1022,7 +1022,10 @@ fn create(services: HostServicesV1, bytes: &[u8]) -> Result<Instance, Failed<Ins
                 } else {
                     crate::lower::dspark::DraftMode::Greedy
                 },
-                config.execution.dspark_successor_items,
+                crate::dspark::prefetch::Successor {
+                    items: config.execution.dspark_successor_items,
+                    prefill: config.execution.dspark_successor_prefill,
+                },
             )
             .map_err(|error| {
                 log(&error);

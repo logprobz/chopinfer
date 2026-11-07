@@ -87,6 +87,15 @@ impl Instance {
         Ok(())
     }
 
+    /// Count one committed `dspark.ring` write, before its first launch
+    /// (`prefetch::Cache::ring_writes`).
+    pub(super) fn ring_written(&self) {
+        if let Some(device) = &self.dspark {
+            let writes = &device.prefetch.ring_writes;
+            writes.set(writes.get().wrapping_add(1));
+        }
+    }
+
     pub(in crate::instance) fn check_dspark_status(&self) -> Result<(), String> {
         if self.check_dspark_boundary()? {
             return Ok(());
@@ -110,6 +119,7 @@ impl Instance {
         pass: ProjectionChunk,
         mut times: Option<&mut ProjectionTimes>,
     ) -> Result<(), String> {
+        self.ring_written();
         let device = self.dspark.as_ref().ok_or("DSpark is absent")?;
         let bound = &device.stages[pass.stage as usize];
         let mut programs = Vec::new();
@@ -265,6 +275,10 @@ impl Instance {
         batch: &transfers::BatchLaunch,
         preview: Option<&CommitPlan>,
     ) -> Result<(), String> {
+        // A successor's preview writes the ring it restores afterwards.
+        if preview.is_none() {
+            self.ring_written();
+        }
         let device = self.dspark.as_ref().ok_or("DSpark is absent")?;
         let mut positions = Vec::with_capacity(batch.rows as usize);
         let mut slots = Vec::with_capacity(batch.rows as usize);

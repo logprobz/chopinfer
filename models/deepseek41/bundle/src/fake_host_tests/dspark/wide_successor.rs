@@ -61,6 +61,12 @@ fn boundary(items: u32, k: u32, projected: u32, accepted: u32, epoch: u64) -> Ve
     bytes
 }
 
+/// The serving pages: one a slot for the verify items, then a prompt's and
+/// a snapshot's.
+const KV_PAGES: u64 = 1024;
+const PROMPT_PAGE: u64 = 64;
+const SNAPSHOT_PAGE: u64 = 512;
+
 /// An instance of `items` slots serving `verify` rows with the successor
 /// bound `bound` and `options`, each item's three-token prompt committed.
 fn prompted(
@@ -69,14 +75,37 @@ fn prompted(
     bound: u32,
     options: &[(&str, serde_json::Value)],
 ) -> (Rc<Host>, BundleInstanceV1) {
-    let mut options = options.to_vec();
-    options.push((DSPARK_SUCCESSOR_ITEMS, bound.into()));
-    let (host, mut instance) = create_with_options(
-        Shape::new(&FLASH, Ranks::TP4).unwrap(),
-        items,
-        verify,
-        &options,
-    );
+    prompted_in(items, items, verify, bound, options)
+}
+
+/// [`prompted`] on an instance of `slots` slots whose pool holds
+/// [`KV_PAGES`] pages.
+fn prompted_in(
+    items: u32,
+    slots: u32,
+    verify: u32,
+    bound: u32,
+    options: &[(&str, serde_json::Value)],
+) -> (Rc<Host>, BundleInstanceV1) {
+    let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
+    let host = FakeHost::new(shape, KV_LAYOUTS[0]);
+    host.drafter.set(true);
+    host.speculation.set(Some((5, verify)));
+    host.kv_pages.set(KV_PAGES);
+    let mut record = crate::config::tests::record(&shape, host.kv, slots, false);
+    for (name, value) in options
+        .iter()
+        .cloned()
+        .chain([(DSPARK_SUCCESSOR_ITEMS, bound.into())])
+    {
+        record = crate::config::tests::with_option(record, name, value);
+    }
+    let mut instance = api()
+        .create(
+            HostServicesTableV1::new(Rc::new(MappedHost::new(Rc::clone(&host)))),
+            &record,
+        )
+        .unwrap_or_else(|e| panic!("drafter create: {e:?} {:?}", host.logs.borrow()));
     let prompt = BatchRequestV1::new(
         BatchWireVersionV1::V3,
         (1..=items)
@@ -278,6 +307,46 @@ fn at_most_eight_items_keep_the_default_journal_at_every_bound() {
     }
 }
 
+/// `dspark_successor_prefill` changes nothing a decode step after an
+/// unallocated one runs: at C8, depth three, the compact successor is the
+/// step's own three heads, and above eight items both compute five, so
+/// with the bound at 16 every journal of two cycles is the same with the
+/// option on or off.
+#[test]
+fn the_prefill_option_keeps_the_decode_journals() {
+    use model_deepseek41_contract::execution_options::DSPARK_SUCCESSOR_PREFILL;
+    for items in [8, 13] {
+        let mut journals = Vec::new();
+        for prefill in [false, true] {
+            let (host, mut instance) =
+                prompted(items, 64, 16, &[(DSPARK_SUCCESSOR_PREFILL, prefill.into())]);
+            for (epoch, start, projected) in [(1, 3, items * 3), (2, 7, items * 4)] {
+                cycle(
+                    &host,
+                    &mut instance,
+                    (items, 3, start),
+                    (projected, 3),
+                    epoch,
+                )
+                .unwrap();
+                instance
+                    .commit_accepted(
+                        &(1..=items)
+                            .map(|id| kept(u64::from(id), 4))
+                            .collect::<Vec<_>>(),
+                    )
+                    .unwrap();
+            }
+            for request in 1..=items {
+                instance.retire_request(u64::from(request)).unwrap();
+            }
+            instance.destroy().unwrap();
+            journals.push(host.journal.borrow().clone());
+        }
+        assert_eq!(journals[0], journals[1], "items={items}");
+    }
+}
+
 /// Above eight items both paths compute five heads, so a wide successor
 /// serves the next step at a shallower or a deeper draft budget: depth
 /// five to three and three to five each reuse it, in one or two forwards.
@@ -458,4 +527,193 @@ fn a_failed_wide_successor_phase_poisons_with_no_adoption() {
             assert_eq!(host.acquired.get(), host.released.get(), "{phase}");
         }
     }
+}
+
+/// The successor records logged since `from`.
+fn events(host: &Host, from: usize) -> Vec<serde_json::Value> {
+    host.logs.borrow()[from..]
+        .iter()
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+        .filter(|record| record["phase"] == "dspark-prefetch")
+        .collect()
+}
+
+/// A step of the 16 verify items of [`batch`], each `k` drafts from
+/// `start`, after the last `rows` rows of `request`'s prompt in `slot`,
+/// which `prefix` tokens restored.
+fn c16_mixed(request: u64, slot: u64, prefix: u64, rows: u64, start: u64, k: u32) -> Vec<u8> {
+    let end = prefix + rows;
+    let mut items = vec![BatchItemV1::new(
+        request,
+        false,
+        rows as u32,
+        true,
+        (prefix..end).map(|at| at as u32).collect(),
+    )];
+    let mut appends = vec![BatchAppendV1::new(
+        prefix,
+        rows,
+        end,
+        (0..end.div_ceil(64))
+            .map(|page| PROMPT_PAGE + page)
+            .collect(),
+        None,
+    )];
+    let mut slots = vec![slot];
+    for slot in 0..16 {
+        items.push(BatchItemV1::verify(slot + 1, k + 1, true, vec![7]));
+        appends.push(BatchAppendV1::new(
+            start,
+            u64::from(k + 1),
+            start + u64::from(k + 1),
+            vec![slot],
+            None,
+        ));
+        slots.push(slot);
+    }
+    BatchRequestV1::new(BatchWireVersionV1::V3, items, appends)
+        .with_state_slots(slots)
+        .encode()
+        .unwrap()
+}
+
+/// A wide successor follows the request lifecycle. A cancel of the step
+/// that queued it retires every item, and the next step discards it; an
+/// item that retires before the next step discards it; and so does a
+/// prefix restore, unless `dspark_successor_prefill` lets the restored
+/// prompt join the 16 decoders, a C16 mixed step, which then reuses the
+/// five-head successor as it is and, from its draft readback, issues the
+/// inline step's journal.
+#[test]
+fn wide_successors_follow_cancel_retirement_and_restore() {
+    use model_deepseek41_contract::execution_options::{
+        DIAGNOSTIC_STEP_LOGS, DSPARK_SUCCESSOR_PREFILL,
+    };
+    let items = 16;
+    let logs = [(DIAGNOSTIC_STEP_LOGS, serde_json::Value::from(true))];
+
+    let (host, mut instance) = prompted(items, 64, 16, &logs);
+    cycle(&host, &mut instance, (items, 3, 3), (items * 3, 3), 1).unwrap();
+    assert_eq!(
+        crate::instance::dspark_successor_for_test(instance.handle()),
+        Some(16)
+    );
+    instance.cancel().unwrap();
+    for request in 1..=items {
+        instance.retire_request(u64::from(request)).unwrap();
+    }
+    let from = host.logs.borrow().len();
+    execute(
+        &mut instance,
+        &host,
+        &super::super::prompt(100, 0, 0, 3, true),
+    );
+    instance.commit().unwrap();
+    let records = events(&host, from);
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0]["event"], "discarded");
+    assert_eq!(
+        crate::instance::dspark_successor_for_test(instance.handle()),
+        None
+    );
+    instance.retire_request(100).unwrap();
+    instance.destroy().unwrap();
+    assert_eq!(host.acquired.get(), host.released.get());
+
+    let (host, mut instance) = prompted(items, 64, 16, &logs);
+    cycle(&host, &mut instance, (items, 3, 3), (items * 3, 3), 1).unwrap();
+    instance
+        .commit_accepted(
+            &(1..=items)
+                .map(|id| kept(u64::from(id), 4))
+                .collect::<Vec<_>>(),
+        )
+        .unwrap();
+    instance.retire_request(u64::from(items)).unwrap();
+    let from = host.logs.borrow().len();
+    let step = cycle(
+        &host,
+        &mut instance,
+        (items - 1, 3, 7),
+        ((items - 1) * 4, 3),
+        2,
+    )
+    .unwrap();
+    assert_eq!(events(&host, from)[0]["event"], "discarded");
+    assert!(count(&step[..hash(&host, &step)], "replay ") > 0);
+    finish(&host, instance, items - 1, 4);
+
+    let ids: Vec<u32> = (0..141).collect();
+    let mut targets = Vec::new();
+    let mut drafts = Vec::new();
+    for prefill in [false, true] {
+        let options = [logs[0].clone(), (DSPARK_SUCCESSOR_PREFILL, prefill.into())];
+        let (host, mut instance) = prompted_in(items, 20, 64, 16, &options);
+        execute(
+            &mut instance,
+            &host,
+            &super::super::prompt(200, 16, 0, 141, true),
+        );
+        instance.commit().unwrap();
+        let count_pages = instance.describe_prefix_state().unwrap();
+        assert!(SNAPSHOT_PAGE + count_pages <= KV_PAGES);
+        let pages: Vec<_> = (0..count_pages).map(|page| SNAPSHOT_PAGE + page).collect();
+        instance.capture_prefix_state(200, 141, &pages).unwrap();
+        instance.retire_request(200).unwrap();
+        cycle(&host, &mut instance, (items, 3, 3), (items * 3, 3), 1).unwrap();
+        instance
+            .commit_accepted(
+                &(1..=items)
+                    .map(|id| kept(u64::from(id), 4))
+                    .collect::<Vec<_>>(),
+            )
+            .unwrap();
+        instance
+            .restore_prefix_state_in_slot(201, &ids, &pages, 17)
+            .unwrap();
+        let from = host.logs.borrow().len();
+        let begin = host.journal.borrow().len();
+        let sink = execute(&mut instance, &host, &c16_mixed(201, 17, 141, 20, 7, 3));
+        let step = host.journal.borrow()[begin..].to_vec();
+        let records = events(&host, from);
+        assert_eq!(records.len(), 1, "prefill={prefill}");
+        if prefill {
+            assert_eq!(records[0]["event"], "reused");
+            assert_eq!(records[0]["prefill_items"], 1);
+            assert_eq!(records[0]["heads"], 5);
+        } else {
+            assert_eq!(records[0]["event"], "discarded");
+            assert_eq!(records[0]["relaxed"], true);
+        }
+        let (outputs, heads) = crate::instance::dspark_draft_outputs_for_test(instance.handle());
+        assert_eq!(heads, 5);
+        let ids_span = outputs[0].0;
+        let readback = format!(
+            "download {} {:?}",
+            host.rank_streams.borrow()[&0],
+            DeviceBufferSpanV1::new(ids_span.buffer, ids_span.offset, u64::from(items) * 20)
+        );
+        let at = step
+            .iter()
+            .position(|line| *line == readback)
+            .expect("the draft ID readback");
+        targets.push((count(&step[..at], "replay "), step[at..].to_vec()));
+        drafts.push(sink.draft_tokens());
+        instance
+            .commit_accepted(
+                &(1..=items)
+                    .map(|id| kept(u64::from(id), 4))
+                    .collect::<Vec<_>>(),
+            )
+            .unwrap();
+        for request in (1..=u64::from(items)).chain([201]) {
+            instance.retire_request(request).unwrap();
+        }
+        instance.destroy().unwrap();
+        assert_eq!(host.acquired.get(), host.released.get());
+    }
+    // Per rank: the decoders' two 32-row catch-up launches and two forwards.
+    assert_eq!(targets[0].0 - targets[1].0, 4 * 4);
+    assert_eq!(targets[0].1, targets[1].1);
+    assert_eq!(drafts[0], drafts[1]);
 }

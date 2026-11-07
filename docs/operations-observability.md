@@ -276,10 +276,13 @@ headers, the same file stamps (device, inode, length, modification and change
 times), the same census and the same host transform implementation, and are
 stored only from files unchanged during the measurement and at least two
 seconds older than it; `CHOPINFER_WEIGHT_CENSUS_CACHE` names another
-directory the same way, or `0` measures every start. `startup weight_census`
-reports `cache_hit` and `bytes_read` (zero on a hit), and
-`startup weight_plan` splits its `seconds` into `census_seconds` (within
-`plan_seconds`) and `validation_seconds`. A loaded image's tensor payloads
+directory the same way, or `0` measures every start. A measurement adds
+nothing to the page cache: it copies what the cache holds and reads the rest
+with `O_DIRECT`, as a load does, so a first start after a new host build
+neither fills the cache with the scales nor pushes out mapped views.
+`startup weight_census` reports `cache_hit`, `bytes_read` (zero on a hit)
+and `direct_bytes`, and `startup weight_plan` splits its `seconds` into
+`census_seconds` (within `plan_seconds`) and `validation_seconds`. A loaded image's tensor payloads
 are still read and validated, and a load refuses counts that differ from the
 bytes it encodes. Views mapped from the checkpoint stay in the page cache,
 not pinned memory; `mapped_bytes` and the `prewarm_*` fields describe them.

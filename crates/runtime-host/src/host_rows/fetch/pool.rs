@@ -1,6 +1,5 @@
-use crate::page_cache::{CacheAdviceV1, advise_v1, read_cached_v1};
+use super::source::{Classes, Descriptor, Probe, RowSource};
 use std::fs::File;
-use std::os::unix::fs::FileExt;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, mpsc};
 
@@ -10,10 +9,11 @@ pub(super) const WORKERS: usize = 128;
 const QUEUE: usize = 128;
 type Reply = (usize, Result<Vec<u8>, String>);
 
-/// Consecutive requests of one read for one reader thread, and how it reads
-/// them ([`read_share`]).
+/// Consecutive requests of one read for one reader thread, the description
+/// it reads them through, and how it reads them ([`read_share`]).
 struct Work {
     source: Arc<File>,
+    rows: Arc<dyn RowSource>,
     requests: Vec<(u64, usize)>,
     start: bool,
     index: usize,
@@ -40,10 +40,16 @@ pub(super) fn fallback(reason: &str) {
     }
 }
 
-fn read_exact(source: &File, bytes: &mut [u8], offset: u64) -> Result<(), String> {
-    source
-        .read_exact_at(bytes, offset)
-        .map_err(|error| format!("read mapped row source: {error}"))
+/// The served row source.
+fn descriptor() -> Arc<dyn RowSource> {
+    static DESCRIPTOR: OnceLock<Arc<dyn RowSource>> = OnceLock::new();
+    Arc::clone(DESCRIPTOR.get_or_init(|| Arc::new(Descriptor)))
+}
+
+/// Rows in each share of a started read of `total` rows over `window`
+/// readers: the rows over the window, rounded up.
+pub(super) fn share_rows(total: usize, window: usize) -> usize {
+    total.div_ceil(window.max(1)).max(1)
 }
 
 /// Reads one share of a read's requests, in request order, end to end in
@@ -55,35 +61,39 @@ fn read_exact(source: &File, bytes: &mut [u8], offset: u64) -> Result<(), String
 /// every `readers()` rows. Without `start`, each row is one blocking read.
 /// Either way every row's bytes end as one exact read of its file range; a
 /// cached copy that came up short is read again whole.
-fn read_share(source: &File, requests: &[(u64, usize)], start: bool) -> Result<Vec<u8>, String> {
+fn read_share(
+    rows: &dyn RowSource,
+    source: &File,
+    requests: &[(u64, usize)],
+    start: bool,
+) -> Result<Vec<u8>, String> {
     let mut bytes = vec![0; requests.iter().map(|&(_, length)| length).sum()];
     let mut at = 0;
     if !start {
         for &(offset, length) in requests {
-            read_exact(source, &mut bytes[at..at + length], offset)?;
+            rows.read_whole(source, &mut bytes[at..at + length], offset)?;
             at += length;
         }
         return Ok(bytes);
     }
     // Each cold row's place in `bytes` and its file range.
     let mut cold = Vec::new();
+    let mut classes = Classes::default();
     for &(offset, length) in requests {
-        let row = &mut bytes[at..at + length];
-        if !matches!(read_cached_v1(source, row, offset), Ok(read) if read == length) {
+        let probe = rows.probe(source, &mut bytes[at..at + length], offset);
+        classes.count(probe);
+        if probe != Probe::Full {
             cold.push((at, offset, length));
         }
         at += length;
     }
-    super::count_cold_rows(requests.len() - cold.len(), cold.len());
+    classes.publish();
     for &(_, offset, length) in &cold {
         // A hint only: the read below fetches the row if the advice fails.
-        // A zero length would advise the whole file.
-        if length > 0 {
-            let _ = advise_v1(source, offset, length as u64, CacheAdviceV1::WillNeed);
-        }
+        rows.advise(source, offset, length);
     }
     for &(at, offset, length) in &cold {
-        read_exact(source, &mut bytes[at..at + length], offset)?;
+        rows.read_whole(source, &mut bytes[at..at + length], offset)?;
     }
     Ok(bytes)
 }
@@ -102,11 +112,22 @@ impl Pool {
                             Ok(receiver) => receiver.recv(),
                             Err(_) => break,
                         };
-                        let Ok(work) = work else {
+                        let Ok(Work {
+                            source,
+                            rows,
+                            requests,
+                            start,
+                            index,
+                            reply,
+                        }) = work
+                        else {
                             break;
                         };
-                        let result = read_share(&work.source, &work.requests, work.start);
-                        let _ = work.reply.send((work.index, result));
+                        let result = read_share(&*rows, &source, &requests, start);
+                        // The description goes before the reply, so a read
+                        // that has every reply holds the only references.
+                        drop(source);
+                        let _ = reply.send((index, result));
                     }
                 })
                 .map_err(|error| format!("start mapped row reader: {error}"))?;
@@ -121,28 +142,26 @@ impl Pool {
     /// `window` shares, plus one per further group), and admit them all at
     /// once, so every cold row of every group is in flight together. Blocking
     /// reads make each row its own share and keep at most `window` of them in
-    /// flight. Each share is copied to its place as it arrives.
+    /// flight. Share `k` of a group reads through its description `k` modulo
+    /// their count. Each share is copied to its place as it arrives.
     fn read_into(
         &self,
         groups: &[Group<'_>],
         outputs: &mut [&mut [u8]],
         window: usize,
         start: bool,
+        rows: &Arc<dyn RowSource>,
     ) -> Result<(), Failure> {
         let window = window.max(1);
         let total: usize = groups.iter().map(|(_, requests)| requests.len()).sum();
-        let share = if start {
-            total.div_ceil(window).max(1)
-        } else {
-            1
-        };
+        let share = if start { share_rows(total, window) } else { 1 };
         // Each share's group, where its bytes start in that group's output,
-        // its source and its requests.
+        // its description and its requests.
         let mut all = Vec::new();
-        for (group, &(source, requests)) in groups.iter().enumerate() {
+        for (group, &(sources, requests)) in groups.iter().enumerate() {
             let mut at = 0;
-            for requests in requests.chunks(share) {
-                all.push((group, at, source, requests));
+            for (index, requests) in requests.chunks(share).enumerate() {
+                all.push((group, at, &sources[index % sources.len()], requests));
                 at += requests.iter().map(|&(_, length)| length).sum::<usize>();
             }
         }
@@ -155,12 +174,12 @@ impl Pool {
         // Each reply admits the next share. The admission that finds no
         // share left drops this sender, so a lost reply ends the receive loop.
         for _ in 0..if start { all.len().max(1) } else { window } {
-            self.admit(&mut pending, start, &mut reply)?;
+            self.admit(&mut pending, start, rows, &mut reply)?;
         }
         let mut arrived = vec![false; all.len()];
         let mut failure = None;
         while let Ok((index, result)) = receive.recv() {
-            self.admit(&mut pending, start, &mut reply)?;
+            self.admit(&mut pending, start, rows, &mut reply)?;
             match result {
                 Ok(bytes) => {
                     let (group, at, _, _) = all[index];
@@ -192,6 +211,7 @@ impl Pool {
         &self,
         pending: &mut impl Iterator<Item = (usize, (&'a Arc<File>, &'a [(u64, usize)]))>,
         start: bool,
+        rows: &Arc<dyn RowSource>,
         reply: &mut Option<mpsc::Sender<Reply>>,
     ) -> Result<(), Failure> {
         let Some(sender) = reply.as_ref() else {
@@ -204,6 +224,7 @@ impl Pool {
         self.send
             .send(Work {
                 source: Arc::clone(source),
+                rows: Arc::clone(rows),
                 requests: requests.to_vec(),
                 start,
                 index,
@@ -213,8 +234,9 @@ impl Pool {
     }
 }
 
-/// One source's requests in a batch read.
-pub(super) type Group<'a> = (&'a Arc<File>, &'a [(u64, usize)]);
+/// One source's requests in a batch read, and the descriptions of it they
+/// are read through: at least one.
+pub(super) type Group<'a> = (&'a [Arc<File>], &'a [(u64, usize)]);
 /// Each group's rows end to end in request order, and whether this thread
 /// read them because the reader threads were unavailable.
 pub(super) type GroupRows = (Vec<Vec<u8>>, bool);
@@ -223,7 +245,7 @@ pub(super) fn read(
     source: &Arc<File>,
     requests: &[(u64, usize)],
 ) -> Result<(Vec<u8>, bool), String> {
-    let (mut rows, serial) = read_groups(&[(source, requests)])?;
+    let (mut rows, serial) = read_groups(&[(std::slice::from_ref(source), requests)])?;
     Ok((rows.pop().unwrap_or_default(), serial))
 }
 
@@ -242,8 +264,8 @@ pub(super) fn read_groups(groups: &[Group<'_>]) -> Result<GroupRows, String> {
 
 /// Reads every group as one batch, group `g`'s rows end to end into
 /// `outputs[g]`, and answers whether this thread read them because the
-/// reader threads were unavailable. Refuses outputs of another length before
-/// any read.
+/// reader threads were unavailable. Refuses outputs of another length, or a
+/// group without a description, before any read.
 pub(super) fn read_groups_into(
     groups: &[Group<'_>],
     outputs: &mut [&mut [u8]],
@@ -252,8 +274,9 @@ pub(super) fn read_groups_into(
         || groups
             .iter()
             .zip(outputs.iter())
-            .any(|((_, requests), output)| {
-                requests.iter().map(|&(_, length)| length).sum::<usize>() != output.len()
+            .any(|((sources, requests), output)| {
+                sources.is_empty()
+                    || requests.iter().map(|&(_, length)| length).sum::<usize>() != output.len()
             })
     {
         return Err("mapped row read outputs differ from their requests".into());
@@ -264,6 +287,7 @@ pub(super) fn read_groups_into(
         groups,
         outputs,
         super::start_reads(),
+        &descriptor(),
     )
 }
 
@@ -272,9 +296,10 @@ fn read_using(
     groups: &[Group<'_>],
     outputs: &mut [&mut [u8]],
     start: bool,
+    rows: &Arc<dyn RowSource>,
 ) -> Result<bool, String> {
     match pool {
-        Ok(pool) => match pool.read_into(groups, outputs, super::readers(), start) {
+        Ok(pool) => match pool.read_into(groups, outputs, super::readers(), start, rows) {
             Ok(()) => return Ok(false),
             Err(Failure::Source(error)) => return Err(error),
             Err(Failure::Queue(error)) => fallback(&error),
@@ -283,8 +308,8 @@ fn read_using(
     }
     // One share per group on this thread: started reads still keep each
     // group's cold rows in flight together.
-    for (&(source, requests), output) in groups.iter().zip(outputs.iter_mut()) {
-        output.copy_from_slice(&read_share(source, requests, start)?);
+    for (&(sources, requests), output) in groups.iter().zip(outputs.iter_mut()) {
+        output.copy_from_slice(&read_share(&**rows, &sources[0], requests, start)?);
     }
     Ok(true)
 }
@@ -292,6 +317,13 @@ fn read_using(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::page_cache::{CacheAdviceV1, advise_v1, read_cached_v1};
+    use std::os::fd::AsRawFd;
+    use std::os::unix::fs::FileExt;
+
+    fn one(file: &Arc<File>) -> &[Arc<File>] {
+        std::slice::from_ref(file)
+    }
 
     fn buffers(groups: &[Group<'_>]) -> Vec<Vec<u8>> {
         groups
@@ -312,6 +344,7 @@ mod tests {
             groups,
             &mut rows.iter_mut().map(Vec::as_mut_slice).collect::<Vec<_>>(),
             start,
+            &descriptor(),
         )?;
         Ok((rows, serial))
     }
@@ -329,6 +362,7 @@ mod tests {
             &mut rows.iter_mut().map(Vec::as_mut_slice).collect::<Vec<_>>(),
             window,
             start,
+            &descriptor(),
         )?;
         Ok(rows)
     }
@@ -341,7 +375,7 @@ mod tests {
         let file = Arc::new(File::open(&path).unwrap());
         let requests = [(1, 3), (0, 2)];
         let expected = (vec![vec![9, 2, 8, 1, 9], vec![7]], true);
-        let groups: [Group<'_>; 2] = [(&file, &requests), (&file, &[(5, 1)])];
+        let groups: [Group<'_>; 2] = [(one(&file), &requests), (one(&file), &[(5, 1)])];
         for start in [false, true] {
             assert_eq!(
                 read_new(Err("reader admission unavailable"), &groups, start).unwrap(),
@@ -356,7 +390,7 @@ mod tests {
             assert!(
                 read_new(
                     Err("reader admission unavailable"),
-                    &[(&file, &[(5, 2)])],
+                    &[(one(&file), &[(5, 2)])],
                     start
                 )
                 .is_err()
@@ -384,23 +418,24 @@ mod tests {
         for start in [false, true] {
             for window in [1, 2, 7, 64, WORKERS, 1000] {
                 assert!(
-                    pool_read(&pool, &[(&file, &requests)], window, start).ok()
+                    pool_read(&pool, &[(one(&file), &requests)], window, start).ok()
                         == Some(vec![expected.concat()]),
                     "window {window} start {start}"
                 );
                 assert!(
-                    pool_read(&pool, &[(&file, &requests[..1])], window, start).ok()
+                    pool_read(&pool, &[(one(&file), &requests[..1])], window, start).ok()
                         == Some(vec![expected[0].clone()])
                 );
                 assert!(
-                    pool_read(&pool, &[(&file, &[])], window, start).ok() == Some(vec![Vec::new()])
+                    pool_read(&pool, &[(one(&file), &[])], window, start).ok()
+                        == Some(vec![Vec::new()])
                 );
                 assert!(pool_read(&pool, &[], window, start).ok() == Some(Vec::new()));
                 // Groups come back each in its own request order.
                 let split = [
-                    (&file, &requests[..7]),
-                    (&file, &[]),
-                    (&file, &requests[7..]),
+                    (one(&file), &requests[..7]),
+                    (one(&file), &[]),
+                    (one(&file), &requests[7..]),
                 ];
                 assert!(
                     pool_read(&pool, &split, window, start).ok()
@@ -414,7 +449,7 @@ mod tests {
             assert!(matches!(
                 pool_read(
                     &pool,
-                    &[(&file, &[(0, 2)]), (&file, &[(4095, 2)])],
+                    &[(one(&file), &[(0, 2)]), (one(&file), &[(4095, 2)])],
                     4,
                     start
                 ),
@@ -424,10 +459,10 @@ mod tests {
         // Outputs of another length are refused before any read.
         let mut short = [0_u8; 2];
         assert!(
-            read_groups_into(&[(&file, &[(0, 3)])], &mut [&mut short[..]]).is_err()
+            read_groups_into(&[(one(&file), &[(0, 3)])], &mut [&mut short[..]]).is_err()
                 && short == [0, 0]
         );
-        assert!(read_groups_into(&[(&file, &[(0, 2)])], &mut []).is_err());
+        assert!(read_groups_into(&[(one(&file), &[(0, 2)])], &mut []).is_err());
         std::fs::remove_file(path).unwrap();
     }
 
@@ -448,7 +483,7 @@ mod tests {
         let reader = {
             let (file, requests) = (Arc::clone(&file), requests.clone());
             std::thread::spawn(move || {
-                pool_read(&Pool { send }, &[(&file, &requests)], 3, false)
+                pool_read(&Pool { send }, &[(one(&file), &requests)], 3, false)
                     .ok()
                     .map(|mut rows| rows.remove(0))
             })
@@ -463,7 +498,7 @@ mod tests {
             assert!(receive.recv_timeout(wait / 4).is_err());
             assert_eq!(work.requests.len(), 1);
             assert!(!work.start);
-            let result = read_share(&work.source, &work.requests, work.start);
+            let result = read_share(&*work.rows, &work.source, &work.requests, work.start);
             work.reply.send((work.index, result)).unwrap();
             drop(work);
             if let Ok(next) = receive.recv_timeout(wait) {
@@ -484,7 +519,7 @@ mod tests {
         let reader = {
             let (file, requests) = (Arc::clone(&file), requests.clone());
             std::thread::spawn(move || {
-                pool_read(&Pool { send }, &[(&file, &requests)], 3, true)
+                pool_read(&Pool { send }, &[(one(&file), &requests)], 3, true)
                     .ok()
                     .map(|mut rows| rows.remove(0))
             })
@@ -506,7 +541,7 @@ mod tests {
         // Replies in reverse order still assemble in request order.
         for work in shares.into_iter().rev() {
             assert!(work.start);
-            let result = read_share(&work.source, &work.requests, work.start);
+            let result = read_share(&*work.rows, &work.source, &work.requests, work.start);
             work.reply.send((work.index, result)).unwrap();
         }
         assert_eq!(reader.join().unwrap(), Some(expected_bytes(&requests)));
@@ -535,7 +570,7 @@ mod tests {
             std::thread::spawn(move || {
                 pool_read(
                     &Pool { send },
-                    &[(&codes, &wide), (&scales, &narrow)],
+                    &[(one(&codes), &wide), (one(&scales), &narrow)],
                     3,
                     true,
                 )
@@ -561,7 +596,7 @@ mod tests {
             ]
         );
         for work in shares.into_iter().rev() {
-            let result = read_share(&work.source, &work.requests, work.start);
+            let result = read_share(&*work.rows, &work.source, &work.requests, work.start);
             work.reply.send((work.index, result)).unwrap();
         }
         let expected = |bytes: &[u8], requests: &[(u64, usize)]| {
@@ -609,9 +644,143 @@ mod tests {
         } else {
             eprintln!("skipped short copy: no eviction or residency report on this file system");
         }
-        let rows = read_share(&file, &[row, (0, 8), row], true).unwrap();
+        let rows = read_share(&Descriptor, &file, &[row, (0, 8), row], true).unwrap();
         let exact = |(offset, length): (u64, usize)| bytes[offset as usize..][..length].to_vec();
         assert_eq!(rows, [exact(row), exact((0, 8)), exact(row)].concat());
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn shares_read_through_their_descriptions_in_turn() {
+        let path = std::env::temp_dir().join(format!("mapped-pool-turns-{}", std::process::id()));
+        std::fs::write(&path, (0..64_u8).collect::<Vec<_>>()).unwrap();
+        let sources = (0..3)
+            .map(|_| Arc::new(File::open(&path).unwrap()))
+            .collect::<Vec<_>>();
+        let (send, receive) = mpsc::sync_channel(QUEUE);
+        let requests = (0..14_u64).map(|i| (i * 4, 3)).collect::<Vec<_>>();
+        let reader = {
+            let (sources, requests) = (sources.clone(), requests.clone());
+            std::thread::spawn(move || {
+                pool_read(&Pool { send }, &[(&sources, &requests)], 7, true)
+                    .ok()
+                    .map(|mut rows| rows.remove(0))
+            })
+        };
+        // Fourteen rows over a window of seven: seven shares of two rows,
+        // share k on description k modulo three.
+        let wait = std::time::Duration::from_millis(200);
+        let shares = (0..7)
+            .map(|_| receive.recv_timeout(wait).unwrap())
+            .collect::<Vec<_>>();
+        for (k, work) in shares.iter().enumerate() {
+            assert!(Arc::ptr_eq(&work.source, &sources[k % 3]), "share {k}");
+            assert_eq!(work.requests, requests[2 * k..2 * k + 2]);
+        }
+        for work in shares {
+            let result = read_share(&*work.rows, &work.source, &work.requests, work.start);
+            work.reply.send((work.index, result)).unwrap();
+        }
+        assert_eq!(reader.join().unwrap(), Some(expected_bytes(&requests)));
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn each_share_probes_then_advises_then_reads_its_cold_rows_whole() {
+        use super::super::scripted::{GARBAGE, Kind, Scripted};
+        let path = std::env::temp_dir().join(format!("mapped-pool-order-{}", std::process::id()));
+        let bytes = (0..8192_u32)
+            .map(|i| (i * 7 + i / 255) as u8)
+            .collect::<Vec<_>>();
+        std::fs::write(&path, &bytes).unwrap();
+        let sources = (0..3)
+            .map(|_| Arc::new(File::open(&path).unwrap()))
+            .collect::<Vec<_>>();
+        let requests = (0..200_u64)
+            .map(|i| ((i * 41) % 8000, 1 + (i % 11) as usize))
+            .collect::<Vec<_>>();
+        // Every class but full, in turn, on every third row.
+        let cold = [
+            Probe::Short,
+            Probe::WouldBlock,
+            Probe::Unsupported,
+            Probe::Interrupted,
+            Probe::Other,
+        ];
+        let mut scripted = Scripted::default();
+        for (i, &(offset, _)) in requests.iter().enumerate().step_by(3) {
+            scripted.classes.insert(offset, cold[i / 3 % cold.len()]);
+        }
+        let scripted = Arc::new(scripted);
+        let rows: Arc<dyn RowSource> = Arc::clone(&scripted) as _;
+        let pool = Pool::new().unwrap();
+        let mut out = vec![GARBAGE; requests.iter().map(|&(_, length)| length).sum()];
+        pool.read_into(
+            &[(&sources, &requests)],
+            &mut [&mut out[..]],
+            9,
+            true,
+            &rows,
+        )
+        .ok()
+        .unwrap();
+        // Every row is exact: a cold row's garbage was read over whole.
+        let expected = requests
+            .iter()
+            .flat_map(|&(offset, length)| bytes[offset as usize..][..length].to_vec())
+            .collect::<Vec<_>>();
+        assert!(out == expected);
+        let calls = scripted.calls();
+        let share = share_rows(requests.len(), 9);
+        for (k, requests) in requests.chunks(share).enumerate() {
+            let offsets = requests
+                .iter()
+                .map(|&(offset, _)| offset)
+                .collect::<Vec<_>>();
+            let mine = calls
+                .iter()
+                .enumerate()
+                .filter(|(_, call)| offsets.contains(&call.offset))
+                .collect::<Vec<_>>();
+            // One reader thread reads a share, through its description,
+            // each row in its place for its length.
+            assert!(
+                mine.iter()
+                    .all(|(_, call)| call.fd == sources[k % 3].as_raw_fd()
+                        && call.thread == mine[0].1.thread)
+            );
+            for (_, call) in &mine {
+                let length = requests
+                    .iter()
+                    .find(|&&(offset, _)| offset == call.offset)
+                    .unwrap()
+                    .1;
+                assert_eq!(call.length, length);
+                if call.kind != Kind::Advise {
+                    assert!(call.at != 0);
+                }
+            }
+            let at = |kind: Kind| {
+                mine.iter()
+                    .filter(|(_, call)| call.kind == kind)
+                    .map(|&(seq, _)| seq)
+                    .collect::<Vec<_>>()
+            };
+            let (probes, advice, reads) = (at(Kind::Probe), at(Kind::Advise), at(Kind::Read));
+            let colds = offsets
+                .iter()
+                .filter(|offset| scripted.classes.contains_key(offset))
+                .count();
+            assert_eq!(
+                (probes.len(), advice.len(), reads.len()),
+                (offsets.len(), colds, colds)
+            );
+            if colds > 0 {
+                assert!(probes.iter().max() < advice.iter().min(), "share {k}");
+                assert!(advice.iter().max() < reads.iter().min(), "share {k}");
+            }
+        }
+        assert_eq!(scripted.in_flight(), 0);
         std::fs::remove_file(path).unwrap();
     }
 }

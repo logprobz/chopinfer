@@ -7,6 +7,9 @@
 //! cache read all their rows the same way ([`copy_large`]).
 pub(crate) mod legacy;
 mod pool;
+#[cfg(test)]
+mod scripted;
+mod source;
 
 use super::MappedRowsV1;
 use std::collections::BTreeMap;
@@ -152,6 +155,7 @@ pub(crate) fn snapshot() -> serde_json::Value {
         "large_reads":large_reads(), "large_gathers":LARGE_GATHERS.load(Ordering::Relaxed),
         "large_rows":LARGE_ROWS.load(Ordering::Relaxed),
         "large_fanout_copies":FANOUT_COPIES.load(Ordering::Relaxed),
+        "nowait":source::snapshot(),
         "mapped_fallback_rows":MAPPED.load(Ordering::Relaxed),
         "legacy_async_gathers":legacy_gathers, "legacy_async_misses":legacy_misses,
     })
@@ -379,7 +383,7 @@ fn copy_planes_with(
         .zip(&work)
         .filter_map(|(plane, (requests, _))| {
             let source = plane.mapping.source.as_ref()?;
-            (!requests.is_empty()).then_some((source, requests.as_slice()))
+            (!requests.is_empty()).then_some((std::slice::from_ref(source), requests.as_slice()))
         })
         .collect::<Vec<_>>();
     let (data, serial) = read(&groups)?;
@@ -454,7 +458,7 @@ fn copy_large_with(
     let groups = sources
         .into_iter()
         .zip(&requests)
-        .map(|(source, requests)| (source, requests.as_slice()))
+        .map(|(source, requests)| (std::slice::from_ref(source), requests.as_slice()))
         .collect::<Vec<_>>();
     let serial = read(
         &groups,

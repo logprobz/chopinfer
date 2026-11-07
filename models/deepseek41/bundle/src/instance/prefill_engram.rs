@@ -37,6 +37,28 @@ pub(super) struct Gathers {
     start: Cell<i32>,
 }
 
+/// Each of `layers` Engram layers' ids in `ids` (`[row][layer][column]`,
+/// `columns` a layer) as the little-endian words its gather reads, rows in
+/// order, written a word at a time into storage sized once.
+fn layer_ids(ids: &[u32], layers: usize, columns: usize) -> Vec<Vec<u8>> {
+    let width = columns * layers;
+    (0..layers)
+        .map(|layer| {
+            let mut bytes = vec![0; ids.len() / layers * 4];
+            for (out, row) in bytes
+                .chunks_exact_mut(columns * 4)
+                .zip(ids.chunks_exact(width))
+            {
+                let row = &row[layer * columns..(layer + 1) * columns];
+                for (out, id) in out.chunks_exact_mut(4).zip(row) {
+                    out.copy_from_slice(&id.to_le_bytes());
+                }
+            }
+            bytes
+        })
+        .collect()
+}
+
 impl Gathers {
     pub(super) fn idle(&self) -> bool {
         !self.pending.get() && !self.failed.get()
@@ -111,16 +133,7 @@ impl Gathers {
         if rows == 0 || rows > PREFILL_TOKENS as usize || hashed.ids().len() != rows * width {
             return Err(BundleAbiError::InvalidRange("prefill Engram hash extent"));
         }
-        let inputs: Vec<Vec<u8>> = (0..self.layers.len())
-            .map(|layer| {
-                hashed
-                    .ids()
-                    .chunks_exact(width)
-                    .flat_map(|row| &row[layer * self.columns..(layer + 1) * self.columns])
-                    .flat_map(|word| word.to_le_bytes())
-                    .collect()
-            })
-            .collect();
+        let inputs = layer_ids(hashed.ids(), self.layers.len(), self.columns);
         self.pending.set(true);
         self.early.set(false);
         self.joined.set(0);
@@ -572,4 +585,96 @@ pub(crate) fn settle_refused(
             .expect("live instance")
             .settle_prefill_engram()
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::layer_ids;
+
+    /// The packing `layer_ids` replaced, which collected each layer's
+    /// bytes one at a time; the reference its bytes are checked against.
+    fn collected(ids: &[u32], layers: usize, columns: usize) -> Vec<Vec<u8>> {
+        let width = columns * layers;
+        (0..layers)
+            .map(|layer| {
+                ids.chunks_exact(width)
+                    .flat_map(|row| &row[layer * columns..(layer + 1) * columns])
+                    .flat_map(|word| word.to_le_bytes())
+                    .collect()
+            })
+            .collect()
+    }
+
+    /// Ids from a small deterministic generator over every U32 value.
+    fn ids(seed: u64, count: usize) -> Vec<u32> {
+        let mut state = seed;
+        (0..count)
+            .map(|_| {
+                state = state
+                    .wrapping_mul(6364136223846793005)
+                    .wrapping_add(1442695040888963407);
+                (state >> 32) as u32
+            })
+            .collect()
+    }
+
+    /// Each layer's ids are its columns of every row in row order, as
+    /// little-endian words: the collected bytes at every row count up to a
+    /// full chunk, for one to three layers of one to 24 columns.
+    #[test]
+    fn layer_ids_are_each_layers_little_endian_words_in_row_order() {
+        let ids_2x2 = [0x0403_0201, 0x0807_0605, 0x0c0b_0a09, 0x100f_0e0d];
+        assert_eq!(
+            layer_ids(&ids_2x2, 2, 1),
+            [
+                vec![1, 2, 3, 4, 9, 10, 11, 12],
+                vec![5, 6, 7, 8, 13, 14, 15, 16]
+            ]
+        );
+        assert_eq!(layer_ids(&ids_2x2, 1, 2), [(1..=16).collect::<Vec<u8>>()]);
+        for (layers, columns) in [(2, 24), (1, 1), (3, 5)] {
+            for rows in [0, 1, 2, 7, 255, 1536, 2900, 8000, 8192] {
+                let ids = ids(rows as u64, rows * layers * columns);
+                let packed = layer_ids(&ids, layers, columns);
+                assert_eq!(packed.len(), layers);
+                assert_eq!(
+                    packed,
+                    collected(&ids, layers, columns),
+                    "{rows} rows of {layers} layers of {columns} columns"
+                );
+            }
+        }
+    }
+
+    /// Times the packing of one prefill's ids for its two Engram layers'
+    /// gathers (24 columns each) at the live, boundary and chunk rows,
+    /// against the collected packing it replaced. Prints one JSON record per
+    /// case, the median and minimum of 41 runs in microseconds.
+    #[test]
+    #[ignore = "times the prefill Engram id packing; run it alone at opt-level 3 with --nocapture"]
+    fn time_the_prefill_engram_id_packing() {
+        for rows in [1536_usize, 2900, 8000, 8192] {
+            let ids = ids(7, rows * 48);
+            for (case, pack) in [
+                (
+                    "collected",
+                    collected as fn(&[u32], usize, usize) -> Vec<Vec<u8>>,
+                ),
+                ("words", layer_ids),
+            ] {
+                let mut micros: Vec<f64> = (0..41)
+                    .map(|_| {
+                        let started = std::time::Instant::now();
+                        std::hint::black_box(pack(std::hint::black_box(&ids), 2, 24));
+                        started.elapsed().as_secs_f64() * 1e6
+                    })
+                    .collect();
+                micros.sort_by(f64::total_cmp);
+                println!(
+                    "{{\"rows\":{rows},\"case\":\"{case}\",\"median_us\":{:.1},\"min_us\":{:.1}}}",
+                    micros[20], micros[0]
+                );
+            }
+        }
+    }
 }

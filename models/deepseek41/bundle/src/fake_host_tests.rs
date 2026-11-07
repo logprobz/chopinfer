@@ -711,7 +711,7 @@ impl FakeHost {
     }
 
     pub(crate) fn new(shape: Shape, kv: KvLayout) -> Rc<Host> {
-        Rc::new(Backend::new(FakeHost {
+        let host = Rc::new(Backend::new(FakeHost {
             device: Self::device(shape, kv),
             logs: RefCell::new(Vec::new()),
             shape,
@@ -732,7 +732,25 @@ impl FakeHost {
             release_order: RefCell::new(Vec::new()),
             references: RefCell::new(Vec::new()),
             races: RefCell::new(Vec::new()),
-        }))
+        }));
+        let weak = Rc::downgrade(&host);
+        bundle_runtime::fake_host::release_at_thread_exit(move || {
+            if let Some(host) = weak.upgrade() {
+                host.release_records();
+            }
+        });
+        host
+    }
+
+    /// Frees what the host recorded for its test, which an instance's
+    /// retained service table would otherwise keep for the test process
+    /// (`bundle_runtime::fake_host::release_at_thread_exit`).
+    fn release_records(&self) {
+        use bundle_runtime::fake_host::free;
+        self.device.release_records();
+        free(&self.logs);
+        free(&self.uploads);
+        free(&self.memory);
     }
 
     /// The live references of a selected context or pool, else none.

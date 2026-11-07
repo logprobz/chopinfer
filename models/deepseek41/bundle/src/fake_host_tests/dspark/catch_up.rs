@@ -57,6 +57,51 @@ fn catch_up_replay_failure_poison_prevents_another_step() {
     assert_eq!(host.released.get(), released);
 }
 
+/// Each instance's service table, and so its host, stays resident for the
+/// test process, destroyed or poisoned; the hosts a test thread created
+/// give back their journals and logs when it ends.
+#[test]
+fn an_ended_test_thread_releases_its_hosts_records() {
+    let (sender, receiver) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        for poisoned in [false, true] {
+            let (host, mut instance) = create(Shape::new(&FLASH, Ranks::TP4).unwrap());
+            execute(
+                &mut instance,
+                &host,
+                &super::super::prompt(7, 0, 0, 3, true),
+            );
+            instance.commit().unwrap();
+            if poisoned {
+                host.device.fail_graph_launch.set(Some(1));
+                assert!(
+                    instance
+                        .execute(&verify(7, 0, 3, 5), &mut Sink::default())
+                        .is_err()
+                );
+                assert!(instance.destroy().is_err());
+                assert!(instance.is_poisoned());
+            } else {
+                instance.retire_request(7).unwrap();
+                instance.destroy().unwrap();
+            }
+            drop(instance);
+            assert_eq!(Rc::strong_count(&host), 2, "the retained table's host");
+            assert!(!host.journal.borrow().is_empty());
+            let sender = sender.clone();
+            // Runs after the host's own release, which it registered first.
+            bundle_runtime::fake_host::release_at_thread_exit(move || {
+                let records = (host.journal.borrow().len(), host.logs.borrow().len());
+                sender.send((poisoned, records)).unwrap();
+            });
+        }
+    })
+    .join()
+    .unwrap();
+    let released: Vec<_> = receiver.try_iter().collect();
+    assert_eq!(released, [(false, (0, 0)), (true, (0, 0))]);
+}
+
 #[test]
 fn catch_up_graphs_reuse_exact_rows_across_slots_and_commits() {
     let (host, mut instance) = create(Shape::new(&FLASH, Ranks::TP4).unwrap());

@@ -75,10 +75,17 @@ impl MediaHost {
             references: RefCell::new(Vec::new()),
             races: RefCell::new(Vec::new()),
         };
-        Rc::new(Backend::new(MediaHost {
+        let host = Rc::new(Backend::new(MediaHost {
             host,
             image: Cell::new(None),
-        }))
+        }));
+        let weak = Rc::downgrade(&host);
+        bundle_runtime::fake_host::release_at_thread_exit(move || {
+            if let Some(host) = weak.upgrade() {
+                host.release_records();
+            }
+        });
+        host
     }
 }
 

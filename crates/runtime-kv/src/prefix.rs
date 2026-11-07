@@ -284,7 +284,7 @@ fn hash_tokens(sha: &mut Sha256, tokens: &[u32]) {
         for (staged, token) in bytes.chunks_exact_mut(size_of::<u32>()).zip(chunk) {
             staged.copy_from_slice(&token.to_le_bytes());
         }
-        sha.update(&bytes[..chunk.len() * size_of::<u32>()]);
+        sha.update(&bytes[..size_of_val(chunk)]);
     }
 }
 

@@ -761,6 +761,21 @@ Step and request logs are not replay inputs; they omit token contents.
   (scheduling, execute, commit, gaps between executor calls, and
   `boundary_us`, an upper bound on device idle time between steps). Phases
   nest, so do not sum them.
+- `host.device_wait_us` is the time the engine thread blocked on the device:
+  stream and event synchronizations, device-to-host readbacks and host
+  sampling's wait for its logits. Readbacks include a bundle's blocking
+  copies (DeepSeek's DSpark boundary readback, GLM's and MiMo's draft token
+  readbacks) and device-result collection. Waiting for upload ring space is
+  `upload_backpressure_us` instead, and a full peer-copy queue's wait is not
+  timed. `boundary_us` runs from the previous step's last device wait ending
+  to this step's first one starting, or to deferred event delivery starting
+  (`CHOPINFER_STEP_OVERLAP=1`), which runs only once device work is queued.
+  It is absent when either step never waited. The device has work queued
+  during each wait, so between the two steps it is idle for at most
+  `boundary_us`; it can also idle between a step's own waits. Hosts built
+  before 2026-11-07 did not count a bundle's blocking copies: their DSpark
+  decode records show `device_wait_us` near 0 and a `boundary_us` close to
+  the whole step.
 - Within `host.commit_us`, `scheduler_commit_us` measures scheduler preflight
   and apply, `model_commit_us` measures model transaction finalization
   (including kept-row conversion), and `publication_us` measures applying

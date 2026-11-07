@@ -437,6 +437,134 @@ fn graph_pressure_keeps_wide_successors_eager_and_reused() {
     }
 }
 
+/// A C16 successor at depth five whose items accept every draft fills its
+/// status to the bound: 96 projected rows in three 32-row launches and 80
+/// draft rows in two eight-item forwards a rank, both planes of each, 1,408
+/// bytes. The next step reuses it and reads that status back ahead of its
+/// own target rows. A nonzero word in it, in the first or a later launch
+/// on rank 0 or a later rank, fails that step before the host reads any of
+/// its results, naming the rank and row: its rows commit nothing and no
+/// successor follows it.
+#[test]
+fn a_full_c16_successor_status_is_checked_in_every_launch_and_rank() {
+    let items = 16;
+    // Each rank's successor status parts, in rows: three projections, then
+    // two forwards, each saving its row and shared planes.
+    let parts = [32_usize, 32, 32, 40, 40];
+    assert_eq!(
+        2 * 4 * parts.iter().sum::<usize>(),
+        crate::dspark::prefetch::status_rows(16) as usize * 8
+    );
+    // Each rank's boundary status: the successor's, then the target rows'.
+    let rank_bytes = |rank: usize| {
+        let indexes = if rank == 0 {
+            FLASH.shape.csa.index_sources.len()
+        } else {
+            0
+        };
+        4 * (2 * (96 + 80) + 16 * 6 * (indexes + 2))
+    };
+    // (rank, part, plane, row) of the nonzero word.
+    for failure in [
+        None,
+        Some((0, 0, 0, 0)),
+        Some((0, 2, 1, 31)),
+        Some((2, 1, 0, 7)),
+        Some((3, 3, 0, 0)),
+        Some((3, 4, 1, 39)),
+    ] {
+        let (host, mut instance) = prompted(items, 96, 16, &[]);
+        let first = cycle(&host, &mut instance, (items, 5, 3), (items * 3, 5), 1).unwrap();
+        let download = position(&first, "download ");
+        assert_eq!(
+            count(&first[download..], "replay "),
+            4 * (3 + 2),
+            "three projections and two forwards a rank"
+        );
+        instance
+            .commit_accepted(
+                &(1..=items)
+                    .map(|id| kept(u64::from(id), 6))
+                    .collect::<Vec<_>>(),
+            )
+            .unwrap();
+        assert_eq!(
+            crate::instance::dspark_successor_for_test(instance.handle()),
+            Some(16)
+        );
+        let mut packet = boundary(items, 5, 96, 0, 2);
+        if let Some((rank, part, plane, row)) = failure {
+            let at = (0..rank).map(rank_bytes).sum::<usize>()
+                + 4 * (2 * parts[..part].iter().sum::<usize>() + plane * parts[part] + row);
+            packet[at] = 1;
+        }
+        host.injected.replace(Some(packet));
+        let logs = host.logs.borrow().len();
+        let begin = host.journal.borrow().len();
+        let mut sink = DeviceSink {
+            host: Rc::clone(&host),
+            metadata: Some(metadata(items, 5, 2)),
+            legacy: Sink::default(),
+            drafts: Vec::new(),
+            samples: Vec::new(),
+            completion: None,
+        };
+        let result = instance.execute(&batch(items, 9, 5), &mut sink);
+        let step = host.journal.borrow()[begin..].to_vec();
+        assert!(
+            host.injected.borrow().is_none(),
+            "{failure:?}: the boundary's length holds the successor's status"
+        );
+        assert_eq!(
+            count(&step[..hash(&host, &step)], "replay "),
+            0,
+            "{failure:?}: the successor is reused"
+        );
+        let Some((rank, _, _, row)) = failure else {
+            result.unwrap();
+            assert!(sink.completion.is_some());
+            finish(&host, instance, items, 1);
+            continue;
+        };
+        assert_eq!(
+            result.err(),
+            Some(BundleAbiError::Status(BundleStatusV1::BundleError)),
+            "{failure:?}"
+        );
+        let message = format!("DSpark quantized input on rank {rank} is invalid in row {row}");
+        assert!(
+            host.logs.borrow()[logs..]
+                .iter()
+                .any(|line| line.contains(&message)),
+            "{failure:?}"
+        );
+        assert_eq!(
+            crate::instance::dspark_successor_for_test(instance.handle()),
+            None,
+            "{failure:?}"
+        );
+        assert!(
+            instance
+                .commit_accepted(
+                    &(1..=items)
+                        .map(|id| kept(u64::from(id), 1))
+                        .collect::<Vec<_>>(),
+                )
+                .is_err(),
+            "{failure:?}"
+        );
+        for request in 1..=u64::from(items) {
+            assert_eq!(
+                crate::instance::dspark_context(instance.handle(), request).map(|c| c.end),
+                Some(9),
+                "{failure:?}"
+            );
+        }
+        instance.destroy().unwrap();
+        assert_eq!(host.acquired.get(), host.released.get(), "{failure:?}");
+    }
+}
+
 /// A queue phase that fails poisons the drafter with no successor: the
 /// first ring backup copy, the first projection launch, the second draft
 /// forward and the join's first event record each fail the step after the

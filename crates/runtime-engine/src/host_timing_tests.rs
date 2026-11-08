@@ -52,6 +52,9 @@ struct SampledExecutor {
     /// Per device wait: clock reads just before its timer starts, just
     /// after, just before it ends and just after.
     wait_windows: Vec<[Instant; 4]>,
+    /// Proposes token 8 last, so each verify item rejects its last draft
+    /// and keeps fewer tokens than it appended.
+    reject_last: bool,
 }
 
 impl ModelExecutor for SampledExecutor {
@@ -80,7 +83,11 @@ impl ModelExecutor for SampledExecutor {
         for item in items.iter().filter(|item| item.expects_logits()) {
             let count = item.draft.map_or(0, |draft| draft.tokens);
             if count > 0 {
-                drafts.push(DraftRow::new(item.request_id(), vec![7; count]));
+                let mut proposed = vec![7; count];
+                if self.reject_last {
+                    proposed[count - 1] = 8;
+                }
+                drafts.push(DraftRow::new(item.request_id(), proposed));
             }
             for _ in 0..=count {
                 sampled.push(SampledRow::new(item.request_id(), 7, -0.125, Vec::new()));
@@ -252,15 +259,26 @@ fn traced_steps_bound_device_idle_between_their_device_waits() {
 #[ignore = "release CPU host timing microbenchmark"]
 fn release_host_phase_costs() {
     assert!(!cfg!(debug_assertions), "run with --release");
-    let shapes = [0, 3, 4, 7].into_iter().flat_map(|drafts| {
+    // Verify items accept every proposal, and then all but the last.
+    let shapes = [
+        (0, false),
+        (3, false),
+        (4, false),
+        (7, false),
+        (3, true),
+        (7, true),
+    ]
+    .into_iter()
+    .flat_map(|(drafts, reject_last)| {
         [1, 8, 16, 32, 64, 128]
             .into_iter()
-            .map(move |concurrency| (concurrency, drafts))
+            .map(move |concurrency| (concurrency, drafts, reject_last))
     });
-    for (concurrency, drafts) in shapes {
+    for (concurrency, drafts, reject_last) in shapes {
         let mut measured = Vec::new();
         for _ in 0..5 {
             let mut engine = engine(concurrency, drafts, true);
+            engine.executor.reject_last = reject_last;
             for iteration in 0..100 {
                 let _totals = profile::TraceTotals::begin();
                 engine.host_clock.step_entered();
@@ -287,6 +305,7 @@ fn release_host_phase_costs() {
             "HOST_COST {}",
             serde_json::json!({
                 "concurrency": concurrency, "maximum_drafts": drafts, "samples": measured.len(),
+                "rejects_last": reject_last,
                 "rows": measured[0].decode_rows + measured[0].verify_rows,
                 "drafting": measured[0].verify_items,
                 "commit_us": quantiles(|r| r.host.commit),

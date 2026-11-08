@@ -740,8 +740,8 @@ at C8 and C16; 40 back-to-back admissions of 512 fresh rows after the
 200,003-token prompt (chunk C1). Execution is the median step's
 `execution_us`; cycle is the wall time with the host work between steps
 (for admission C1, each request's latency). A target needed a resolved
-gain of at least 1.5%, the mean over both pairs of the reduction in its
-median, with its A/A within 1.5%.
+gain of at least 1.5%, the mean over both pairs of the baseline's median
+over the candidate's less one, with its A/A within 1.5%.
 
 U met all six targets: live 1.5K cycle 2.86%, control 1K cycle 2.87%, live
 2.9K execution 2.47%, chunk C1 execution 6.12%, decode C16 cycle 2.42% and

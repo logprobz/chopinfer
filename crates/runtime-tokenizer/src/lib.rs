@@ -3,11 +3,12 @@
 mod json;
 
 use std::cmp::Reverse;
+use std::collections::hash_map::{Entry, RandomState};
 use std::collections::{BTreeMap, BTreeSet, BinaryHeap, HashMap};
 use std::error::Error;
 use std::fmt;
 use std::fs::{self, Metadata, OpenOptions};
-use std::hash::{BuildHasher, Hasher};
+use std::hash::{BuildHasher, Hash, Hasher};
 use std::io::Read;
 #[cfg(unix)]
 use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
@@ -410,19 +411,33 @@ struct Merge {
     result: u32,
 }
 
-/// The hash of the tokenizer's lookup tables: a fixed mix of the key's
-/// words. Its keys all come from the authenticated tokenizer files, so a
-/// request only chooses which entries a lookup reads and cannot crowd one
-/// slot of a table; none of them needs the standard tables' per-process
-/// random hash, which costs several times as much per lookup.
-#[derive(Clone, Copy, Debug, Default)]
-struct TableHash;
+/// The hash of the tokenizer's merge and whole-piece tables: a mix of the
+/// key's words from a start drawn for each tokenizer. Their keys all come
+/// from the authenticated tokenizer files, so a request only chooses which
+/// entries a lookup reads: it cannot add a key, so no lookup probes further
+/// than the table's own keys reach, and the random start keeps it from
+/// knowing which keys share a probe. The standard keyed hash costs several
+/// times as much per lookup. A request chooses the keys of a
+/// [`PieceMemory`], which takes the standard hash.
+#[derive(Clone, Copy, Debug)]
+struct TableHash {
+    start: u64,
+}
+
+impl TableHash {
+    /// A start from the standard library's random hash keys.
+    fn random() -> Self {
+        Self {
+            start: RandomState::new().hash_one(0_u64),
+        }
+    }
+}
 
 impl BuildHasher for TableHash {
     type Hasher = TableHasher;
 
     fn build_hasher(&self) -> TableHasher {
-        TableHasher(0)
+        TableHasher(self.start)
     }
 }
 
@@ -479,8 +494,8 @@ impl Hasher for TableHasher {
 /// adjacent pair merges, so both give the same tokens.
 const SCANNED_PIECE_BYTES: usize = 64;
 
-/// The most pieces a [`PieceMemory`] remembers the tokens of. Tests reach
-/// the bound with a few dozen pieces.
+/// The most pieces a [`PieceMemory`] remembers the tokens of by default.
+/// Tests reach the bound with a few dozen pieces.
 const REMEMBERED_PIECES: usize = if cfg!(test) { 16 } else { 1 << 16 };
 
 /// The tokens of the short pieces the encodes of one prompt's texts met.
@@ -491,10 +506,53 @@ const REMEMBERED_PIECES: usize = if cfg!(test) { 16 } else { 1 << 16 };
 /// pieces by reference and at most `REMEMBERED_PIECES` of them, and their
 /// tokens, which never outnumber the encodes' own output; drop it with the
 /// texts.
-#[derive(Debug, Default)]
+///
+/// The request chooses the pieces, so the memory hashes them with the
+/// standard keyed hash: under a hash a request can predict, pieces chosen
+/// to collide make each lookup compare with every piece before it.
+#[derive(Debug)]
 pub struct PieceMemory<'a> {
-    pieces: HashMap<&'a str, (usize, usize), TableHash>,
+    pieces: HashMap<RememberedPiece<'a>, (usize, usize), RandomState>,
     tokens: Vec<u32>,
+    /// The most pieces it remembers.
+    limit: usize,
+}
+
+impl Default for PieceMemory<'_> {
+    fn default() -> Self {
+        Self {
+            pieces: HashMap::default(),
+            tokens: Vec::new(),
+            limit: REMEMBERED_PIECES,
+        }
+    }
+}
+
+/// A piece a [`PieceMemory`] holds, hashed and compared as its text. Test
+/// builds count the comparisons.
+#[derive(Clone, Copy, Debug)]
+struct RememberedPiece<'a>(&'a str);
+
+impl Hash for RememberedPiece<'_> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.0.hash(state);
+    }
+}
+
+impl PartialEq for RememberedPiece<'_> {
+    fn eq(&self, other: &Self) -> bool {
+        #[cfg(test)]
+        PIECE_COMPARISONS.with(|count| count.set(count.get() + 1));
+        self.0 == other.0
+    }
+}
+
+impl Eq for RememberedPiece<'_> {}
+
+#[cfg(test)]
+thread_local! {
+    /// The comparisons of remembered pieces this thread has made.
+    static PIECE_COMPARISONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// The buffers one encode reuses for every piece it merges by scanning.
@@ -1019,22 +1077,35 @@ impl Tokenizer {
         if piece.len() > SCANNED_PIECE_BYTES {
             return self.encode_piece(piece.as_bytes(), output, scratch);
         }
-        if let Some((start, end)) = memory.pieces.get(piece) {
-            output.extend_from_slice(&memory.tokens[*start..*end]);
-            return Ok(());
+        let PieceMemory {
+            pieces,
+            tokens,
+            limit,
+        } = memory;
+        if pieces.len() >= *limit {
+            if let Some((start, end)) = pieces.get(&RememberedPiece(piece)) {
+                output.extend_from_slice(&tokens[*start..*end]);
+                return Ok(());
+            }
+            return self.encode_piece(piece.as_bytes(), output, scratch);
         }
-        let start = output.len();
-        self.encode_piece(piece.as_bytes(), output, scratch)?;
-        if memory.pieces.len() < REMEMBERED_PIECES {
-            let failed = |_| TokenizerError::new("piece memory allocation failed");
-            memory.pieces.try_reserve(1).map_err(failed)?;
-            memory
-                .tokens
-                .try_reserve(output.len() - start)
-                .map_err(failed)?;
-            let from = memory.tokens.len();
-            memory.tokens.extend_from_slice(&output[start..]);
-            memory.pieces.insert(piece, (from, memory.tokens.len()));
+        // With room reserved for one more piece, the entry hashes the piece
+        // once and allocates nothing.
+        let failed = |_| TokenizerError::new("piece memory allocation failed");
+        pieces.try_reserve(1).map_err(failed)?;
+        match pieces.entry(RememberedPiece(piece)) {
+            Entry::Occupied(entry) => {
+                let (start, end) = *entry.get();
+                output.extend_from_slice(&tokens[start..end]);
+            }
+            Entry::Vacant(entry) => {
+                let start = output.len();
+                self.encode_piece(piece.as_bytes(), output, scratch)?;
+                tokens.try_reserve(output.len() - start).map_err(failed)?;
+                let from = tokens.len();
+                tokens.extend_from_slice(&output[start..]);
+                entry.insert((from, tokens.len()));
+            }
         }
         Ok(())
     }
@@ -1475,7 +1546,7 @@ fn whole_piece_table(
     vocab_by_encoded: &HashMap<String, u32>,
 ) -> Result<HashMap<Box<[u8]>, u32, TableHash>> {
     let reverse = byte_alphabet_decoder();
-    let mut table = HashMap::with_hasher(TableHash);
+    let mut table = HashMap::with_hasher(TableHash::random());
     table
         .try_reserve(vocab_by_encoded.len())
         .map_err(|_| TokenizerError::new("whole-piece table allocation failed"))?;
@@ -1584,7 +1655,7 @@ fn parse_model(value: &Value, contract: &TokenizerContract) -> Result<ParsedMode
     if merge_values.len() != contract.merge_count {
         return Err(TokenizerError::new("BPE merge count does not match policy"));
     }
-    let mut merges = HashMap::with_hasher(TableHash);
+    let mut merges = HashMap::with_hasher(TableHash::random());
     merges
         .try_reserve(merge_values.len())
         .map_err(|_| TokenizerError::new("BPE merge allocation failed"))?;
@@ -2786,6 +2857,84 @@ mod tests {
         }
         assert_eq!(plain.pieces.len(), REMEMBERED_PIECES);
         assert_eq!(special.pieces.len(), REMEMBERED_PIECES);
+    }
+
+    /// Pieces chosen to collide under the table hash from a known start
+    /// cost the piece memory about one comparison each, as other pieces do.
+    /// Under a hash they collide under, each compares with every piece
+    /// before it: these 4,096 pieces take 8.4 million comparisons.
+    #[test]
+    fn pieces_chosen_to_collide_cost_the_piece_memory_no_more() {
+        // From a zero state, a word `w` and then `(w * C).rotate_left(26)`
+        // return the mix to zero, so strings of such blocks hash alike.
+        let close = |word: u64| word.wrapping_mul(0x9e37_79b9_7f4a_7c15).rotate_left(26);
+        let printable = |word: u64| {
+            word.to_le_bytes()
+                .iter()
+                .all(|byte| byte.is_ascii_graphic() && *byte != b',')
+        };
+        let mut state = 0x6a09_e667_f3bc_c908_u64;
+        let mut blocks = Vec::new();
+        while blocks.len() < 16 {
+            state = state
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
+            let word = u64::from_le_bytes(state.to_le_bytes().map(|byte| b'!' + byte % 94));
+            if printable(word) && printable(close(word)) {
+                let mut block = word.to_le_bytes().to_vec();
+                block.extend_from_slice(&close(word).to_le_bytes());
+                blocks.push(String::from_utf8(block).unwrap());
+            }
+        }
+        let pieces: Vec<String> = (0..4096)
+            .map(|index| {
+                [0, index % 16, index / 16 % 16, index / 256]
+                    .map(|block| blocks[block].as_str())
+                    .concat()
+            })
+            .collect();
+        let known = TableHash { start: 0 };
+        let hashes: BTreeSet<u64> = pieces
+            .iter()
+            .map(|piece| known.hash_one(piece.as_str()))
+            .collect();
+        assert_eq!(hashes.len(), 1);
+        assert_eq!(pieces.iter().collect::<BTreeSet<_>>().len(), pieces.len());
+        assert!(
+            pieces
+                .iter()
+                .all(|piece| piece.len() == SCANNED_PIECE_BYTES)
+        );
+
+        let tokenizer = cascading_merges_tokenizer_split_by("[,]");
+        let text = pieces.join(",");
+        let mut memory = PieceMemory {
+            limit: 1 << 16,
+            ..PieceMemory::default()
+        };
+        PIECE_COMPARISONS.with(|count| count.set(0));
+        // The text encodes past the fixture's token limit, which is checked
+        // once every piece has been encoded.
+        let error = tokenizer
+            .encode_plain_remembering(&text, text.len(), &mut memory)
+            .unwrap_err();
+        assert_eq!(error.to_string(), "encoded input exceeds the token limit");
+        assert_eq!(memory.pieces.len(), pieces.len() + 1);
+        // The commas between the pieces each compare once, with the first
+        // comma.
+        let comparisons = PIECE_COMPARISONS.with(std::cell::Cell::get);
+        let encoded = 2 * pieces.len() - 1;
+        assert!(comparisons < 2 * encoded, "{comparisons} comparisons");
+    }
+
+    /// Each tokenizer draws its own start for the table hash, so a request
+    /// cannot know which keys of its tables share a probe.
+    #[test]
+    fn tokenizers_draw_their_own_table_hash_starts() {
+        let first = cascading_merges_tokenizer();
+        let second = cascading_merges_tokenizer();
+        assert_ne!(first.merges.hasher().start, second.merges.hasher().start);
+        assert_ne!(first.merges.hasher().start, 0);
     }
 
     #[test]

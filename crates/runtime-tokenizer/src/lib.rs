@@ -7,6 +7,7 @@ use std::collections::{BTreeMap, BTreeSet, BinaryHeap, HashMap};
 use std::error::Error;
 use std::fmt;
 use std::fs::{self, Metadata, OpenOptions};
+use std::hash::{BuildHasher, Hasher};
 use std::io::Read;
 #[cfg(unix)]
 use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
@@ -403,10 +404,86 @@ impl TokenizerContract {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug)]
 struct Merge {
     rank: u32,
     result: u32,
+}
+
+/// The hash of the tokenizer's lookup tables: a fixed mix of the key's
+/// words. Its keys all come from the authenticated tokenizer files, so a
+/// request only chooses which entries a lookup reads and cannot crowd one
+/// slot of a table; none of them needs the standard tables' per-process
+/// random hash, which costs several times as much per lookup.
+#[derive(Clone, Copy, Debug, Default)]
+struct TableHash;
+
+impl BuildHasher for TableHash {
+    type Hasher = TableHasher;
+
+    fn build_hasher(&self) -> TableHasher {
+        TableHasher(0)
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+struct TableHasher(u64);
+
+impl TableHasher {
+    fn add(&mut self, word: u64) {
+        self.0 = (self.0.rotate_left(26) ^ word).wrapping_mul(0x9e37_79b9_7f4a_7c15);
+    }
+}
+
+impl Hasher for TableHasher {
+    fn write(&mut self, bytes: &[u8]) {
+        let mut words = bytes.chunks_exact(8);
+        for word in &mut words {
+            let mut whole = [0; 8];
+            whole.copy_from_slice(word);
+            self.add(u64::from_le_bytes(whole));
+        }
+        let rest = words.remainder();
+        if !rest.is_empty() {
+            let mut last = [0; 8];
+            last[..rest.len()].copy_from_slice(rest);
+            self.add(u64::from_le_bytes(last));
+        }
+    }
+
+    fn write_u32(&mut self, value: u32) {
+        self.add(u64::from(value));
+    }
+
+    fn write_u64(&mut self, value: u64) {
+        self.add(value);
+    }
+
+    fn write_usize(&mut self, value: usize) {
+        self.add(value as u64);
+    }
+
+    fn finish(&self) -> u64 {
+        // The splitmix64 finalizer, so every bit of the key reaches the
+        // bits that pick a slot and its tag.
+        let mut value = self.0;
+        value = (value ^ (value >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+        value = (value ^ (value >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+        value ^ (value >> 31)
+    }
+}
+
+/// Pieces of at most this many bytes merge by scanning the ranks of their
+/// adjacent pairs; longer ones keep a heap of candidate pairs. Both merge
+/// the lowest-ranked adjacent pair, the leftmost of equal ranks, until no
+/// adjacent pair merges, so both give the same tokens.
+const SCANNED_PIECE_BYTES: usize = 64;
+
+/// The buffers one encode reuses for every piece it merges by scanning.
+#[derive(Default)]
+struct PieceScratch {
+    symbols: Vec<u32>,
+    pairs: Vec<Option<Merge>>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -588,7 +665,7 @@ pub struct Tokenizer {
     patterns: Vec<PretokenizerPattern>,
     byte_alphabet: [char; 256],
     byte_ids: [u32; 256],
-    merges: HashMap<(u32, u32), Merge>,
+    merges: HashMap<(u32, u32), Merge, TableHash>,
     whole_piece_ids: Option<HashMap<String, u32>>,
     decoded: Vec<Vec<u8>>,
     token_strings: Vec<String>,
@@ -665,12 +742,18 @@ impl Tokenizer {
             allowed.insert(*token);
         }
         let mut output = self.token_output(text)?;
+        let mut scratch = PieceScratch::default();
         let bytes = text.as_bytes();
         let mut ordinary_start = 0;
         let mut offset = 0;
         while offset < bytes.len() {
             if let Some((length, id, token)) = self.special_at(bytes, offset) {
-                self.encode_ordinary(&text[ordinary_start..offset], &mut output, max_input_bytes)?;
+                self.encode_ordinary(
+                    &text[ordinary_start..offset],
+                    &mut output,
+                    max_input_bytes,
+                    &mut scratch,
+                )?;
                 if !allowed.contains(token.as_str()) {
                     return Err(TokenizerError {
                         message: format!("disallowed special token '{token}' in input"),
@@ -686,7 +769,12 @@ impl Tokenizer {
                 offset += 1;
             }
         }
-        self.encode_ordinary(&text[ordinary_start..], &mut output, max_input_bytes)?;
+        self.encode_ordinary(
+            &text[ordinary_start..],
+            &mut output,
+            max_input_bytes,
+            &mut scratch,
+        )?;
         self.within_token_limit(output)
     }
 
@@ -703,7 +791,12 @@ impl Tokenizer {
     ) -> Result<Vec<u32>> {
         check_input_limit(text, max_input_bytes)?;
         let mut output = self.token_output(text)?;
-        self.encode_ordinary(text, &mut output, max_input_bytes)?;
+        self.encode_ordinary(
+            text,
+            &mut output,
+            max_input_bytes,
+            &mut PieceScratch::default(),
+        )?;
         self.within_token_limit(output)
     }
 
@@ -813,6 +906,7 @@ impl Tokenizer {
         text: &str,
         output: &mut Vec<u32>,
         max_input_bytes: usize,
+        scratch: &mut PieceScratch,
     ) -> Result<()> {
         if text.is_empty() {
             return Ok(());
@@ -842,12 +936,17 @@ impl Tokenizer {
             pieces = split;
         }
         for piece in pieces {
-            self.encode_piece(piece.as_bytes(), output)?;
+            self.encode_piece(piece.as_bytes(), output, scratch)?;
         }
         Ok(())
     }
 
-    fn encode_piece(&self, bytes: &[u8], output: &mut Vec<u32>) -> Result<()> {
+    fn encode_piece(
+        &self,
+        bytes: &[u8],
+        output: &mut Vec<u32>,
+        scratch: &mut PieceScratch,
+    ) -> Result<()> {
         if bytes.is_empty() {
             return Ok(());
         }
@@ -870,6 +969,16 @@ impl Tokenizer {
                 return Ok(());
             }
         }
+        if bytes.len() <= SCANNED_PIECE_BYTES {
+            self.merge_scanned(bytes, output, scratch);
+            return Ok(());
+        }
+        self.merge_with_heap(bytes, output)
+    }
+
+    /// Merges a piece with a heap of its candidate pairs, each keyed by its
+    /// rank and its left symbol's place ([`SCANNED_PIECE_BYTES`]).
+    fn merge_with_heap(&self, bytes: &[u8], output: &mut Vec<u32>) -> Result<()> {
         let count = bytes.len();
         let mut ids = Vec::new();
         ids.try_reserve_exact(count)
@@ -928,6 +1037,38 @@ impl Tokenizer {
             current = next[index];
         }
         Ok(())
+    }
+
+    /// Merges a short piece by scanning its adjacent pairs' ranks
+    /// ([`SCANNED_PIECE_BYTES`]).
+    fn merge_scanned(&self, bytes: &[u8], output: &mut Vec<u32>, scratch: &mut PieceScratch) {
+        let PieceScratch { symbols, pairs } = scratch;
+        symbols.clear();
+        symbols.extend(bytes.iter().map(|byte| self.byte_ids[usize::from(*byte)]));
+        pairs.clear();
+        pairs.extend(symbols.windows(2).map(|pair| self.merge(pair[0], pair[1])));
+        // `min_by_key` keeps the first of equal ranks, the leftmost pair.
+        while let Some((index, merge)) = pairs
+            .iter()
+            .enumerate()
+            .filter_map(|(index, merge)| merge.map(|merge| (index, merge)))
+            .min_by_key(|(_, merge)| merge.rank)
+        {
+            symbols[index] = merge.result;
+            symbols.remove(index + 1);
+            pairs.remove(index);
+            if index > 0 {
+                pairs[index - 1] = self.merge(symbols[index - 1], symbols[index]);
+            }
+            if index < pairs.len() {
+                pairs[index] = self.merge(symbols[index], symbols[index + 1]);
+            }
+        }
+        output.extend_from_slice(symbols);
+    }
+
+    fn merge(&self, left: u32, right: u32) -> Option<Merge> {
+        self.merges.get(&(left, right)).copied()
     }
 
     fn push_pair(
@@ -1233,7 +1374,7 @@ fn parse_definition(bytes: &[u8], contract: &TokenizerContract) -> Result<Tokeni
 struct ParsedModel {
     byte_alphabet: [char; 256],
     byte_ids: [u32; 256],
-    merges: HashMap<(u32, u32), Merge>,
+    merges: HashMap<(u32, u32), Merge, TableHash>,
     decoded: Vec<Vec<u8>>,
     vocab_by_encoded: HashMap<String, u32>,
     added_by_text: BTreeMap<String, u32>,
@@ -1327,7 +1468,7 @@ fn parse_model(value: &Value, contract: &TokenizerContract) -> Result<ParsedMode
     if merge_values.len() != contract.merge_count {
         return Err(TokenizerError::new("BPE merge count does not match policy"));
     }
-    let mut merges = HashMap::new();
+    let mut merges = HashMap::with_hasher(TableHash);
     merges
         .try_reserve(merge_values.len())
         .map_err(|_| TokenizerError::new("BPE merge allocation failed"))?;
@@ -2399,6 +2540,47 @@ mod tests {
         let tokenizer = merged_tokenizer();
         assert_eq!(tokenizer.encode("def", &[]).unwrap(), [263]);
         assert_eq!(tokenizer.decode_utf8(&[263]).unwrap(), "def");
+    }
+
+    /// The scanning merge of a short piece and the heap merge of a long one
+    /// give the same tokens ([`SCANNED_PIECE_BYTES`]): every string of up to
+    /// eight letters of three, whose merges cascade and tie, and random
+    /// longer ones broken by a letter that merges with nothing.
+    #[test]
+    fn scanned_and_heap_merges_give_the_same_tokens() {
+        let tokenizer = cascading_merges_tokenizer();
+        let mut scratch = PieceScratch::default();
+        let mut merged = 0;
+        let mut check = |bytes: &[u8]| {
+            let (mut scanned, mut heap) = (Vec::new(), Vec::new());
+            tokenizer.merge_scanned(bytes, &mut scanned, &mut scratch);
+            tokenizer.merge_with_heap(bytes, &mut heap).unwrap();
+            assert_eq!(scanned, heap, "{}", String::from_utf8_lossy(bytes));
+            merged += bytes.len() - heap.len();
+        };
+        for length in 1..=8 {
+            for index in 0..3_usize.pow(length) {
+                let piece: Vec<u8> = (0..length)
+                    .map(|place| b"abc"[index / 3_usize.pow(place) % 3])
+                    .collect();
+                check(&piece);
+            }
+        }
+        let mut state = 0x2545_f491_4f6c_dd1d_u64;
+        for _ in 0..3000 {
+            state = state
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
+            let length = 9 + (state >> 33) as usize % 300;
+            let piece: Vec<u8> = (0..length)
+                .map(|place| {
+                    let mixed = state.rotate_left(place as u32 % 64) ^ (place as u64 * 0x9e37);
+                    b"abcabcabcx"[(mixed >> 7) as usize % 10]
+                })
+                .collect();
+            check(&piece);
+        }
+        assert!(merged > 100_000, "{merged}");
     }
 
     #[test]
@@ -3486,6 +3668,68 @@ mod tests {
             legacy: None,
             empty_sentencepiece_kwargs: false,
         }
+    }
+
+    /// Every string of two to five of the letters `abc` is a token, made by
+    /// a merge at a place and of a rank that follow a fixed shuffle, so
+    /// merges cascade, compete and tie.
+    fn cascading_merges_tokenizer() -> Tokenizer {
+        let mut strings = Vec::new();
+        for length in 2..=5_u32 {
+            for index in 0..3_usize.pow(length) {
+                strings.push(
+                    (0..length)
+                        .map(|place| ['a', 'b', 'c'][index / 3_usize.pow(place) % 3])
+                        .collect::<String>(),
+                );
+            }
+        }
+        let mut state = 0x9e37_79b9_u64;
+        let mut next = || {
+            state = state
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
+            (state >> 33) as usize
+        };
+        for index in (1..strings.len()).rev() {
+            strings.swap(index, next() % (index + 1));
+        }
+        let merges: Vec<String> = strings
+            .iter()
+            .map(|text| {
+                let cut = 1 + next() % (text.len() - 1);
+                format!(
+                    "[{},{}]",
+                    json_string(&text[..cut]),
+                    json_string(&text[cut..])
+                )
+            })
+            .collect();
+        let vocab: Vec<String> = strings
+            .iter()
+            .enumerate()
+            .map(|(offset, text)| format!("{}:{}", json_string(text), 259 + offset))
+            .collect();
+        let definition = replace_once(
+            &fixture_definition(),
+            "},\"merges\":[]",
+            &format!(",{}}},\"merges\":[{}]", vocab.join(","), merges.join(",")),
+        );
+        let configuration = fixture_configuration();
+        let mut dialect = literal_prefix_policy(259, 3);
+        dialect.base_tokens = BaseTokenRepresentation::ByteLevel;
+        dialect.merge_results = MergeResultIdPolicy::Vocabulary;
+        dialect.merge_records = MergeRecordPolicy::StringPairArray;
+        let size = 259 + strings.len() as u32;
+        let contract = fixture_contract_counts_with_dialect(
+            &definition,
+            &configuration,
+            size,
+            size,
+            strings.len(),
+            &dialect,
+        );
+        Tokenizer::from_verified_bytes(&definition, &configuration, &contract).unwrap()
     }
 
     fn merged_tokenizer() -> Tokenizer {

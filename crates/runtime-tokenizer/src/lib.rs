@@ -663,10 +663,13 @@ fn whitespace_tail_rewrite(pattern: &str) -> Option<String> {
 pub struct Tokenizer {
     contract: TokenizerContract,
     patterns: Vec<PretokenizerPattern>,
-    byte_alphabet: [char; 256],
     byte_ids: [u32; 256],
     merges: HashMap<(u32, u32), Merge, TableHash>,
-    whole_piece_ids: Option<HashMap<String, u32>>,
+    /// Each base token by the bytes its byte-alphabet spelling decodes to,
+    /// for a tokenizer that takes a piece the vocabulary holds whole. The
+    /// alphabet is a bijection, so a piece's bytes find the token its
+    /// spelling names.
+    whole_piece_ids: Option<HashMap<Box<[u8]>, u32, TableHash>>,
     decoded: Vec<Vec<u8>>,
     token_strings: Vec<String>,
     added_by_text: BTreeMap<String, u32>,
@@ -950,24 +953,13 @@ impl Tokenizer {
         if bytes.is_empty() {
             return Ok(());
         }
-        if let Some(whole_piece_ids) = &self.whole_piece_ids {
-            let capacity = bytes
-                .len()
-                .checked_mul(2)
-                .ok_or_else(|| TokenizerError::new("whole-piece token size overflow"))?;
-            let mut encoded = String::new();
-            encoded
-                .try_reserve_exact(capacity)
-                .map_err(|_| TokenizerError::new("whole-piece token allocation failed"))?;
-            encoded.extend(
-                bytes
-                    .iter()
-                    .map(|byte| self.byte_alphabet[usize::from(*byte)]),
-            );
-            if let Some(id) = whole_piece_ids.get(&encoded) {
-                output.push(*id);
-                return Ok(());
-            }
+        if let Some(id) = self
+            .whole_piece_ids
+            .as_ref()
+            .and_then(|whole_piece_ids| whole_piece_ids.get(bytes))
+        {
+            output.push(*id);
+            return Ok(());
         }
         if bytes.len() <= SCANNED_PIECE_BYTES {
             self.merge_scanned(bytes, output, scratch);
@@ -1351,15 +1343,17 @@ fn parse_definition(bytes: &[u8], contract: &TokenizerContract) -> Result<Tokeni
     {
         token_strings[*id as usize] = text.clone();
     }
-    let whole_piece_ids = matches!(
+    let whole_piece_ids = if matches!(
         contract.dialect.ignore_merges,
         IgnoreMergesPolicy::WholePiece
-    )
-    .then(|| std::mem::take(&mut parsed.vocab_by_encoded));
+    ) {
+        Some(whole_piece_table(&parsed.vocab_by_encoded)?)
+    } else {
+        None
+    };
     Ok(Tokenizer {
         contract: contract.clone(),
         patterns,
-        byte_alphabet: parsed.byte_alphabet,
         byte_ids: parsed.byte_ids,
         merges: parsed.merges,
         whole_piece_ids,
@@ -1371,8 +1365,27 @@ fn parse_definition(bytes: &[u8], contract: &TokenizerContract) -> Result<Tokeni
     })
 }
 
+/// [`Tokenizer::whole_piece_ids`] from the vocabulary by spelling. Whole
+/// pieces are taken only over byte-level base tokens, so every spelling
+/// decodes.
+fn whole_piece_table(
+    vocab_by_encoded: &HashMap<String, u32>,
+) -> Result<HashMap<Box<[u8]>, u32, TableHash>> {
+    let reverse = byte_alphabet_decoder();
+    let mut table = HashMap::with_hasher(TableHash);
+    table
+        .try_reserve(vocab_by_encoded.len())
+        .map_err(|_| TokenizerError::new("whole-piece table allocation failed"))?;
+    for (text, id) in vocab_by_encoded {
+        table.insert(
+            decode_byte_alphabet(text, &reverse)?.into_boxed_slice(),
+            *id,
+        );
+    }
+    Ok(table)
+}
+
 struct ParsedModel {
-    byte_alphabet: [char; 256],
     byte_ids: [u32; 256],
     merges: HashMap<(u32, u32), Merge, TableHash>,
     decoded: Vec<Vec<u8>>,
@@ -1518,7 +1531,6 @@ fn parse_model(value: &Value, contract: &TokenizerContract) -> Result<ParsedMode
         }
     }
     Ok(ParsedModel {
-        byte_alphabet,
         byte_ids,
         merges,
         decoded,
@@ -2787,6 +2799,41 @@ mod tests {
         assert_eq!(tokenizer.decode_utf8(&[259]).unwrap(), "雪");
         assert_eq!(tokenizer.encode("abx", &[]).unwrap(), [260, 123]);
         assert_eq!(tokenizer.decode_utf8(&[260, 123]).unwrap(), "abx");
+    }
+
+    /// A tokenizer that takes whole pieces finds one by the bytes its
+    /// byte-alphabet spelling decodes to, and merges any other piece.
+    #[test]
+    fn whole_pieces_are_found_by_the_bytes_their_spellings_decode_to() {
+        let definition = replace_once(
+            &fixture_definition(),
+            "},\"merges\":[]",
+            ",\"\u{100}\u{100}\":259,\"<x>\":260,\"ab\":261},\"ignore_merges\":true,\"merges\":[]",
+        );
+        let configuration = fixture_configuration();
+        let mut dialect = literal_prefix_policy(262, 3);
+        dialect.base_tokens = BaseTokenRepresentation::ByteLevel;
+        dialect.merge_results = MergeResultIdPolicy::Vocabulary;
+        dialect.ignore_merges = IgnoreMergesPolicy::WholePiece;
+        let contract = fixture_contract_counts_with_dialect(
+            &definition,
+            &configuration,
+            262,
+            262,
+            0,
+            &dialect,
+        );
+        let tokenizer =
+            Tokenizer::from_verified_bytes(&definition, &configuration, &contract).unwrap();
+        let byte = |value: u8| 3 + u32::from(value);
+        assert_eq!(tokenizer.encode("\0\0", &[]).unwrap(), [259]);
+        assert_eq!(tokenizer.encode("<x>", &[]).unwrap(), [260]);
+        assert_eq!(tokenizer.encode("ab", &[]).unwrap(), [261]);
+        assert_eq!(
+            tokenizer.encode("abx", &[]).unwrap(),
+            [byte(b'a'), byte(b'b'), byte(b'x')]
+        );
+        assert_eq!(tokenizer.encode("\0", &[]).unwrap(), [byte(0)]);
     }
 
     #[test]

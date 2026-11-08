@@ -719,3 +719,49 @@ a kept prefill plan template: about 3.75 MiB smaller inside the compact
 ranges, 0.45 MiB smaller with the fused norm and 0.76 MiB larger with the
 producer intervals, so a full cache of 64 templates holds at most about
 20 MiB more than before, below the compact ranges.
+
+On 2026-11-08 a pre-registered block on `tp4-dspark` adopted a combined
+candidate, U, against N, with every one of its switches off. U is the
+large mapped Engram gathers through reader file descriptions and direct
+workers, DSpark successors of up to 16 items, the prefix snapshot copy
+kernel and the DSpark main projection's compact pair at 65 to 128 rows,
+each described above, with the `dspark_successor_prefill` candidate off.
+One lease ran five fresh-server visits, N, U, N, U, N, on an idle host
+with every GPU at its 300 W limit and the Engram tables warmed to a 98%
+residency gate before each visit; the second N visit repeated the first's
+seeds as the A/A, and each pair of an N and a U visit shared its seeds.
+The cells: 20 or 40 mixed steps beside C8 after a 93,056-token prefix at
+1,536 to 1,575 rows (live 1.5K), 2,880 to 2,899 rows (live 2.9K) and
+1,024 to 1,063 rows (control 1K), and beside C16 after a 98,304-token
+prefix at 1,700 to 1,739 and 8,000 to 8,019 rows; 150 decode steps each
+at C8 and C16; 40 back-to-back admissions of 512 fresh rows after the
+93,056-token prefix with no decoders (admission C1); cold prefills of
+192, 256 and 1,024 rows; and the twenty 8192-row chunks of a cold
+200,003-token prompt (chunk C1). Execution is the median step's
+`execution_us`; cycle is the wall time with the host work between steps
+(for admission C1, each request's latency). A target needed a resolved
+gain of at least 1.5%, the mean over both pairs of the reduction in its
+median, with its A/A within 1.5%.
+
+U met all six targets: live 1.5K cycle 2.86%, control 1K cycle 2.87%, live
+2.9K execution 2.47%, chunk C1 execution 6.12%, decode C16 cycle 2.42% and
+admission C1 cycle 6.39%. The A/A stayed within 0.42% at every target, no
+cell regressed in either metric, and host memory growth and each GPU's
+memory stayed within the 256 MiB budget at every mixed and decode cell.
+Every visit returned the same outputs bit for bit, and the exactness run
+before the block matched U against N bit for bit on the live cohorts, on
+cold and restored prefills of 512 to 93,568 tokens and on the main
+projection's 64 requests. This block was the third attempt. The first was
+invalid: before most of its visits the warm left an Engram table below the
+98% residency gate, so the block was incomplete. Its rerun met five
+targets but left admission C1 unresolved (a 4.37% mean gain, 1.55% in the
+first pair and 7.19% in the second), so one follow-up block of the same
+design, judged alone, decided.
+
+The same day a stateful replay accepted U: 16 sessions of 12 turns
+beside 100,000-token contexts at concurrency 8 and 16, in two pairs of
+fresh-server visits after an untimed warm-up, on an idle host at 300 W.
+It resolved gains in stalls per 1,000 decode event gaps (0.80 fewer at
+C8 and 0.76 at C16), in stall time per 1,000 gaps (389 and 319 ms less)
+and in the C16 event-gap p50 (0.42%), with no resolved regression and no
+energy veto; TTFT p50 stayed unresolved.

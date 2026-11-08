@@ -1,5 +1,5 @@
-//! The shared snapshot copy kernel (`prefix_snapshot_copy_kernel`) against
-//! the device copies it replaces, over DeepSeek V4.1 Flash's prefix
+//! The shared snapshot copy kernel the bundle's prefix snapshots launch
+//! against the device copies it replaced, over DeepSeek V4.1 Flash's prefix
 //! snapshot tables. Both arms plan from the bundle's table
 //! (`bundle_runtime::snapshot`): the copies arm issues `Table::actions`'
 //! copies as the served host does, one `cuMemcpyDtoDAsync` each, and the

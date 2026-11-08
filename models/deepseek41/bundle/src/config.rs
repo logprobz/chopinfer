@@ -339,43 +339,9 @@ pub(crate) mod tests {
             Some(items),
         );
         bytes.extend_from_slice(&shape.geometry.context_tokens().to_le_bytes());
-        let mut options = serde_json::json!({"text_config.index_topk": shape.runtime.index_topk, "text_config.candidate_topk_blocks": shape.runtime.candidate_topk_blocks, "text_config.indexer_mma": shape.runtime.indexer_mma, "text_config.indexer_prefill_tile": shape.runtime.indexer_prefill_tile});
-        RECORD_OPTIONS.with(|extra| {
-            for (name, value) in extra.borrow().iter() {
-                options[*name] = value.clone();
-            }
-        });
+        let options = serde_json::json!({"text_config.index_topk": shape.runtime.index_topk, "text_config.candidate_topk_blocks": shape.runtime.candidate_topk_blocks, "text_config.indexer_mma": shape.runtime.indexer_mma, "text_config.indexer_prefill_tile": shape.runtime.indexer_prefill_tile});
         append_options(&mut bytes, &options);
         bytes
-    }
-
-    thread_local! {
-        /// Model options every record this thread builds carries beside
-        /// its geometry's, while [`with_record_options`] runs.
-        static RECORD_OPTIONS: std::cell::RefCell<Vec<(&'static str, serde_json::Value)>> =
-            const { std::cell::RefCell::new(Vec::new()) };
-    }
-
-    /// Runs `body` with every record this thread builds carrying
-    /// `options`: a test reruns another with a candidate on.
-    pub(crate) fn with_record_options<T>(
-        options: &[(&'static str, serde_json::Value)],
-        body: impl FnOnce() -> T,
-    ) -> T {
-        struct Restore(Vec<(&'static str, serde_json::Value)>);
-        impl Drop for Restore {
-            fn drop(&mut self) {
-                RECORD_OPTIONS.with(|extra| *extra.borrow_mut() = std::mem::take(&mut self.0));
-            }
-        }
-        let _restore = Restore(RECORD_OPTIONS.with(|extra| extra.replace(options.to_vec())));
-        body()
-    }
-
-    /// The model options [`with_record_options`] adds to this thread's
-    /// records: a helper that writes a record's options itself adds them.
-    pub(crate) fn record_options() -> Vec<(&'static str, serde_json::Value)> {
-        RECORD_OPTIONS.with(|extra| extra.borrow().clone())
     }
 
     /// `record` with its model options replaced by `options`.
@@ -457,7 +423,6 @@ pub(crate) mod tests {
             (DSPARK_CONFIDENCE_STAGED, true.into()),
             (DSPARK_HC_FUSION, true.into()),
             (DSPARK_MARKOV_STAGED, true.into()),
-            (PREFIX_SNAPSHOT_COPY_KERNEL, false.into()),
             (DSPARK_MAIN_SHORT_ROWS, true.into()),
         ] {
             changed = with_option(changed, name, value);
@@ -478,7 +443,6 @@ pub(crate) mod tests {
                 dspark_confidence_staged: true,
                 dspark_hc_fusion: true,
                 dspark_markov_staged: true,
-                prefix_snapshot_copy_kernel: false,
                 dspark_main_short_rows: true,
             }
         );

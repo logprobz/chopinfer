@@ -19,7 +19,6 @@ mod allocated;
 mod anchored;
 mod drafter;
 mod dspark_main_short;
-mod snapshot_copy;
 mod templated;
 mod wide;
 

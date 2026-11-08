@@ -172,9 +172,8 @@ pub struct Instance {
     /// The Engram rows of a geometry with Engram layers.
     engram: Option<engram::Engram>,
     dspark: Option<crate::dspark::device::Device>,
-    /// The shared snapshot copy kernel prefix captures and restores launch,
-    /// under the `prefix_snapshot_copy_kernel` candidate.
-    snapshot_kernel: Option<prefix::SnapshotKernel>,
+    /// The shared snapshot copy kernel prefix captures and restores launch.
+    snapshot_kernel: prefix::SnapshotKernel,
     /// The compiled image, whose mapped views the host gathers rows of.
     image: Option<BundleCompiledImageHandleV1>,
     /// The kernels the encoder is created on, held from create to acquire
@@ -633,13 +632,12 @@ impl Instance {
             }
             memory.take("anchor_spares");
         }
-        if let Some(kernel) = &mut self.snapshot_kernel {
-            for &(_, pool, stream) in &ranks {
-                let table = allocate_span(services, pool, stream, kernel.table_bytes(), held)?;
-                kernel.tables.push(table);
-            }
-            memory.take("snapshot_tables");
+        let kernel = &mut self.snapshot_kernel;
+        for &(_, pool, stream) in &ranks {
+            let table = allocate_span(services, pool, stream, kernel.table_bytes(), held)?;
+            kernel.tables.push(table);
         }
+        memory.take("snapshot_tables");
         let mut shared = self.ops.shared_bytes();
         if let Some(drafter) = &self.dspark {
             for (entry, bytes) in drafter.shared_bytes() {
@@ -655,8 +653,6 @@ impl Instance {
                 .filter(|cubin| {
                     crate::serves(cubin.name, &shape)
                         || self.dspark.is_some() && crate::Kernels::allocation_cubin(cubin.name)
-                        || self.snapshot_kernel.is_some()
-                            && cubin.name == crate::sm120::snapshot_copy::CUBIN
                 })
                 .filter(|cubin| crate::Kernels::loads_indexer(cubin.name, self.config.kv.storage))
                 .filter(|cubin| {
@@ -1071,22 +1067,13 @@ fn create(services: HostServicesV1, bytes: &[u8]) -> Result<Instance, Failed<Ins
         bucket: items.capacity(),
         verify_rows,
     };
-    // The snapshot copy kernel serves every slot's and anchor's snapshot
-    // or none; without it the snapshots keep their device copies.
-    let snapshot_kernel = if config.execution.prefix_snapshot_copy_kernel {
-        match prefix::SnapshotKernel::prepare(kernels.backend.as_ref(), &state, extent) {
-            Ok(kernel) => Some(kernel),
-            Err(reason) => {
-                let _ = services.log(
-                    format!("{NAME}: prefix snapshots keep their device copies: {reason}")
-                        .as_bytes(),
-                );
-                None
-            }
-        }
-    } else {
-        None
-    };
+    // The snapshot copy kernel serves every slot's and anchor's snapshot;
+    // an instance it cannot serve is refused.
+    let snapshot_kernel = prefix::SnapshotKernel::prepare(kernels.backend.as_ref(), &state, extent)
+        .map_err(|reason| {
+            log(&format!("prefix snapshot copy kernel: {reason}"));
+            BundleStatusV1::Unsupported
+        })?;
     let plans = execute::plan_cache::Cache::new(&config.execution);
     let partial = partial();
     if !partial && let Some(missing) = ops.missing.first() {

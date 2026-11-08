@@ -787,11 +787,6 @@ impl FakeHost {
     }
 }
 
-thread_local! {
-    /// The snapshot copy kernel launches this thread's fake hosts ran.
-    pub(crate) static SNAPSHOT_COPY_LAUNCHES: Cell<usize> = const { Cell::new(0) };
-}
-
 impl FakeHost {
     /// Runs a snapshot copy kernel launch on the device memory as the
     /// device copies its arguments and uploaded table name
@@ -818,7 +813,6 @@ impl FakeHost {
             ));
             memory.copy(source, destination);
         }
-        SNAPSHOT_COPY_LAUNCHES.with(|launches| launches.set(launches.get() + 1));
     }
 }
 
@@ -1622,11 +1616,7 @@ fn every_geometry_topology_runs_the_fake_host_journal_and_lifecycle() {
                     *cubin, "sinkhorn_hc_deepseek41_completion_sm120",
                     "{topology}"
                 );
-                // The snapshot copy module loads apart, under its option.
-                assert!(
-                    crate::serves(cubin, &shape) || *cubin == crate::sm120::snapshot_copy::CUBIN,
-                    "{topology}: {cubin}"
-                );
+                assert!(crate::serves(cubin, &shape), "{topology}: {cubin}");
             }
             let lines = host.device.journal.borrow().clone();
             assert_launches_fit_configured_shared(&lines, &topology);

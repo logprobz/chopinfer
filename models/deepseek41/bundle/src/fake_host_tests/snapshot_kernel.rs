@@ -1,48 +1,12 @@
-//! Prefix snapshots under the `prefix_snapshot_copy_kernel` candidate, on
-//! by default: each rank moves its snapshot's pieces with one table upload
-//! and one launch of the shared snapshot copy kernel, which the fake host
-//! runs as the device copies its arguments and uploaded table name
-//! (`FakeHost::run_snapshot_copy`). The pages and restored slots must hold
-//! what the device copies leave there, byte origin for byte origin, and the
-//! lifecycle keeps its rules: every rank that received work drains, an
-//! unconfirmed drain is INTERNAL_ERROR, which poisons, a refused plan
-//! submits nothing, and a failed or refused restore leaves the slot free.
-//! The prefix tests of this file's parent rerun here with the option off
-//! ([`with_copies`]).
+//! Prefix snapshots through the shared snapshot copy kernel: each rank
+//! moves its snapshot's pieces with one table upload and one launch, which
+//! the fake host runs as the device copies its arguments and uploaded table
+//! name (`FakeHost::run_snapshot_copy`). The lifecycle keeps its rules:
+//! every rank that received work drains, an unconfirmed drain is
+//! INTERNAL_ERROR, which poisons, a refused plan submits nothing, and a
+//! failed or refused restore leaves the slot free.
 
 use super::*;
-use model_deepseek41_contract::execution_options::PREFIX_SNAPSHOT_COPY_KERNEL;
-
-/// Runs `body` with the candidate off in every instance it creates, and
-/// fails if any snapshot went through the kernel.
-pub(crate) fn with_copies<T>(body: impl FnOnce() -> T) -> T {
-    let before = SNAPSHOT_COPY_LAUNCHES.with(Cell::get);
-    let result = crate::config::tests::with_record_options(
-        &[(PREFIX_SNAPSHOT_COPY_KERNEL, false.into())],
-        body,
-    );
-    assert_eq!(
-        SNAPSHOT_COPY_LAUNCHES.with(Cell::get),
-        before,
-        "a snapshot went through the snapshot copy kernel"
-    );
-    result
-}
-
-#[test]
-fn prefix_snapshots_round_trip_through_the_pages_with_device_copies() {
-    with_copies(super::prefix_snapshots_round_trip_through_the_pages);
-}
-
-#[test]
-fn a_state_slot_takes_a_new_request_once_its_holder_retires_with_device_copies() {
-    with_copies(super::a_state_slot_takes_a_new_request_once_its_holder_retires);
-}
-
-#[test]
-fn the_lifecycle_verifies_cancels_preempts_and_recycles_slots_with_device_copies() {
-    with_copies(super::the_lifecycle_verifies_cancels_preempts_and_recycles_slots);
-}
 
 /// The rank of the stream a journal line names (its second word).
 fn rank_of(host: &FakeHost, line: &str) -> Option<u32> {
@@ -62,11 +26,10 @@ fn journal_ranks(host: &FakeHost, from: usize, kind: &str, text: &str) -> Vec<u3
 
 /// An instance of `ranks` and `kv` with request 7's 141-token prompt
 /// committed in slot 0, and the pages its snapshot takes.
-fn prefilled(ranks: Ranks, kv: KvLayout, kernel: bool) -> (Rc<Host>, BundleInstanceV1, Vec<u64>) {
+fn prefilled(ranks: Ranks, kv: KvLayout) -> (Rc<Host>, BundleInstanceV1, Vec<u64>) {
     let shape = Shape::new(&FLASH, ranks).unwrap();
     let host = FakeHost::new(shape, kv);
-    let options = [(PREFIX_SNAPSHOT_COPY_KERNEL, kernel.into())];
-    let mut instance = create_with_options(&host, 4, &options);
+    let mut instance = create(&host, 4);
     instance
         .execute(&prompt(7, 0, 0, 141, true), &mut Views::default())
         .unwrap();
@@ -76,74 +39,41 @@ fn prefilled(ranks: Ranks, kv: KvLayout, kernel: bool) -> (Rc<Host>, BundleInsta
     (host, instance, pages)
 }
 
-/// The origins of every byte of the snapshot's pages and of the state view
-/// on each rank.
-fn origins(host: &FakeHost, pages: &[u64]) -> Vec<Vec<(u64, Origin)>> {
-    let memory = host.memory.borrow();
-    let page_bytes = host.page_bytes();
-    let mut origins = Vec::new();
-    for rank in 0..host.shape.ranks() {
-        let pool = BundleDeviceBufferHandleV1::from_parts(1, KV_SLOT + rank);
-        for &page in pages {
-            origins.push(memory.read(DeviceBufferSpanV1::new(pool, page * page_bytes, page_bytes)));
-        }
-        let state = BundleDeviceBufferHandleV1::from_parts(1, STATE_SLOT + rank);
-        origins.push(memory.read(DeviceBufferSpanV1::new(state, 0, host.state_bytes.get())));
-    }
-    origins
-}
-
-/// A capture and a restore through the kernel leave every page of the
-/// snapshot and every byte of the state view with the origins the device
-/// copies give them, at TP2 and TP4 in both KV layouts; each rank issues
-/// one table upload and one launch per snapshot and no device copy, and
-/// its launches make the device copies, in their order.
+/// A capture and a restore through the kernel at TP2 and TP4 in both KV
+/// layouts: each rank issues one launch per snapshot and no device copy,
+/// and every captured piece of the restored slot holds the bytes of the
+/// captured slot's (`assert_state_moved`).
 #[test]
-fn the_kernel_leaves_the_pages_and_slots_the_device_copies_leave() {
+fn each_rank_moves_a_snapshot_in_one_launch() {
     for (ranks, kv) in PREFIX_RANKS
         .into_iter()
         .flat_map(|ranks| KV_LAYOUTS.map(|kv| (ranks, kv)))
     {
-        let mut after = Vec::new();
-        let mut moved = Vec::new();
-        for kernel in [false, true] {
-            let (host, mut instance, pages) = prefilled(ranks, kv, kernel);
-            let start = host.device.journal.borrow().len();
-            instance.capture_prefix_state(7, 141, &pages).unwrap();
-            let captured = origins(&host, &pages);
-            let launches = ranks_of_launches(&host, start);
-            instance.retire_request(7).unwrap();
-            let ids = (0..141).collect::<Vec<u32>>();
-            instance
-                .restore_prefix_state_in_slot(9, &ids, &pages, 2)
-                .unwrap();
-            assert_state_moved(&host, 4, 0, 0, 2);
-            let copies = journal_ranks(&host, start, "copy ", "");
-            let all = (0..ranks.get()).collect::<Vec<_>>();
-            if kernel {
-                // One launch a rank for the capture, one for the restore.
-                assert_eq!(launches, all, "{ranks:?} {kv:?}");
-                assert_eq!(ranks_of_launches(&host, start).len(), 2 * all.len());
-                assert!(copies.is_empty(), "{ranks:?} {kv:?}: {copies:?}");
-            } else {
-                assert!(launches.is_empty());
-                assert!(copies.len() > 2 * all.len());
-            }
-            let kind = if kernel { "kernel copy " } else { "copy " };
-            moved.push(
-                host.device.journal.borrow()[start..]
-                    .iter()
-                    .filter_map(|line| line.strip_prefix(kind).map(str::to_owned))
-                    .collect::<Vec<_>>(),
-            );
-            after.push((captured, origins(&host, &pages)));
-            instance.retire_request(9).unwrap();
-            instance.destroy().unwrap();
-            assert_eq!(host.acquired.get(), host.released.get());
-        }
-        assert!(after[0] == after[1], "{ranks:?} {kv:?}");
-        assert!(!moved[0].is_empty());
-        assert_eq!(moved[0], moved[1], "{ranks:?} {kv:?}");
+        let (host, mut instance, pages) = prefilled(ranks, kv);
+        let start = host.device.journal.borrow().len();
+        instance.capture_prefix_state(7, 141, &pages).unwrap();
+        let all = (0..ranks.get()).collect::<Vec<_>>();
+        assert_eq!(ranks_of_launches(&host, start), all, "{ranks:?} {kv:?}");
+        instance.retire_request(7).unwrap();
+        let ids = (0..141).collect::<Vec<u32>>();
+        instance
+            .restore_prefix_state_in_slot(9, &ids, &pages, 2)
+            .unwrap();
+        assert_state_moved(&host, 4, 0, 0, 2);
+        // One launch a rank for the capture, one for the restore.
+        assert_eq!(ranks_of_launches(&host, start).len(), 2 * all.len());
+        let copies = journal_ranks(&host, start, "copy ", "");
+        assert!(copies.is_empty(), "{ranks:?} {kv:?}: {copies:?}");
+        let journal = host.device.journal.borrow();
+        assert!(
+            journal[start..]
+                .iter()
+                .any(|line| line.starts_with("kernel copy "))
+        );
+        drop(journal);
+        instance.retire_request(9).unwrap();
+        instance.destroy().unwrap();
+        assert_eq!(host.acquired.get(), host.released.get());
     }
 }
 
@@ -152,24 +82,21 @@ fn ranks_of_launches(host: &FakeHost, from: usize) -> Vec<u32> {
     journal_ranks(host, from, "launch ", kernels_sm120::snapshot_copy::SYMBOL)
 }
 
-/// With the candidate off no instance loads the kernel's module; with it
-/// on, each rank loads it once and resolves its entry.
+/// Each rank loads the kernel's module once.
 #[test]
-fn only_a_candidate_instance_loads_the_kernel() {
-    for kernel in [false, true] {
-        let (host, mut instance, _) = prefilled(Ranks::TP2, KV_LAYOUTS[0], kernel);
-        let loaded = host
-            .device
-            .module_cubins
-            .borrow()
-            .values()
-            .filter(|cubin| **cubin == crate::sm120::snapshot_copy::CUBIN)
-            .count();
-        assert_eq!(loaded, if kernel { 2 } else { 0 });
-        instance.retire_request(7).unwrap();
-        instance.destroy().unwrap();
-        assert_eq!(host.acquired.get(), host.released.get());
-    }
+fn every_instance_loads_the_kernel_on_each_rank() {
+    let (host, mut instance, _) = prefilled(Ranks::TP2, KV_LAYOUTS[0]);
+    let loaded = host
+        .device
+        .module_cubins
+        .borrow()
+        .values()
+        .filter(|cubin| **cubin == crate::sm120::snapshot_copy::CUBIN)
+        .count();
+    assert_eq!(loaded, 2);
+    instance.retire_request(7).unwrap();
+    instance.destroy().unwrap();
+    assert_eq!(host.acquired.get(), host.released.get());
 }
 
 /// A launch that fails on rank 1 ends the capture with the host's error
@@ -179,7 +106,7 @@ fn only_a_candidate_instance_loads_the_kernel() {
 /// for a restore that succeeds.
 #[test]
 fn a_failed_launch_drains_the_ranks_that_received_work() {
-    let (host, mut instance, pages) = prefilled(Ranks::TP4, KV_LAYOUTS[0], true);
+    let (host, mut instance, pages) = prefilled(Ranks::TP4, KV_LAYOUTS[0]);
     let start = host.device.journal.borrow().len();
     host.device.fail_launch.set(Some(1));
     assert_eq!(
@@ -220,7 +147,7 @@ fn a_failed_launch_drains_the_ranks_that_received_work() {
 #[test]
 fn an_unconfirmed_drain_is_an_internal_error_that_poisons() {
     for restore in [false, true] {
-        let (host, mut instance, pages) = prefilled(Ranks::TP4, KV_LAYOUTS[0], true);
+        let (host, mut instance, pages) = prefilled(Ranks::TP4, KV_LAYOUTS[0]);
         if restore {
             instance.capture_prefix_state(7, 141, &pages).unwrap();
             instance.retire_request(7).unwrap();
@@ -245,10 +172,10 @@ fn an_unconfirmed_drain_is_an_internal_error_that_poisons() {
 }
 
 /// Pages the pool does not hold, or repeated, are refused before any rank
-/// uploads or launches anything, as without the kernel.
+/// uploads or launches anything.
 #[test]
 fn refused_pages_submit_nothing() {
-    let (host, mut instance, pages) = prefilled(Ranks::TP2, KV_LAYOUTS[0], true);
+    let (host, mut instance, pages) = prefilled(Ranks::TP2, KV_LAYOUTS[0]);
     let past = host.kv_pages.get();
     let mut outside = pages.clone();
     *outside.last_mut().unwrap() = past;
@@ -271,79 +198,3 @@ fn refused_pages_submit_nothing() {
     instance.retire_request(7).unwrap();
     instance.destroy().unwrap();
 }
-
-/// The pinned Flash journals of each topology and KV layout with the
-/// candidate off (`journal_steps_with`). No rank allocates the kernel's
-/// table or resolves its symbol at acquire, or releases the table, the
-/// symbol and the module at destroy: five lines fewer a rank. The
-/// lifecycle captures no snapshot, so nothing else changes.
-#[test]
-fn the_flash_journals_with_device_copies_drop_each_ranks_kernel_and_table() {
-    let mut mismatches = Vec::new();
-    for (topology, storage, (default_lines, _)) in super::FLASH_JOURNALS {
-        let shape = crate::shape::topologies()
-            .into_iter()
-            .find(|shape| shape.topology() == topology)
-            .unwrap();
-        let kv = KV_LAYOUTS
-            .into_iter()
-            .find(|kv| kv.storage == storage)
-            .unwrap();
-        let host = FakeHost::new(shape, kv);
-        super::journal_steps_with(&host, &[(PREFIX_SNAPSHOT_COPY_KERNEL, false.into())]);
-        assert_eq!(host.acquired.get(), host.released.get(), "{topology}");
-        let lines = host.device.journal.borrow().clone();
-        assert_eq!(
-            lines.len() + 5 * shape.ranks() as usize,
-            default_lines,
-            "{topology} {storage:?}"
-        );
-        let layout = format!("{storage:?}").to_lowercase();
-        let (_, _, expected) = COPIES_JOURNALS
-            .iter()
-            .find(|(id, kind, _)| *id == topology && *kind == storage)
-            .unwrap();
-        if let Err(observed) = bundle_runtime::fake_host::check_journal(
-            &lines,
-            *expected,
-            &format!("{topology}.{layout}.copies.journal"),
-        ) {
-            mismatches.push(format!("{topology} {layout}: {observed}"));
-        }
-    }
-    assert!(mismatches.is_empty(), "{mismatches:#?}");
-}
-
-/// The pins of [`the_flash_journals_with_device_copies_drop_each_ranks_kernel_and_table`].
-const COPIES_JOURNALS: [(&str, KvStorage, (usize, u64)); 6] = [
-    (
-        "deepseek41-flash-tp1",
-        KvStorage::Native,
-        (15525, 0x7f80da60657b8f51),
-    ),
-    (
-        "deepseek41-flash-tp1",
-        KvStorage::Bf16,
-        (15379, 0xe419bcbd959c831e),
-    ),
-    (
-        "deepseek41-flash-tp2",
-        KvStorage::Native,
-        (30975, 0x71eb2d4066b5928e),
-    ),
-    (
-        "deepseek41-flash-tp2",
-        KvStorage::Bf16,
-        (30683, 0x237c390684736b5e),
-    ),
-    (
-        "deepseek41-flash-tp4",
-        KvStorage::Native,
-        (76801, 0xc9be576878c4bfc2),
-    ),
-    (
-        "deepseek41-flash-tp4",
-        KvStorage::Bf16,
-        (75181, 0xf66925c8a454ce45),
-    ),
-];

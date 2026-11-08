@@ -1,7 +1,7 @@
 //! The shared snapshot copy (`kernels_sm120::snapshot_copy`) the build
 //! compiles under its kernel-base symbol, in a family of its own: prefix
-//! captures and restores launch it under the `prefix_snapshot_copy_kernel`
-//! candidate (`instance::prefix`), and only such an instance loads it.
+//! captures and restores launch it (`instance::prefix`), and every instance
+//! loads it.
 
 use kernel_build::CubinSpec;
 use kernels_sm120::snapshot_copy::{cubin_spec as shared_spec, entries};

@@ -61,8 +61,6 @@ const EVENTS: [(u64, &str, u64); 5] = [
 /// The test's child process reads its layout and corruption here.
 const LAYOUT: &str = "DEEPSEEK41_KV_TAPS_LAYOUT";
 const CORRUPT: &str = "DEEPSEEK41_KV_TAPS_CORRUPT";
-/// Set in a child that runs its lifecycle with the snapshot copy kernel off.
-const COPIES: &str = "DEEPSEEK41_KV_TAPS_DEVICE_COPIES";
 
 /// One stored row: a layer's plane at a position (or a cell or page entry,
 /// for a decoy) on a rank.
@@ -778,14 +776,10 @@ fn compare(a: &Capture, b: &Capture) -> BTreeSet<Key> {
 }
 
 /// Runs the lifecycle of `layout` with `corrupt` in a child process and
-/// reads its capture. The directory names the snapshot copy mode, so the
-/// tests with the kernel on and off may run at once in one process.
-fn capture(name: &str, layout: usize, corrupt: Option<&str>, copies: bool) -> Capture {
-    let mode = if copies { "copies" } else { "snapshot-kernel" };
-    let directory = std::env::temp_dir().join(format!(
-        "deepseek41-kv-taps-{name}-{mode}-{}",
-        std::process::id()
-    ));
+/// reads its capture.
+fn capture(name: &str, layout: usize, corrupt: Option<&str>) -> Capture {
+    let directory =
+        std::env::temp_dir().join(format!("deepseek41-kv-taps-{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&directory);
     let layout = layout.to_string();
     let layers = LAYERS.map(|layer| layer.to_string()).join(",");
@@ -796,9 +790,6 @@ fn capture(name: &str, layout: usize, corrupt: Option<&str>, copies: bool) -> Ca
     ];
     if let Some(corrupt) = corrupt {
         env.push((CORRUPT, corrupt));
-    }
-    if copies {
-        env.push((COPIES, "1"));
     }
     in_child(
         "fake_host_tests::kv_state::kv_state_taps_read_the_stored_rows_and_find_a_corrupted_byte",
@@ -820,33 +811,13 @@ fn capture(name: &str, layout: usize, corrupt: Option<&str>, copies: bool) -> Ca
 /// exactly the readbacks that hold it.
 #[test]
 fn kv_state_taps_read_the_stored_rows_and_find_a_corrupted_byte() {
+    let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
     if std::env::var_os(TAPS_CHILD).is_some() {
-        let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
         let layout = KV_LAYOUTS[std::env::var(LAYOUT).unwrap().parse::<usize>().unwrap()];
         let corrupt = std::env::var(CORRUPT).ok().map(|name| corruption(&name).0);
-        if std::env::var_os(COPIES).is_some() {
-            super::snapshot_kernel::with_copies(|| lifecycle(shape, layout, corrupt));
-        } else {
-            lifecycle(shape, layout, corrupt);
-        }
+        lifecycle(shape, layout, corrupt);
         return;
     }
-    taps(false);
-}
-
-/// The same lifecycles with the `prefix_snapshot_copy_kernel` candidate
-/// off: the restore's snapshot moves in device copies, and the taps read
-/// the same stored rows and find the same corrupted bytes.
-#[test]
-fn kv_state_taps_read_the_stored_rows_with_device_copies() {
-    taps(true);
-}
-
-/// Runs each layout's clean lifecycle and each corrupted one in a child,
-/// with the snapshot copy kernel or with device `copies`, and checks their
-/// captures.
-fn taps(copies: bool) {
-    let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
     // Each layout's clean lifecycle and each corrupted one, in child
     // processes at once.
     let mut captures = std::thread::scope(|scope| {
@@ -855,9 +826,7 @@ fn taps(copies: bool) {
         let runs: Vec<_> = clean
             .into_iter()
             .chain(corrupted)
-            .map(|(name, layout, corrupt)| {
-                scope.spawn(move || capture(name, layout, corrupt, copies))
-            })
+            .map(|(name, layout, corrupt)| scope.spawn(move || capture(name, layout, corrupt)))
             .collect();
         runs.into_iter()
             .map(|run| run.join().expect("a capture"))

@@ -1,12 +1,10 @@
 //! Prefix-cache capture and restore of a request's window rings and
 //! compressor tails: the slot's committed entries of every captured buffer,
-//! copied piece by piece between the slot and the snapshot's serving pages
-//! with device copies (`bundle_runtime::snapshot`), each rank its own
-//! copy, and the shared header (`HeaderLayout::V1`) on rank 0. Under the
-//! `prefix_snapshot_copy_kernel` candidate each rank instead uploads the
-//! snapshot's page and segment table and launches the shared snapshot copy
-//! kernel once ([`SnapshotKernel`]), with the same checks, header actions
-//! and drain. The KV sources' compressed latents and index keys live in the
+//! moved piece by piece between the slot and the snapshot's serving pages
+//! (`bundle_runtime::snapshot`), each rank uploading the snapshot's page
+//! and segment table and launching the shared snapshot copy kernel once
+//! ([`SnapshotKernel`]), and the shared header (`HeaderLayout::V1`) on
+//! rank 0. The KV sources' compressed latents and index keys live in the
 //! shared pages already. A ring holds its last window of positions; a tail
 //! the open group's row. The Engram history needs no pages: a restore names every
 //! prefix token, and the history takes the last of them. A capture at an
@@ -50,7 +48,7 @@ pub(crate) struct SnapshotKernel {
 impl SnapshotKernel {
     /// The kernel of `state`'s snapshots in an instance of `extent`, on
     /// `backend`; why not, when the kernel cannot serve a slot's or an
-    /// anchor item's table, so the instance keeps the device copies.
+    /// anchor item's table, so create refuses the instance.
     pub(crate) fn prepare(
         backend: &dyn Backend,
         state: &RequestState,
@@ -185,20 +183,7 @@ impl Instance {
             };
             Ok((held, paged, action))
         };
-        let Some(kernel) = &self.snapshot_kernel else {
-            let plans = self
-                .buffers
-                .iter()
-                .enumerate()
-                .map(|(rank, buffers)| {
-                    let (held, paged, action) = rank_of(rank, buffers)?;
-                    table
-                        .actions::<()>(&held, &paged, to_pages, action)
-                        .map_err(|_| BundleStatusV1::InternalError)
-                })
-                .collect::<Result<Vec<_>, _>>()?;
-            return self.submit_snapshot(plans, &|_, _, ()| Ok(()));
-        };
+        let kernel = &self.snapshot_kernel;
         let (op, prepared) = if to_pages {
             &kernel.capture
         } else {
@@ -453,10 +438,10 @@ mod tests {
         }
     }
 
-    /// A backend without the kernel refuses it, so create keeps the device
-    /// copies.
+    /// A backend without the kernel refuses it, so create refuses the
+    /// instance.
     #[test]
-    fn a_backend_without_the_kernel_keeps_the_device_copies() {
+    fn a_backend_without_the_kernel_refuses_it() {
         let state = request_state_with_anchors(&FLASH, KvStorage::Native, false, 0);
         let error = SnapshotKernel::prepare(&Nothing, &state, extent(0))
             .err()

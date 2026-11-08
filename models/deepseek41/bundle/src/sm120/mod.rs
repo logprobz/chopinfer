@@ -1083,8 +1083,7 @@ impl crate::Kernels {
 
     /// Whether an instance loads `cubin` with the program's cubins: every
     /// cubin but the unwired acceptance reducer, the allocated verify steps' (loaded
-    /// apart, `allocation_cubin`), the snapshot copy's (loaded apart, under
-    /// its candidate), and the
+    /// apart, `allocation_cubin`), and the
     /// vision encoder's, which only an encoder instance loads. The exact F32
     /// row tiles load only where an instance admits them.
     /// Streamed MoE modules load only for the qualified topology.
@@ -1125,7 +1124,6 @@ impl crate::Kernels {
             && (!ceil_split::is_cubin(cubin) || ceil_split::serves(shape.geometry, shape.ranks()))
             && (cubin != query_window::CUBIN || query_window::serves(shape.geometry, shape.ranks()))
             && cubin != acceptance_entries::CUBIN
-            && cubin != snapshot_copy::CUBIN
             && cubin != allocate_entries::CUBIN
             && cubin != allocated_acceptance_entries::CUBIN
             && (cubin != fold_verify::CUBIN

@@ -782,5 +782,10 @@ same time within 0.3% in each pair. The C8 gaps fall in two modes, 20 to
 22 ms and 27 to 29 ms, and the p50 sits at the upper mode's edge, so it
 moved with the share of gaps from larger steps, which rose in both newer
 visits (gaps below 26 ms: 46.1% and 44.4% of U's, 44.7% and 42.5% of the
-newer visits'). These changes cannot be serving options, so they were
-adopted as the default with this tradeoff by the maintainers' decision.
+newer visits'). A companion client that cut 46 streams per visit resolved
+a regression in the median time from its close to the server's cancel log
+line (5.01 and 4.76 ms to 5.75 and 5.16 ms); it reads the log every 10 ms,
+and the server generated the same number of tokens past each cut in both
+arms (a median of three). These changes cannot be serving options, so they
+were adopted as the default with both regressions by the maintainers'
+decision.

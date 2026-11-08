@@ -479,6 +479,10 @@ impl Hasher for TableHasher {
 /// adjacent pair merges, so both give the same tokens.
 const SCANNED_PIECE_BYTES: usize = 64;
 
+/// The most pieces one ordinary segment's encode remembers the tokens of.
+/// Tests reach the bound with a few dozen pieces.
+const REMEMBERED_PIECES: usize = if cfg!(test) { 16 } else { 1 << 16 };
+
 /// The buffers one encode reuses for every piece it merges by scanning.
 #[derive(Default)]
 struct PieceScratch {
@@ -943,8 +947,27 @@ impl Tokenizer {
             }
             pieces = split;
         }
+        // A piece encodes to the same tokens wherever it stands, so a
+        // repeated short piece copies the tokens it encoded to before.
+        let mut remembered: HashMap<&str, (usize, usize), TableHash> =
+            HashMap::with_hasher(TableHash);
+        remembered
+            .try_reserve(pieces.len().min(REMEMBERED_PIECES))
+            .map_err(|_| TokenizerError::new("piece memory allocation failed"))?;
         for piece in pieces {
+            if piece.len() > SCANNED_PIECE_BYTES {
+                self.encode_piece(piece.as_bytes(), output, scratch)?;
+                continue;
+            }
+            if let Some((start, end)) = remembered.get(piece) {
+                output.extend_from_within(*start..*end);
+                continue;
+            }
+            let start = output.len();
             self.encode_piece(piece.as_bytes(), output, scratch)?;
+            if remembered.len() < REMEMBERED_PIECES {
+                remembered.insert(piece, (start, output.len()));
+            }
         }
         Ok(())
     }
@@ -2608,6 +2631,42 @@ mod tests {
         assert!(merged > 100_000, "{merged}");
     }
 
+    /// A repeated piece copies the tokens it encoded to before, before and
+    /// after the bound on remembered pieces: the text encodes as its pieces
+    /// do one at a time.
+    #[test]
+    fn repeated_pieces_encode_as_they_did_before() {
+        let tokenizer = cascading_merges_tokenizer_split_by("[,]");
+        let mut state = 0x853c_49e6_748f_ea9b_u64;
+        let mut pieces: Vec<String> = Vec::new();
+        for _ in 0..300 {
+            state = state
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
+            let length = 1 + (state >> 40) as usize % 9;
+            let reused = (state >> 20) % 3 == 0 && !pieces.is_empty();
+            let piece = if reused {
+                pieces[(state >> 24) as usize % pieces.len()].clone()
+            } else {
+                (0..length)
+                    .map(|place| ['a', 'b', 'c'][(state >> (place * 3)) as usize % 3])
+                    .collect::<String>()
+            };
+            pieces.push(piece);
+        }
+        let text = pieces.join(",");
+        let mut one_at_a_time = Vec::new();
+        for (index, piece) in pieces.iter().enumerate() {
+            if index > 0 {
+                one_at_a_time.extend(tokenizer.encode(",", &[]).unwrap());
+            }
+            one_at_a_time.extend(tokenizer.encode(piece, &[]).unwrap());
+        }
+        assert_eq!(tokenizer.encode(&text, &[]).unwrap(), one_at_a_time);
+        let distinct: BTreeSet<&String> = pieces.iter().collect();
+        assert!(distinct.len() > 4 * REMEMBERED_PIECES, "{}", distinct.len());
+    }
+
     #[test]
     fn compact_pretokenizer_prevents_cross_piece_merges() {
         let tokenizer = merged_tokenizer();
@@ -3837,6 +3896,11 @@ mod tests {
     /// a merge at a place and of a rank that follow a fixed shuffle, so
     /// merges cascade, compete and tie.
     fn cascading_merges_tokenizer() -> Tokenizer {
+        cascading_merges_tokenizer_split_by(".+")
+    }
+
+    /// [`cascading_merges_tokenizer`] with the pretokenizer split `pattern`.
+    fn cascading_merges_tokenizer_split_by(pattern: &str) -> Tokenizer {
         let mut strings = Vec::new();
         for length in 2..=5_u32 {
             for index in 0..3_usize.pow(length) {
@@ -3878,18 +3942,22 @@ mod tests {
             "},\"merges\":[]",
             &format!(",{}}},\"merges\":[{}]", vocab.join(","), merges.join(",")),
         );
+        let definition = replace_once(
+            &definition,
+            "\"Regex\":\".+\"",
+            &format!("\"Regex\":{}", json_string(pattern)),
+        );
         let configuration = fixture_configuration();
         let mut dialect = literal_prefix_policy(259, 3);
         dialect.base_tokens = BaseTokenRepresentation::ByteLevel;
         dialect.merge_results = MergeResultIdPolicy::Vocabulary;
         dialect.merge_records = MergeRecordPolicy::StringPairArray;
         let size = 259 + strings.len() as u32;
-        let contract = fixture_contract_counts_with_dialect(
+        let contract = fixture_contract_split_by_with_dialect(
             &definition,
             &configuration,
-            size,
-            size,
-            strings.len(),
+            (size, size, strings.len()),
+            pattern,
             &dialect,
         );
         Tokenizer::from_verified_bytes(&definition, &configuration, &contract).unwrap()
@@ -3971,6 +4039,22 @@ mod tests {
         merge_count: usize,
         dialect: &TokenizerDialect,
     ) -> TokenizerContract {
+        fixture_contract_split_by_with_dialect(
+            definition,
+            configuration,
+            (base_vocabulary_size, vocabulary_size, merge_count),
+            r".+",
+            dialect,
+        )
+    }
+
+    fn fixture_contract_split_by_with_dialect(
+        definition: &[u8],
+        configuration: &[u8],
+        (base_vocabulary_size, vocabulary_size, merge_count): (u32, u32, usize),
+        pattern: &str,
+        dialect: &TokenizerDialect,
+    ) -> TokenizerContract {
         TokenizerContract::new_with_dialect(
             "test/model",
             "0123456789abcdef0123456789abcdef01234567",
@@ -3994,7 +4078,7 @@ mod tests {
             Some(FIXTURE_BOS),
             FIXTURE_EOS,
             FIXTURE_EOS,
-            &[r".+"],
+            &[pattern],
             &[FIXTURE_BOS],
             dialect.clone(),
         )

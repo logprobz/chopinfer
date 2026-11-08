@@ -54,7 +54,7 @@ pub struct Shape {
     pub dspark_hc_draft_rows: bool,
     /// Whether the Flash TP4 DSpark main projection runs the compact pair
     /// at the inner rows the candidate table admits (the
-    /// `dspark_main_short_rows` candidate option).
+    /// `dspark_main_short_rows` candidate option, on by default).
     pub dspark_main_short_rows: bool,
 }
 
@@ -75,7 +75,7 @@ impl Shape {
             dspark_confidence_staged: false,
             dspark_hc_fusion: false,
             dspark_markov_staged: false,
-            dspark_main_short_rows: false,
+            dspark_main_short_rows: true,
         })
     }
 

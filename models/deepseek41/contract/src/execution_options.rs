@@ -45,10 +45,10 @@ pub const DSPARK_MOE_DIRECT: &str = "dspark_moe_direct";
 /// the drafter table (`hc.draft_admit.verify`), so their stage boundaries
 /// fuse as the measured rows' do.
 pub const DSPARK_HC_DRAFT_ROWS: &str = "dspark_hc_draft_rows";
-/// Candidate: the Flash TP4 DSpark main projection runs the compact
-/// admission and compute pair at the inner rows the candidate table admits
-/// (`dense_prefill.dspark_main_short.prefill`, 65 to 128) instead of the
-/// generic fold. Every row's bytes are unchanged.
+/// Candidate, on by default: the Flash TP4 DSpark main projection runs the
+/// compact admission and compute pair at the inner rows the candidate
+/// table admits (`dense_prefill.dspark_main_short.prefill`, 65 to 128)
+/// instead of the generic fold. Every row's bytes are unchanged.
 pub const DSPARK_MAIN_SHORT_ROWS: &str = "dspark_main_short_rows";
 /// Maximum prompt-ending items whose interior grid anchor one step retains.
 pub const MAX_ANCHOR_ITEMS: u32 = 8;
@@ -103,7 +103,7 @@ pub fn declarations() -> [ModelOptionV1; 14] {
         ),
         (
             DSPARK_MAIN_SHORT_ROWS,
-            OptionDefinitionV1::Boolean { default: false },
+            OptionDefinitionV1::Boolean { default: true },
         ),
         (
             DSPARK_MARKOV_STAGED,
@@ -405,7 +405,7 @@ mod tests {
             dspark_confidence_staged: false,
             dspark_hc_fusion: false,
             dspark_markov_staged: false,
-            dspark_main_short_rows: false,
+            dspark_main_short_rows: true,
         };
         assert_eq!(Options::read(&defaults).unwrap(), expected);
         assert_eq!(Options::read(&BTreeMap::new()).unwrap(), expected);
@@ -429,7 +429,7 @@ mod tests {
             (DSPARK_CONFIDENCE_STAGED.into(), "true".into()),
             (DSPARK_HC_FUSION.into(), "true".into()),
             (DSPARK_MARKOV_STAGED.into(), "true".into()),
-            (DSPARK_MAIN_SHORT_ROWS.into(), "true".into()),
+            (DSPARK_MAIN_SHORT_ROWS.into(), "false".into()),
         ]);
         let resolved = declaration.resolve(&overrides).unwrap();
         assert_eq!(
@@ -448,7 +448,7 @@ mod tests {
                 dspark_confidence_staged: true,
                 dspark_hc_fusion: true,
                 dspark_markov_staged: true,
-                dspark_main_short_rows: true,
+                dspark_main_short_rows: false,
             }
         );
         assert!(!declaration.is_qualified(&resolved));

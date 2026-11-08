@@ -605,7 +605,7 @@ fn long_context_templates_issue_the_fresh_lowerings_journal() {
         let (name, expected) = if dspark {
             (
                 "flash-tp4-dspark-long-context-templates",
-                (194868, 0xf4f2d8b3552a3c94),
+                (194920, 0x89f0ca92aaa85e3e),
             )
         } else {
             (
@@ -714,7 +714,7 @@ fn a_failed_launch_of_a_reused_template_poisons_the_instance() {
         let (name, expected) = if dspark {
             (
                 "flash-tp4-dspark-failed-template",
-                (33697, 0xa60d8e70fc752f7c),
+                (33701, 0x2f280e38f7eebdf7),
             )
         } else {
             ("flash-tp4-ar-failed-template", (32288, 0x20052eba3b766c49))

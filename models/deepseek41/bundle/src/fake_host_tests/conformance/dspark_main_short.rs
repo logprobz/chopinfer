@@ -131,8 +131,9 @@ fn the_candidate_starts_beside_the_profiles() {
 
 /// The swept main projection tags: the candidate profile's compact pair
 /// admits 65 to 128 rows under its own stage-3 admission and m32 compute
-/// entries and 129 to 511 under the stage-2 pair, and the default
-/// profile's only the latter, so the sweep plans every range edge.
+/// entries and 129 to 511 under the stage-2 pair, and so does the default
+/// profile's, the candidate being the default, so the sweep plans every
+/// range edge.
 fn check_swept_main_ranges() {
     let main_tags = |profile: &str| {
         let serving = MainShort::servings()
@@ -156,13 +157,13 @@ fn check_swept_main_ranges() {
         ("m64_n128_s2_v1_admit_v1".to_owned(), vec![129..=511]),
         ("m64_n128_s2_v1_packed_v1".to_owned(), vec![129..=511]),
     ];
-    assert_eq!(main_tags(BASE), upper);
     let mut short = vec![
         ("m32_n128_s3_v1_packed_v1".to_owned(), vec![65..=128]),
         ("m64_n128_s3_v1_admit_v1".to_owned(), vec![65..=128]),
     ];
     short.extend(upper);
     short.sort_by(|a, b| a.0.cmp(&b.0));
+    assert_eq!(main_tags(BASE), short);
     assert_eq!(main_tags(PROFILE), short);
 }
 

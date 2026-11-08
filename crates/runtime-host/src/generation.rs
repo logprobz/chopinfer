@@ -398,11 +398,10 @@ pub struct EngineGenerationBackend {
     maximum_sequence_tokens: usize,
     startup_page_tokens: usize,
     startup_pages: usize,
-    /// The page tokens of the prefix chains the engine keys its prefix cache
-    /// with, when it has one; a submission hashes them off the engine thread.
-    /// Reply-history observation alone hashes at admission, inside its
-    /// memory reservation.
-    prefix_chain_block_tokens: Option<usize>,
+    /// Hashes the prefix chains the engine keys its prefix cache with, when
+    /// it has one, off the engine thread. Reply-history observation alone
+    /// hashes at admission, inside its memory reservation.
+    prefix_offers: PrefixOffers,
     metrics: EngineMetrics,
     kv_metrics: KvMetrics,
     worker: Mutex<Option<JoinHandle<()>>>,
@@ -621,7 +620,7 @@ impl EngineGenerationBackend {
             maximum_sequence_tokens: started.maximum_sequence_tokens,
             startup_page_tokens: started.startup_page_tokens,
             startup_pages: started.startup_pages,
-            prefix_chain_block_tokens: started.prefix_chain_block_tokens,
+            prefix_offers: PrefixOffers::new(started.prefix_chain_block_tokens),
             metrics: started.metrics,
             kv_metrics: started.kv_metrics,
             reply_history: started.reply_history,
@@ -1556,14 +1555,13 @@ impl GenerationBackend for EngineGenerationBackend {
                 self.prompt_echoes.clone(),
             ));
             let (response, admitted) = oneshot::channel();
-            let prefix_chain = prefix_chain_v1(self.prefix_chain_block_tokens, &request);
             submissions.push(WorkerSubmission {
                 observe_delivery,
                 skip_reply_history,
                 id,
                 request: Box::new(request),
                 constraint: None,
-                prefix_chain,
+                prefix_chain: None,
                 events: WorkerEvents(forward_sender),
                 response,
             });
@@ -1575,6 +1573,7 @@ impl GenerationBackend for EngineGenerationBackend {
         }
         let control = self.control.clone();
         let state = Arc::clone(&self.state);
+        let offers = self.prefix_offers.clone();
         if submissions
             .iter()
             .any(|submission| submission.request.constraint.is_some())
@@ -1582,9 +1581,11 @@ impl GenerationBackend for EngineGenerationBackend {
             let grammars = Arc::clone(&self.grammars);
             tokio::spawn(async move {
                 // Compile before publishing any of the group to the worker.
-                // A failed member retains its own admission error.
+                // A failed member retains its own admission error. Chains
+                // are hashed after it, so a job waiting for the pool holds
+                // none.
                 let compiled = tokio::task::spawn_blocking(move || {
-                    submissions
+                    let mut submissions = submissions
                         .into_iter()
                         .filter_map(|mut submission| {
                             if submission.request.cancellation.is_cancelled() {
@@ -1608,7 +1609,9 @@ impl GenerationBackend for EngineGenerationBackend {
                             }
                             Some(submission)
                         })
-                        .collect()
+                        .collect::<Vec<_>>();
+                    offers.offer(&mut submissions);
+                    submissions
                 })
                 .await;
                 if let Ok(submissions) = compiled {
@@ -1616,9 +1619,47 @@ impl GenerationBackend for EngineGenerationBackend {
                 }
             });
         } else {
+            offers.offer(&mut submissions);
             enqueue_submissions(control, state, submissions);
         }
         results
+    }
+}
+
+/// Hashes submissions' prefix chains before the worker reads them, at the
+/// page size the engine keys its prefix cache with.
+#[derive(Clone)]
+struct PrefixOffers {
+    block_tokens: Option<usize>,
+    /// Every chain offered, so a test sees how long offers live.
+    #[cfg(test)]
+    offered: Arc<Mutex<Vec<std::sync::Weak<runtime_kv::PrefixChainV1>>>>,
+}
+
+impl PrefixOffers {
+    fn new(block_tokens: Option<usize>) -> Self {
+        Self {
+            block_tokens,
+            #[cfg(test)]
+            offered: Arc::default(),
+        }
+    }
+
+    /// Offers each submission not cancelled the chain of its token-ID
+    /// prompt. A group calls this once its preparation is done and it is
+    /// about to be published, so a submission cancelled while it waited to
+    /// be prepared never builds an offer.
+    fn offer(&self, submissions: &mut [WorkerSubmission]) {
+        for submission in submissions {
+            if submission.request.cancellation.is_cancelled() {
+                continue;
+            }
+            submission.prefix_chain = prefix_chain_v1(self.block_tokens, &submission.request);
+            #[cfg(test)]
+            if let Some(chain) = &submission.prefix_chain {
+                self.offered.lock().unwrap().push(Arc::downgrade(chain));
+            }
+        }
     }
 }
 
@@ -1676,9 +1717,16 @@ fn enqueue_submissions(
     tokio::spawn(async move {
         let mut backoff = Duration::from_micros(250);
         loop {
-            let WorkerCommand::Submit(submissions) = &command else {
+            let WorkerCommand::Submit(submissions) = &mut command else {
                 unreachable!("only submissions are retried");
             };
+            // The worker never admits a cancelled member, so the group does
+            // not keep its offer while it waits.
+            for submission in submissions.iter_mut() {
+                if submission.request.cancellation.is_cancelled() {
+                    submission.prefix_chain = None;
+                }
+            }
             if state.load(Ordering::Acquire) != READY
                 || submissions
                     .iter()

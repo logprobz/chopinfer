@@ -2213,3 +2213,182 @@ fn only_a_prefix_cache_has_chains_hashed_before_admission() {
     assert_eq!(cached.prefix_chain_block_tokens(), Some(256));
     assert!(prefix_chain_v1(cached.prefix_chain_block_tokens(), &request).is_some());
 }
+
+/// A backend over `engine` with the key-value fixture declaration and a
+/// control channel of one command.
+fn offering_backend(engine: Engine<ScriptedModel>) -> EngineGenerationBackend {
+    let mut descriptor =
+        FrontendDescriptorV1::from_component_bytes(declarations::KEY_VALUE.as_bytes()).unwrap();
+    descriptor.vocabulary.size = 259;
+    descriptor.vocabulary.eos_token_id = EOS;
+    descriptor.vocabulary.stop_token_ids = vec![EOS];
+    EngineGenerationBackend::new(
+        tokenizer(),
+        engine,
+        EngineBackendConfig::new(1).unwrap(),
+        EngineModelPolicyV1::from_declaration(&descriptor),
+    )
+    .unwrap()
+}
+
+/// A request for one token after `tokens` copies of `x`.
+fn token_request(tokens: usize) -> PreparedRequest {
+    let mut request = raw_request(true);
+    request.prompt = PreparedPrompt::TokenIds(vec![X; tokens]);
+    request.max_new_tokens = 1;
+    request
+}
+
+/// Whether each chain `backend` has offered is still held, in offer order.
+fn held_offers(backend: &EngineGenerationBackend) -> Vec<bool> {
+    let offered = backend.prefix_offers.offered.lock().unwrap();
+    offered
+        .iter()
+        .map(|offer| offer.strong_count() > 0)
+        .collect()
+}
+
+/// With prefix caching on, a constrained submission cancelled while its
+/// grammar job waits for a saturated blocking pool never builds a prefix
+/// offer, and a live one is offered its chain once its grammar compiles.
+#[test]
+fn cancelled_grammar_submissions_build_no_prefix_offer() {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .max_blocking_threads(1)
+        .build()
+        .unwrap();
+    let backend = offering_backend(
+        Engine::new(
+            EngineConfig::new(
+                SchedulerConfig::new(128, 256, 8192, 8192, 1).unwrap(),
+                KvGeometry::new(256, 2048).unwrap(),
+                ModelVocabulary::new(259).unwrap(),
+                262_144,
+                64,
+            )
+            .unwrap()
+            .with_prefix_cache(1),
+            ScriptedModel::default(),
+        )
+        .unwrap(),
+    );
+    let constrained = |tokens: usize| {
+        let mut request = token_request(tokens);
+        request.constraint = Some(Arc::new(runtime_grammar::regex_grammar("x").unwrap()));
+        request
+    };
+    runtime.block_on(async {
+        // Occupy the pool's only thread.
+        let (entered, ready) = oneshot::channel();
+        let (release, blocked) = std::sync::mpsc::channel::<()>();
+        let blocker = tokio::task::spawn_blocking(move || {
+            entered.send(()).unwrap();
+            let _ = blocked.recv();
+        });
+        ready.await.unwrap();
+        for _ in 0..8 {
+            let request = constrained(250_000);
+            let cancellation = request.cancellation.clone();
+            let (sender, mut reader) = tokio::sync::mpsc::channel(1);
+            let admitted = backend.submit_batch(vec![(request, EventSender::new(sender))]);
+            // The group's grammar job queues behind the blocker.
+            tokio::task::yield_now().await;
+            cancellation.cancel();
+            drop(admitted);
+            // The relay ends with the request.
+            let ended = tokio::time::timeout(Duration::from_secs(5), reader.recv()).await;
+            assert_eq!(ended, Ok(None));
+        }
+        assert!(held_offers(&backend).is_empty());
+        release.send(()).unwrap();
+        blocker.await.unwrap();
+        // The pool runs jobs in order, so this one follows the rest.
+        tokio::task::spawn_blocking(|| ()).await.unwrap();
+        assert!(held_offers(&backend).is_empty());
+        let (sender, _reader) = tokio::sync::mpsc::channel(8);
+        let mut admitted =
+            backend.submit_batch(vec![(constrained(1000), EventSender::new(sender))]);
+        admitted.pop().unwrap().await.unwrap();
+        assert_eq!(held_offers(&backend).len(), 1);
+    });
+}
+
+/// A group waiting for room on a full control channel drops a cancelled
+/// member's prefix offer and keeps its live member's.
+#[test]
+fn a_waiting_group_drops_the_offers_of_cancelled_members() {
+    let release = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let stalled = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let stall: Stall = {
+        let (release, stalled) = (Arc::clone(&release), Arc::clone(&stalled));
+        Arc::new(move |_: &[ModelBatchItem]| {
+            stalled.store(true, Ordering::Release);
+            while !release.load(Ordering::Acquire) {
+                thread::sleep(Duration::from_millis(1));
+            }
+        })
+    };
+    let backend = offering_backend(
+        Engine::new(
+            EngineConfig::new(
+                SchedulerConfig::new(4, 32, 64, 64, 1).unwrap(),
+                KvGeometry::new(4, 256).unwrap(),
+                ModelVocabulary::new(259).unwrap(),
+                128,
+                64,
+            )
+            .unwrap()
+            .with_prefix_cache(1),
+            ScriptedModel {
+                tokens: vec![X; 4],
+                stall: Some(stall),
+                ..Default::default()
+            },
+        )
+        .unwrap(),
+    );
+    /// Releases the model when the test ends, failed or not, so the
+    /// backend can shut down.
+    struct Released(Arc<std::sync::atomic::AtomicBool>);
+    impl Drop for Released {
+        fn drop(&mut self) {
+            self.0.store(true, Ordering::Release);
+        }
+    }
+    let _released = Released(Arc::clone(&release));
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        let mut readers = Vec::new();
+        let mut submit = |requests: Vec<PreparedRequest>| {
+            let requests = requests
+                .into_iter()
+                .map(|request| {
+                    let (sender, reader) = tokio::sync::mpsc::channel(8);
+                    readers.push(reader);
+                    (request, EventSender::new(sender))
+                })
+                .collect();
+            backend.submit_batch(requests)
+        };
+        // The worker stalls in the first request's step, and the next
+        // group fills the control channel.
+        submit(vec![token_request(8)]).pop().unwrap().await.unwrap();
+        while !stalled.load(Ordering::Acquire) {
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+        drop(submit(vec![token_request(8)]));
+        let group = vec![token_request(32), token_request(32)];
+        let cancelled = group[0].cancellation.clone();
+        let mut waiting = submit(group);
+        assert_eq!(held_offers(&backend)[2..], [true, true]);
+        cancelled.cancel();
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert_eq!(held_offers(&backend)[2..], [false, true]);
+        release.store(true, Ordering::Release);
+        waiting.pop().unwrap().await.unwrap();
+    });
+}

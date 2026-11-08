@@ -223,7 +223,7 @@ class CaptureTests(Harness):
         return dump
 
     def test_plan_pins_compared_by_digest_alone_are_refused(self):
-        # DeepSeek's plan metadata compared each plan's digest with its table
+        # A bundle's plan metadata once compared each plan's digest with its table
         # row and called check_journal only on a mismatch, so a passing run
         # dumped no plan and neither table row was accounted for.
         revision, lines = self.plan_tables('if journal_digest(&lines) != pin { check_journal(&lines, pin, &file).unwrap(); }')

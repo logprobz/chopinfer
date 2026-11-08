@@ -281,7 +281,11 @@ what the page cache holds and reads the rest with `O_DIRECT`, as a load does,
 so a first start after a new host build neither fills the cache with the
 scales nor pushes out mapped views. A file system that refuses `O_DIRECT`
 gets a `refused a direct read` warning and is read through the page cache,
-which can fill it as before. `startup weight_census` reports `cache_hit`,
+which can fill it as before. On 2026-11-08 with DeepSeek V4.1 Flash on four
+GPUs, a start that reused the census read no scale bytes, planned its weights
+in 2.9 s instead of 13.6 s and was ready in about 28 s instead of about 40 s;
+the first start after the new build read the 17.0 GB with `O_DIRECT` in
+13.6 s. `startup weight_census` reports `cache_hit`,
 `bytes_read` (zero on a hit) and `direct_bytes`, and `startup weight_plan`
 splits its `seconds` into `census_seconds` (within `plan_seconds`) and
 `validation_seconds`. A loaded image's tensor payloads are still read and

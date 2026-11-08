@@ -260,6 +260,8 @@ fn literal_prefix_policy(first_merge_id: u32, byte_start_id: u32) -> TokenizerDi
 
 /// Runs before each batch the scripted model executes.
 pub(super) type Stall = Arc<dyn Fn(&[ModelBatchItem]) + Send + Sync>;
+/// Runs when the engine retires a request from the scripted model.
+type Retired = Arc<dyn Fn(RequestId) + Send + Sync>;
 
 #[derive(Default)]
 pub(super) struct ScriptedModel {
@@ -271,9 +273,16 @@ pub(super) struct ScriptedModel {
     completion_mode: Arc<AtomicU8>,
     /// Runs before each batch executes, so a test can make it slow or hang.
     pub(super) stall: Option<Stall>,
+    retired: Option<Retired>,
 }
 impl ModelExecutor for ScriptedModel {
     type TransactionState<'a> = NoopModelTransactionState;
+    fn retire_request_v1(&mut self, id: RequestId) -> Result<(), runtime_engine::ExecutorError> {
+        if let Some(retired) = &self.retired {
+            retired(id);
+        }
+        Ok(())
+    }
     fn kv_offload_info_v1(&self) -> Option<runtime_engine::KvOffloadInfo> {
         self.offload.then_some(runtime_engine::KvOffloadInfo {
             host_page_capacity: 64,
@@ -810,14 +819,40 @@ fn a_refused_token_names_the_decoder_reason_ordinal_and_id() {
 /// request lives, and removes it at the event that ends its output: the
 /// engine's length finish, a client stop the worker stops the request for,
 /// or a full event stream the worker cancels the request for. Events after
-/// that are ignored.
+/// that are ignored. The generation is dropped, closing the request's event
+/// stream, by the time that event returns, and only after the engine
+/// retired the request, so a client never sees its stream end before the
+/// engine stopped generating for it.
 #[test]
 fn a_generation_leaves_the_worker_at_the_event_that_ends_its_output() {
     let tokenizer = tokenizer();
     let ids = [1, 2, 3, 4].map(RequestId::new);
     let maximum = [3, 8, 8, 6];
+    // Request 3's stream has room for one event, which nothing reads.
+    let full = 2;
     for speculative in [false, true] {
         for sampled in [false, true] {
+            let mut senders = Vec::new();
+            let mut receivers = Vec::new();
+            for index in 0..ids.len() {
+                let (sender, receiver) =
+                    tokio::sync::mpsc::channel(if index == full { 1 } else { 128 });
+                senders.push(sender);
+                receivers.push(receiver);
+            }
+            let streams = senders
+                .iter()
+                .map(tokio::sync::mpsc::Sender::downgrade)
+                .collect::<Vec<_>>();
+            let open = move |id: RequestId| streams[id.get() as usize - 1].upgrade().is_some();
+            // Whether each request's stream was still open when the engine
+            // retired it.
+            let retirements = Arc::new(Mutex::new(Vec::new()));
+            let retired: Retired = {
+                let retirements = Arc::clone(&retirements);
+                let open = open.clone();
+                Arc::new(move |id| retirements.lock().unwrap().push((id, open(id))))
+            };
             let config = EngineConfig::new(
                 SchedulerConfig::new(4, 32, 64, 4, 1).unwrap(),
                 KvGeometry::new(4, 64).unwrap(),
@@ -837,12 +872,12 @@ fn a_generation_leaves_the_worker_at_the_event_that_ends_its_output() {
             let model = ScriptedModel {
                 tokens: vec![X; 8],
                 sampled,
+                retired: Some(retired),
                 ..Default::default()
             };
             let mut engine = Engine::new(config, model).unwrap();
             let mut generations = BTreeMap::new();
-            let mut receivers = Vec::new();
-            for (index, id) in ids.into_iter().enumerate() {
+            for ((index, id), sender) in ids.into_iter().enumerate().zip(senders) {
                 engine
                     .submit(
                         EngineRequest::new(
@@ -862,38 +897,57 @@ fn a_generation_leaves_the_worker_at_the_event_that_ends_its_output() {
                 } else {
                     Vec::new()
                 };
-                let (mut generation, mut receiver) = active(0, &stops);
-                if index == 2 {
-                    // Room for one event, which nothing reads.
-                    let (sender, full) = tokio::sync::mpsc::channel(1);
-                    generation.events = Outbox::new(
-                        EventSender::new(sender),
-                        generation.cancellation.clone(),
-                        false,
-                    );
-                    receiver = full;
-                }
+                let (mut generation, _) = active(0, &stops);
+                generation.events = Outbox::new(
+                    EventSender::new(sender),
+                    generation.cancellation.clone(),
+                    false,
+                );
                 generations.insert(id, generation);
-                receivers.push(receiver);
             }
-            let cancellation = generations[&ids[2]].cancellation.clone();
-            let mut left = BTreeMap::new();
-            for step in 0..16 {
+            let cancellations = ids.map(|id| generations[&id].cancellation.clone());
+            let mut delivered = vec![Vec::new(); ids.len()];
+            // The event each request's generation left at.
+            let mut ended = BTreeMap::new();
+            for _ in 0..16 {
                 engine.step().unwrap();
                 for event in engine.drain_events() {
                     let id = event.request_id();
+                    let index = id.get() as usize - 1;
+                    let finished = matches!(event.kind(), EngineEventKind::Finished { .. });
+                    let token = matches!(event.kind(), EngineEventKind::Token { .. });
                     let live = generations.contains_key(&id);
+                    let cancelled = cancellations[index].is_cancelled();
                     assert!(handle_engine_event(
                         &tokenizer,
                         &mut engine,
                         &mut generations,
                         event
                     ));
-                    if live && !generations.contains_key(&id) {
-                        left.insert(id, step);
+                    let stream_finished = index != full && {
+                        let before = delivered[index].len();
+                        while let Ok(event) = receivers[index].try_recv() {
+                            delivered[index].push(event);
+                        }
+                        delivered[index][before..]
+                            .iter()
+                            .any(|event| matches!(event, GenerationEvent::Finished { .. }))
+                    };
+                    if !live {
+                        assert!(!generations.contains_key(&id), "a generation came back");
+                        continue;
                     }
-                    // A generation never comes back.
-                    assert!(left.keys().all(|gone| !generations.contains_key(gone)));
+                    // The event ends the output when the engine finished the
+                    // request, when its stream received a finish, or when the
+                    // worker cancelled it for a full stream.
+                    let ends = finished
+                        || stream_finished
+                        || (!cancelled && cancellations[index].is_cancelled());
+                    assert_eq!(generations.contains_key(&id), !ends, "request {}", id.get());
+                    assert_eq!(open(id), !ends, "request {}'s stream", id.get());
+                    if ends {
+                        ended.insert(id, (finished, token));
+                    }
                 }
                 engine.audit().unwrap();
                 if generations.is_empty() {
@@ -901,7 +955,15 @@ fn a_generation_leaves_the_worker_at_the_event_that_ends_its_output() {
                 }
             }
             assert!(generations.is_empty());
-            assert_eq!(left.len(), ids.len());
+            // Lengths end at the engine's finish; the client stop and the
+            // full stream end at the token that the worker refused.
+            assert_eq!(
+                ended.values().copied().collect::<Vec<_>>(),
+                [(true, false), (false, true), (false, true), (true, false)]
+            );
+            let mut retirements = std::mem::take(&mut *retirements.lock().unwrap());
+            retirements.sort();
+            assert_eq!(retirements, ids.map(|id| (id, true)));
             for id in ids {
                 assert!(match engine.request_state(id) {
                     Ok(state) => state.is_terminal(),
@@ -911,32 +973,24 @@ fn a_generation_leaves_the_worker_at_the_event_that_ends_its_output() {
                     Err(_) => false,
                 });
             }
-            assert!(cancellation.is_cancelled());
-            let streams = receivers
-                .iter_mut()
-                .map(|receiver| {
-                    let mut events = Vec::new();
-                    while let Ok(event) = receiver.try_recv() {
-                        events.push(event);
-                    }
-                    events
-                })
-                .collect::<Vec<_>>();
+            while let Ok(event) = receivers[full].try_recv() {
+                delivered[full].push(event);
+            }
             let finish = |events: &[GenerationEvent]| match events.last() {
                 Some(GenerationEvent::Finished { reason, usage }) => {
                     Some((*reason, usage.completion_tokens))
                 }
                 _ => None,
             };
-            assert_eq!(finish(&streams[0]), Some((FinishReason::Length, 3)));
-            assert_eq!(finish(&streams[1]), Some((FinishReason::Stop, 2)));
+            assert_eq!(finish(&delivered[0]), Some((FinishReason::Length, 3)));
+            assert_eq!(finish(&delivered[1]), Some((FinishReason::Stop, 2)));
             assert_eq!(
-                streams[2].len(),
+                delivered[full].len(),
                 1,
                 "one event fit, then the worker cancelled"
             );
-            assert!(matches!(streams[2][0], GenerationEvent::Content(_)));
-            assert_eq!(finish(&streams[3]), Some((FinishReason::Length, 6)));
+            assert!(matches!(delivered[full][0], GenerationEvent::Content(_)));
+            assert_eq!(finish(&delivered[3]), Some((FinishReason::Length, 6)));
         }
     }
 }

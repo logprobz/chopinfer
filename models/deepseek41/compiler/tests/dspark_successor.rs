@@ -15,9 +15,7 @@
 //! identical across the arms, and the reuse arm's consumer must have
 //! reused the successor. A case either forces its acceptance or takes each
 //! item's greedy acceptance from the queueing step's own target logits.
-use model_deepseek41_contract::execution_options::{
-    DSPARK_GRAPH_HANDLES_PER_RANK, DSPARK_SUCCESSOR_ITEMS,
-};
+use model_deepseek41_contract::execution_options::DSPARK_GRAPH_HANDLES_PER_RANK;
 use runtime_bundle_abi::*;
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -272,12 +270,10 @@ fn run(extra: &[(&str, &str)]) -> Result<()> {
         .map_err(|error| format!("{}: {error}", path.display()))?;
     std::fs::create_dir(&config.output)
         .map_err(|error| format!("{}: {error}", config.output.display()))?;
-    let mut options = BTreeMap::from([(DSPARK_SUCCESSOR_ITEMS.to_owned(), "16".to_owned())]);
-    options.extend(
-        extra
-            .iter()
-            .map(|&(name, value)| (name.to_owned(), value.to_owned())),
-    );
+    let options: BTreeMap<_, _> = extra
+        .iter()
+        .map(|&(name, value)| (name.to_owned(), value.to_owned()))
+        .collect();
     let mut fixture = Fixture::new(&config, &options)?;
     let mut receipts = Vec::new();
     for case in CASES {

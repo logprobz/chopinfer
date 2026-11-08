@@ -81,7 +81,7 @@ fn successor_controls_exist_only_in_state_capture_builds() {
 #[ignore = "run by successor_controls_exist_only_in_state_capture_builds in a fresh process"]
 fn a_device_result_step_under_every_control() {
     assert!(std::env::var_os("CHOPINFER_DSPARK_STATE_DIR").is_some());
-    let (host, mut instance) = prompted(8, 64, 8, &[]);
+    let (host, mut instance) = prompted(8, 64, &[]);
     cycle(&host, &mut instance, (8, 3, 3), (24, 3), 1).unwrap();
     assert_eq!(
         crate::instance::dspark_successor_for_test(instance.handle()),
@@ -112,7 +112,7 @@ fn forced_feedback_and_the_off_switch_drive_both_arms_and_dump_each_step() {
             controls.push("successors-off");
         }
         let root = capture_directory(label, &controls, true, 2);
-        let (host, mut instance) = prompted(8, 64, 8, &[]);
+        let (host, mut instance) = prompted(8, 64, &[]);
         let handle = instance.handle();
         crate::instance::set_dspark_state_capture_root_for_test(handle, Some(root.clone()));
         execute(&mut instance, &host, &batch(8, 3, 3));
@@ -228,7 +228,7 @@ fn the_gpu_comparison_protocol_walks_every_file_on_the_fake_host() {
         let case = root.join("output").join(label);
         for inline in [false, true] {
             let (host, mut instance) =
-                super::wide_successor::prompted_in(items, items + 1, 64, 16, &[]);
+                super::wide_successor::prompted_in(items, items + 1, 64, &[]);
             crate::instance::set_dspark_state_capture_root_for_test(
                 instance.handle(),
                 Some(state.clone()),

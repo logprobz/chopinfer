@@ -45,15 +45,6 @@ pub const DSPARK_MOE_DIRECT: &str = "dspark_moe_direct";
 /// the drafter table (`hc.draft_admit.verify`), so their stage boundaries
 /// fuse as the measured rows' do.
 pub const DSPARK_HC_DRAFT_ROWS: &str = "dspark_hc_draft_rows";
-/// Candidate knob: the most drafting items a DSpark successor plans, by
-/// default the widest. Above eight, a plan may project its accepted rows in
-/// several batched launches of at most 32 rows, and its saved status holds
-/// every item's depth-five maximum. Eight keeps the one-launch bound.
-pub const DSPARK_SUCCESSOR_ITEMS: &str = "dspark_successor_items";
-/// The successor item bound before the candidate, the knob's least value.
-pub const MIN_SUCCESSOR_ITEMS: u32 = 8;
-/// The widest successor the candidate plans, and the knob's default.
-pub const MAX_SUCCESSOR_ITEMS: u32 = 16;
 /// Candidate: a prefix capture or restore moves its snapshot's pieces on
 /// each rank with one upload of the snapshot table and one launch of the
 /// shared snapshot copy kernel, instead of a device copy per piece and page
@@ -87,12 +78,11 @@ pub struct Options {
     pub dspark_confidence_staged: bool,
     pub dspark_moe_direct: bool,
     pub dspark_hc_draft_rows: bool,
-    pub dspark_successor_items: u32,
     pub prefix_snapshot_copy_kernel: bool,
     pub dspark_main_short_rows: bool,
 }
 
-pub fn declarations() -> [ModelOptionV1; 16] {
+pub fn declarations() -> [ModelOptionV1; 15] {
     [
         (
             DIAGNOSTIC_STEP_LOGS,
@@ -129,14 +119,6 @@ pub fn declarations() -> [ModelOptionV1; 16] {
         (
             DSPARK_MOE_DIRECT,
             OptionDefinitionV1::Boolean { default: false },
-        ),
-        (
-            DSPARK_SUCCESSOR_ITEMS,
-            OptionDefinitionV1::Integer {
-                default: i64::from(MAX_SUCCESSOR_ITEMS),
-                minimum: i64::from(MIN_SUCCESSOR_ITEMS),
-                maximum: i64::from(MAX_SUCCESSOR_ITEMS),
-            },
         ),
         (
             PHASED_DECODE_REDUCE,
@@ -224,9 +206,6 @@ impl Options {
             dspark_confidence_staged: flag(DSPARK_CONFIDENCE_STAGED),
             dspark_hc_fusion: flag(DSPARK_HC_FUSION),
             dspark_markov_staged: flag(DSPARK_MARKOV_STAGED),
-            dspark_successor_items: values[DSPARK_SUCCESSOR_ITEMS]
-                .as_u64()
-                .expect("checked successor items") as u32,
             prefix_snapshot_copy_kernel: flag(PREFIX_SNAPSHOT_COPY_KERNEL),
             dspark_main_short_rows: flag(DSPARK_MAIN_SHORT_ROWS),
         })
@@ -401,6 +380,15 @@ mod tests {
         }
     }
 
+    /// DSpark successors plan up to 16 items; their candidate knob is gone.
+    #[test]
+    fn removed_successor_items_option_is_rejected() {
+        for value in ["8", "16"] {
+            let options = BTreeMap::from([("dspark_successor_items".into(), value.into())]);
+            assert!(declaration().resolve(&options).is_err());
+        }
+    }
+
     #[test]
     fn declared_and_legacy_defaults_keep_the_served_bounds_and_quiet_logs() {
         let declaration = declaration();
@@ -419,7 +407,6 @@ mod tests {
             dspark_confidence_staged: false,
             dspark_hc_fusion: false,
             dspark_markov_staged: false,
-            dspark_successor_items: 16,
             prefix_snapshot_copy_kernel: false,
             dspark_main_short_rows: false,
         };
@@ -445,7 +432,6 @@ mod tests {
             (DSPARK_CONFIDENCE_STAGED.into(), "true".into()),
             (DSPARK_HC_FUSION.into(), "true".into()),
             (DSPARK_MARKOV_STAGED.into(), "true".into()),
-            (DSPARK_SUCCESSOR_ITEMS.into(), "8".into()),
             (PREFIX_SNAPSHOT_COPY_KERNEL.into(), "true".into()),
             (DSPARK_MAIN_SHORT_ROWS.into(), "true".into()),
         ]);
@@ -466,7 +452,6 @@ mod tests {
                 dspark_confidence_staged: true,
                 dspark_hc_fusion: true,
                 dspark_markov_staged: true,
-                dspark_successor_items: 8,
                 prefix_snapshot_copy_kernel: true,
                 dspark_main_short_rows: true,
             }
@@ -497,9 +482,6 @@ mod tests {
             (DSPARK_MAIN_SHORT_ROWS, "1"),
             (DSPARK_GRAPH_HANDLES_PER_RANK, "-1"),
             (DSPARK_GRAPH_HANDLES_PER_RANK, "9223372036854775808"),
-            (DSPARK_SUCCESSOR_ITEMS, "7"),
-            (DSPARK_SUCCESSOR_ITEMS, "17"),
-            (DSPARK_SUCCESSOR_ITEMS, "true"),
         ] {
             assert!(
                 declaration
@@ -516,8 +498,6 @@ mod tests {
             (PREFILL_PLAN_CACHE_PLANS, 64),
             (DSPARK_GRAPH_HANDLES_PER_RANK, 0),
             (DSPARK_GRAPH_HANDLES_PER_RANK, i64::MAX),
-            (DSPARK_SUCCESSOR_ITEMS, 8),
-            (DSPARK_SUCCESSOR_ITEMS, 16),
         ] {
             assert!(Options::read(&BTreeMap::from([(name.into(), value.into())])).is_ok());
         }

@@ -12,9 +12,11 @@ use runtime_bundle_abi::device_results::{
 };
 use std::collections::BTreeMap;
 
-/// Most items a successor plans within one batched projection launch,
-/// the bound before `dspark_successor_items` lifted it.
+/// Most items a successor plans within one batched projection launch.
 pub(crate) const ONE_LAUNCH_ITEMS: u32 = 8;
+/// Most drafting items a successor plans. Above [`ONE_LAUNCH_ITEMS`] its
+/// accepted rows project in several batched launches.
+pub(crate) const SUCCESSOR_ITEMS: u32 = 16;
 
 /// The most accepted rows a successor of `items` items projects: one
 /// batched launch of `batch_rows` for at most [`ONE_LAUNCH_ITEMS`], and
@@ -35,8 +37,6 @@ pub(crate) fn status_rows(items: u32) -> u32 {
 }
 
 pub(crate) struct Cache {
-    /// Most drafting items a successor plans (`dspark_successor_items`).
-    pub items: u32,
     pub ranks: Vec<Memory>,
     pub graphs: BTreeMap<u32, GraphCache<DeepSeek>>,
     pub plan: Option<Plan>,
@@ -59,9 +59,8 @@ pub(crate) struct Memory {
 }
 
 impl Cache {
-    pub fn new(items: u32) -> Self {
+    pub fn new() -> Self {
         Self {
-            items,
             ranks: Vec::new(),
             graphs: BTreeMap::new(),
             plan: None,

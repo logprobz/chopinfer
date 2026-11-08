@@ -457,7 +457,6 @@ pub(crate) mod tests {
             (DSPARK_CONFIDENCE_STAGED, true.into()),
             (DSPARK_HC_FUSION, true.into()),
             (DSPARK_MARKOV_STAGED, true.into()),
-            (DSPARK_SUCCESSOR_ITEMS, 8.into()),
             (PREFIX_SNAPSHOT_COPY_KERNEL, true.into()),
             (DSPARK_MAIN_SHORT_ROWS, true.into()),
         ] {
@@ -479,7 +478,6 @@ pub(crate) mod tests {
                 dspark_confidence_staged: true,
                 dspark_hc_fusion: true,
                 dspark_markov_staged: true,
-                dspark_successor_items: 8,
                 prefix_snapshot_copy_kernel: true,
                 dspark_main_short_rows: true,
             }
@@ -491,7 +489,6 @@ pub(crate) mod tests {
             (DSPARK_GRAPH_HANDLES_PER_RANK, (-1).into()),
             (DIAGNOSTIC_STEP_LOGS, 1.into()),
             (WIDE_DRAFT, true.into()),
-            (DSPARK_SUCCESSOR_ITEMS, 17.into()),
         ] {
             assert_eq!(
                 decode(&with_option(base.clone(), name, value), |_| {}).unwrap_err(),

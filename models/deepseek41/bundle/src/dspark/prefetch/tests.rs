@@ -158,7 +158,7 @@ fn preserves_c8_batch_bound_and_declines_oversized_projection() {
     assert!(feedback.plan(&state, 100, 8).unwrap().is_none());
 }
 
-/// Up to `dspark_successor_items` drafting items plan one successor, which
+/// Up to the item bound, drafting items plan one successor, which
 /// computes five heads above eight items. Above eight, the accepted rows
 /// may pass one 32-row launch: every item's rows project, up to its
 /// depth-five maximum, in launches of at most 32 rows.
@@ -201,7 +201,7 @@ fn wide_successors_plan_up_to_the_item_bound_and_project_in_several_launches() {
 }
 
 /// Eight or fewer items keep the one-launch bound at every item bound, so
-/// the candidate leaves their plans unchanged.
+/// their plans are those of the bound of eight.
 #[test]
 fn at_most_eight_items_keep_one_projection_launch_at_every_bound() {
     for bound in [8, 9, 16] {
@@ -224,12 +224,13 @@ fn at_most_eight_items_keep_one_projection_launch_at_every_bound() {
 }
 
 /// The successor's saved status holds its projected rows and five block
-/// rows an item: the one-launch maximum and eight items at the default,
-/// 1,408 bytes at sixteen items. Every plan within the bound fits it.
+/// rows an item: the one-launch maximum and eight items at a bound of
+/// eight, 1,408 bytes at sixteen items, the served bound
+/// ([`SUCCESSOR_ITEMS`]). Every plan within the bound fits it.
 #[test]
 fn successor_status_holds_the_depth_five_maximum_of_its_bound() {
     assert_eq!(status_rows(8) * 8, (32 + 8 * 5) * 8);
-    assert_eq!(status_rows(16) * 8, 1408);
+    assert_eq!(status_rows(SUCCESSOR_ITEMS) * 8, 1408);
     assert_eq!(status_rows(9) * 8, (9 * 6 + 9 * 5) * 8);
     for bound in 8..=16 {
         for items in 1..=bound {

@@ -1041,7 +1041,6 @@ fn create(services: HostServicesV1, bytes: &[u8]) -> Result<Instance, Failed<Ins
                 } else {
                     crate::lower::dspark::DraftMode::Greedy
                 },
-                config.execution.dspark_successor_items,
             )
             .map_err(|error| {
                 log(&error);
@@ -1565,6 +1564,8 @@ pub(crate) use dspark::boundary::for_test as dspark_boundary_for_test;
 pub(crate) use dspark::drafter_launches_at_depth_for_test as dspark_drafter_launches_at_depth;
 #[cfg(test)]
 pub(crate) use dspark::drafter_launches_for_test as dspark_drafter_launches;
+#[cfg(test)]
+pub(crate) use dspark::prefetch::discard_for_test as dspark_discard_successor_for_test;
 #[cfg(test)]
 pub(crate) use dspark::prefetch::for_test as dspark_prefetch_for_test;
 #[cfg(test)]

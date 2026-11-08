@@ -1,15 +1,11 @@
-//! Successors of 9 to 16 drafting items (`dspark_successor_items`). With
-//! the bound at 16, a verify step's device result queues the private
-//! projection of every item's accepted rows, in launches of at most 32
-//! rows, and its draft, in one forward through twelve items and two above,
-//! and the next step reuses both: its target work and boundary readback are
-//! the inline path's. A bound of eight queues none above eight
-//! items, and steps of at most eight items are unchanged at any bound.
+//! Successors of 9 to 16 drafting items. A verify step's device result
+//! queues the private projection of every item's accepted rows, in
+//! launches of at most 32 rows, and its draft, in one forward through
+//! twelve items and two above, and the next step reuses both: its target
+//! work and boundary readback are the inline path's.
 use super::results::{DeviceSink, batch, metadata};
 use super::*;
-use model_deepseek41_contract::execution_options::{
-    DSPARK_GRAPH_HANDLES_PER_RANK, DSPARK_SUCCESSOR_ITEMS,
-};
+use model_deepseek41_contract::execution_options::DSPARK_GRAPH_HANDLES_PER_RANK;
 use runtime_bundle_abi::device_results::*;
 
 /// The drafter forwards one draft of `items` items takes at the default
@@ -67,15 +63,14 @@ const KV_PAGES: u64 = 1024;
 const PROMPT_PAGE: u64 = 64;
 const SNAPSHOT_PAGE: u64 = 512;
 
-/// An instance of `items` slots serving `verify` rows with the successor
-/// bound `bound` and `options`, each item's three-token prompt committed.
+/// An instance of `items` slots serving `verify` rows with `options`, each
+/// item's three-token prompt committed.
 pub(super) fn prompted(
     items: u32,
     verify: u32,
-    bound: u32,
     options: &[(&str, serde_json::Value)],
 ) -> (Rc<Host>, BundleInstanceV1) {
-    prompted_in(items, items, verify, bound, options)
+    prompted_in(items, items, verify, options)
 }
 
 /// [`prompted`] on an instance of `slots` slots whose pool holds
@@ -84,7 +79,6 @@ pub(super) fn prompted_in(
     items: u32,
     slots: u32,
     verify: u32,
-    bound: u32,
     options: &[(&str, serde_json::Value)],
 ) -> (Rc<Host>, BundleInstanceV1) {
     let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
@@ -93,11 +87,7 @@ pub(super) fn prompted_in(
     host.speculation.set(Some((5, verify)));
     host.kv_pages.set(KV_PAGES);
     let mut record = crate::config::tests::record(&shape, host.kv, slots, false);
-    for (name, value) in options
-        .iter()
-        .cloned()
-        .chain([(DSPARK_SUCCESSOR_ITEMS, bound.into())])
-    {
+    for (name, value) in options.iter().cloned() {
         record = crate::config::tests::with_option(record, name, value);
     }
     let mut instance = api()
@@ -193,18 +183,18 @@ fn finish(host: &Host, mut instance: BundleInstanceV1, items: u32, kept_rows: u3
     assert_eq!(host.acquired.get(), host.released.get());
 }
 
-/// At the bound of 16, a step of 9, 12, 13 or 16 items queues its
-/// successor after the boundary readback, with no other readback: one
-/// projection launch a 32 rows of the accepted rows and the draft's one or
-/// two forwards a rank. The next step launches neither before its hash,
-/// and from the hash through its boundary readback it issues the inline
-/// path's journal. At a bound of eight neither step queues one.
+/// A step of 9, 12, 13 or 16 items queues its successor after the
+/// boundary readback, with no other readback: one projection launch a 32
+/// rows of the accepted rows and the draft's one or two forwards a rank.
+/// The next step launches neither before its hash, and from the hash
+/// through its boundary readback it issues the journal of the same step
+/// drafting inline once the successor is discarded.
 #[test]
 fn wide_device_feedback_queues_a_successor_the_next_step_reuses() {
     for items in [9, 12, 13, 16] {
         let mut targets = Vec::new();
-        for bound in [8, 16] {
-            let (host, mut instance) = prompted(items, 64, bound, &[]);
+        for inline in [true, false] {
+            let (host, mut instance) = prompted(items, 64, &[]);
             let mut steps = Vec::new();
             for (epoch, start, projected) in [(1, 3, items * 3), (2, 7, items * 4)] {
                 let step = cycle(
@@ -222,32 +212,30 @@ fn wide_device_feedback_queues_a_successor_the_next_step_reuses() {
                             .collect::<Vec<_>>(),
                     )
                     .unwrap();
+                if inline && epoch == 1 {
+                    crate::instance::dspark_discard_successor_for_test(instance.handle());
+                }
                 steps.push(step);
             }
             for (index, step) in steps.iter().enumerate() {
                 let download = position(step, "download ");
-                assert_eq!(count(step, "download "), 1, "items={items} bound={bound}");
-                let queued = if bound == 16 {
-                    4 * ((items * 4).div_ceil(32) + chunks(items)) as usize
-                } else {
-                    0
-                };
+                assert_eq!(count(step, "download "), 1, "items={items} inline={inline}");
                 assert_eq!(
                     count(&step[download..], "replay "),
-                    queued,
-                    "items={items} bound={bound} step={index}: the successor's projection and draft"
+                    4 * ((items * 4).div_ceil(32) + chunks(items)) as usize,
+                    "items={items} inline={inline} step={index}: the successor's projection and draft"
                 );
                 let hash = hash(&host, step);
-                let inline = count(&step[..hash], "replay ");
-                if index == 1 && bound == 16 {
-                    assert_eq!(inline, 0, "items={items}: the successor is reused");
+                let drafted = count(&step[..hash], "replay ");
+                if index == 1 && !inline {
+                    assert_eq!(drafted, 0, "items={items}: the successor is reused");
                 } else {
-                    assert!(inline > 0, "items={items} bound={bound} step={index}");
+                    assert!(drafted > 0, "items={items} inline={inline} step={index}");
                 }
             }
             assert_eq!(
                 crate::instance::dspark_successor_for_test(instance.handle()),
-                (bound == 16).then_some(items as usize)
+                Some(items as usize)
             );
             let step = &steps[1];
             targets.push(step[hash(&host, step)..=position(step, "download ")].to_vec());
@@ -261,52 +249,6 @@ fn wide_device_feedback_queues_a_successor_the_next_step_reuses() {
     }
 }
 
-/// At most eight items queue the same successors at every bound: the
-/// whole journal of two cycles at C8, depth three, and C6, depth five,
-/// whose six-row items pass one launch and plan none, is the default's.
-#[test]
-fn at_most_eight_items_keep_the_default_journal_at_every_bound() {
-    for (items, k, accepted) in [(8, 3, 3), (6, 5, 5), (6, 5, 4)] {
-        let mut journals = Vec::new();
-        for bound in [8, 9, 16] {
-            let (host, mut instance) = prompted(items, 64, bound, &[]);
-            let rows = accepted + 1;
-            for (epoch, start, projected) in
-                [(1, 3, items * 3), (2, 3 + u64::from(rows), items * rows)]
-            {
-                cycle(
-                    &host,
-                    &mut instance,
-                    (items, k, start),
-                    (projected, accepted),
-                    epoch,
-                )
-                .unwrap();
-                instance
-                    .commit_accepted(
-                        &(1..=items)
-                            .map(|id| kept(u64::from(id), rows))
-                            .collect::<Vec<_>>(),
-                    )
-                    .unwrap();
-            }
-            for request in 1..=items {
-                instance.retire_request(u64::from(request)).unwrap();
-            }
-            instance.destroy().unwrap();
-            let journal = host.journal.borrow().clone();
-            journals.push(
-                journal
-                    .into_iter()
-                    .filter(|line| !line.starts_with("allocate "))
-                    .collect::<Vec<_>>(),
-            );
-        }
-        assert_eq!(journals[0], journals[1], "items={items} k={k}");
-        assert_eq!(journals[0], journals[2], "items={items} k={k}");
-    }
-}
-
 /// Above eight items both paths compute five heads, so a wide successor
 /// serves the next step at a shallower or a deeper draft budget: depth
 /// five to three and three to five each reuse it, in one or two forwards.
@@ -314,7 +256,7 @@ fn at_most_eight_items_keep_the_default_journal_at_every_bound() {
 fn wide_successors_serve_depth_changes_in_both_directions() {
     for items in [9, 13] {
         for (first, next) in [(5, 3), (3, 5)] {
-            let (host, mut instance) = prompted(items, 96, 16, &[]);
+            let (host, mut instance) = prompted(items, 96, &[]);
             cycle(
                 &host,
                 &mut instance,
@@ -361,7 +303,6 @@ fn graph_pressure_keeps_wide_successors_eager_and_reused() {
         let (host, mut instance) = prompted(
             items,
             64,
-            16,
             &[(DSPARK_GRAPH_HANDLES_PER_RANK, handles.into())],
         );
         let first = cycle(&host, &mut instance, (items, 3, 3), (items * 3, 3), 1).unwrap();
@@ -433,7 +374,7 @@ fn a_full_c16_successor_status_is_checked_in_every_launch_and_rank() {
         Some((3, 3, 0, 0)),
         Some((3, 4, 1, 39)),
     ] {
-        let (host, mut instance) = prompted(items, 96, 16, &[]);
+        let (host, mut instance) = prompted(items, 96, &[]);
         let first = cycle(&host, &mut instance, (items, 5, 3), (items * 3, 5), 1).unwrap();
         let download = position(&first, "download ");
         assert_eq!(
@@ -546,7 +487,7 @@ enum Fault {
 fn a_failed_wide_successor_phase_poisons_with_no_adoption() {
     let items = 16;
     let (step, rings, status) = {
-        let (host, mut instance) = prompted(items, 64, 16, &[]);
+        let (host, mut instance) = prompted(items, 64, &[]);
         let rings = crate::instance::dspark_successor_rings_for_test(instance.handle());
         let status = crate::instance::dspark_successor_status_for_test(instance.handle());
         let step = cycle(&host, &mut instance, (items, 3, 3), (items * 3, 3), 1).unwrap();
@@ -634,7 +575,7 @@ fn a_failed_wide_successor_phase_poisons_with_no_adoption() {
         ("next ring copy", copy(rings[0].0, rings[0].2), Fault::Copy),
         ("ring undo copy", copy(rings[3].1, rings[3].0), Fault::Copy),
     ] {
-        let (host, mut instance) = prompted(items, 64, 16, &[]);
+        let (host, mut instance) = prompted(items, 64, &[]);
         let prefix = &step[..at];
         let (switch, lines) = match fault {
             Fault::Copy => (&host.device.fail_copy, "copy "),
@@ -744,7 +685,7 @@ fn wide_successors_follow_cancel_retirement_and_restore() {
     let items = 16;
     let logs = [(DIAGNOSTIC_STEP_LOGS, serde_json::Value::from(true))];
 
-    let (host, mut instance) = prompted(items, 64, 16, &logs);
+    let (host, mut instance) = prompted(items, 64, &logs);
     cycle(&host, &mut instance, (items, 3, 3), (items * 3, 3), 1).unwrap();
     assert_eq!(
         crate::instance::dspark_successor_for_test(instance.handle()),
@@ -772,7 +713,7 @@ fn wide_successors_follow_cancel_retirement_and_restore() {
     instance.destroy().unwrap();
     assert_eq!(host.acquired.get(), host.released.get());
 
-    let (host, mut instance) = prompted(items, 64, 16, &logs);
+    let (host, mut instance) = prompted(items, 64, &logs);
     cycle(&host, &mut instance, (items, 3, 3), (items * 3, 3), 1).unwrap();
     instance
         .commit_accepted(
@@ -796,7 +737,7 @@ fn wide_successors_follow_cancel_retirement_and_restore() {
     finish(&host, instance, items - 1, 4);
 
     let ids: Vec<u32> = (0..141).collect();
-    let (host, mut instance) = prompted_in(items, 20, 64, 16, &logs);
+    let (host, mut instance) = prompted_in(items, 20, 64, &logs);
     execute(
         &mut instance,
         &host,

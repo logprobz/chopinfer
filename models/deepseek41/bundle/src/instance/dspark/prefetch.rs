@@ -82,7 +82,7 @@ impl Instance {
         let Some(plan) = feedback.plan(
             state,
             device.shape.geometry.shape.vocab,
-            device.prefetch.items,
+            crate::dspark::prefetch::SUCCESSOR_ITEMS,
         )?
         else {
             return Ok(());
@@ -234,7 +234,7 @@ pub(crate) fn for_test(
             .plan(
                 state,
                 device.shape.geometry.shape.vocab,
-                device.prefetch.items,
+                crate::dspark::prefetch::SUCCESSOR_ITEMS,
             )
             .unwrap()
             .expect("predictable test");
@@ -288,6 +288,20 @@ pub(crate) fn queued_for_test(handle: runtime_bundle_abi::BundleHandleV1) -> Opt
         let mut table = table.borrow_mut();
         let device = table.get_mut(handle)?.dspark.as_ref()?;
         device.prefetch.plan.as_ref().map(|plan| plan.drafts.len())
+    })
+}
+
+/// Drops the successor the drafter of `handle` queued, as a step that does
+/// not match it discards it, so the next step drafts inline.
+#[cfg(test)]
+pub(crate) fn discard_for_test(handle: runtime_bundle_abi::BundleHandleV1) {
+    crate::instance::INSTANCES.with(|table| {
+        let mut table = table.borrow_mut();
+        let device = table
+            .get_mut(handle)
+            .and_then(|instance| instance.dspark.as_mut())
+            .expect("drafter");
+        device.prefetch.plan = None;
     })
 }
 

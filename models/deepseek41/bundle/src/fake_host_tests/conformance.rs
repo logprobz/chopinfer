@@ -20,7 +20,6 @@ mod anchored;
 mod drafter;
 mod dspark_main_short;
 mod snapshot_copy;
-mod successor;
 mod templated;
 mod wide;
 

@@ -45,11 +45,11 @@ pub const DSPARK_MOE_DIRECT: &str = "dspark_moe_direct";
 /// the drafter table (`hc.draft_admit.verify`), so their stage boundaries
 /// fuse as the measured rows' do.
 pub const DSPARK_HC_DRAFT_ROWS: &str = "dspark_hc_draft_rows";
-/// Candidate: a prefix capture or restore moves its snapshot's pieces on
-/// each rank with one upload of the snapshot table and one launch of the
-/// shared snapshot copy kernel, instead of a device copy per piece and page
-/// fragment. The header actions, the drain of every rank and the refusals
-/// stay as they are.
+/// Candidate, on by default: a prefix capture or restore moves its
+/// snapshot's pieces on each rank with one upload of the snapshot table and
+/// one launch of the shared snapshot copy kernel, instead of a device copy
+/// per piece and page fragment. The header actions, the drain of every rank
+/// and the refusals stay as they are.
 pub const PREFIX_SNAPSHOT_COPY_KERNEL: &str = "prefix_snapshot_copy_kernel";
 /// Candidate: the Flash TP4 DSpark main projection runs the compact
 /// admission and compute pair at the inner rows the candidate table admits
@@ -138,7 +138,7 @@ pub fn declarations() -> [ModelOptionV1; 15] {
         ),
         (
             PREFIX_SNAPSHOT_COPY_KERNEL,
-            OptionDefinitionV1::Boolean { default: false },
+            OptionDefinitionV1::Boolean { default: true },
         ),
         (
             SHARED_OVERLAP_MAX_ROWS,
@@ -407,7 +407,7 @@ mod tests {
             dspark_confidence_staged: false,
             dspark_hc_fusion: false,
             dspark_markov_staged: false,
-            prefix_snapshot_copy_kernel: false,
+            prefix_snapshot_copy_kernel: true,
             dspark_main_short_rows: false,
         };
         assert_eq!(Options::read(&defaults).unwrap(), expected);
@@ -432,7 +432,7 @@ mod tests {
             (DSPARK_CONFIDENCE_STAGED.into(), "true".into()),
             (DSPARK_HC_FUSION.into(), "true".into()),
             (DSPARK_MARKOV_STAGED.into(), "true".into()),
-            (PREFIX_SNAPSHOT_COPY_KERNEL.into(), "true".into()),
+            (PREFIX_SNAPSHOT_COPY_KERNEL.into(), "false".into()),
             (DSPARK_MAIN_SHORT_ROWS.into(), "true".into()),
         ]);
         let resolved = declaration.resolve(&overrides).unwrap();
@@ -452,7 +452,7 @@ mod tests {
                 dspark_confidence_staged: true,
                 dspark_hc_fusion: true,
                 dspark_markov_staged: true,
-                prefix_snapshot_copy_kernel: true,
+                prefix_snapshot_copy_kernel: false,
                 dspark_main_short_rows: true,
             }
         );

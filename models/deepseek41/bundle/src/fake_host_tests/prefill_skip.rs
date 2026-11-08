@@ -257,17 +257,17 @@ fn exact_prefill_profiles_execute_capture_restore_and_continue() {
 
 #[test]
 fn shared_prefix_endpoint_captures_restores_and_returns_to_the_grid() {
-    shared_prefix_endpoint(false);
+    shared_prefix_endpoint(true);
 }
 
 /// The shared prefix endpoint with the `prefix_snapshot_copy_kernel`
-/// candidate on (`super::snapshot_kernel`). Its journals are the device
-/// copies' plus each rank's snapshot copy symbol, table buffer and their
-/// releases, with each snapshot's copies on a rank made by one table upload
-/// and one launch, whose `kernel copy` lines are the device copies' lines.
+/// candidate off (`super::snapshot_kernel`). Its journals are the kernel's
+/// less each rank's snapshot copy symbol, table buffer and their releases,
+/// with each snapshot's copies on a rank made by device copies, whose lines
+/// are the kernel's `kernel copy` lines.
 #[test]
-fn shared_prefix_endpoint_captures_restores_with_the_snapshot_copy_kernel() {
-    super::snapshot_kernel::with_kernel(|| shared_prefix_endpoint(true));
+fn shared_prefix_endpoint_captures_restores_with_device_copies() {
+    super::snapshot_kernel::with_copies(|| shared_prefix_endpoint(false));
 }
 
 /// Captures a 4032-token shared prefix at its scheduler cut, restores it
@@ -650,18 +650,18 @@ fn anchor_flags_require_a_supported_instance_and_cuts_entry() {
 }
 
 /// The skip tests that capture and restore, with the
-/// `prefix_snapshot_copy_kernel` candidate on (`super::super::snapshot_kernel`).
-mod snapshot_kernel {
-    use super::super::snapshot_kernel::with_kernel;
+/// `prefix_snapshot_copy_kernel` candidate off (`super::super::snapshot_kernel`).
+mod device_copies {
+    use super::super::snapshot_kernel::with_copies;
 
     #[test]
     fn exact_prefill_profiles_execute_capture_restore_and_continue() {
-        with_kernel(super::exact_prefill_profiles_execute_capture_restore_and_continue);
+        with_copies(super::exact_prefill_profiles_execute_capture_restore_and_continue);
     }
 
     #[cfg(feature = "diagnostic-taps")]
     #[test]
     fn profile_capture_contains_chunk_state_snapshot_and_raw_logits() {
-        with_kernel(super::profile_capture_contains_chunk_state_snapshot_and_raw_logits);
+        with_copies(super::profile_capture_contains_chunk_state_snapshot_and_raw_logits);
     }
 }

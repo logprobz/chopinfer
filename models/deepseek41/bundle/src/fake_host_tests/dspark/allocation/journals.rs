@@ -88,18 +88,18 @@ fn allocated_lifetimes_journal() {
     let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
     let mut mismatches = Vec::new();
     for (items, width, depth, suffix, options, expected) in [
-        (4, 16, 5, "", &[][..], (69574, 0xe77bd632905350a4)),
-        (8, 32, 5, "", &[], (107170, 0x27ad69c1a38ca319)),
-        (4, 12, 3, "-d3", &[], (69742, 0x8b78cfcbc20d89f6)),
-        (16, 65, 5, "-odd", &[], (190678, 0x9d485c3cff05f2d4)),
-        (32, 192, 5, "-maximum", &[], (343412, 0x9e9b4781bce22e05)),
+        (4, 16, 5, "", &[][..], (69594, 0x1af9c0c2fab7302b)),
+        (8, 32, 5, "", &[], (107190, 0x2683cad5573f7aea)),
+        (4, 12, 3, "-d3", &[], (69762, 0x66ef2d4f7dd05c69)),
+        (16, 65, 5, "-odd", &[], (190698, 0xf21e89b2dbe0b2f7)),
+        (32, 192, 5, "-maximum", &[], (343432, 0x428b1e9237c1dd11)),
         (
             16,
             65,
             5,
             "-odd-wide",
             &[WIDE_VERIFY],
-            (191966, 0x8f6c059c20f3e691),
+            (191986, 0x3c5c87b83338600f),
         ),
         (
             32,
@@ -107,7 +107,7 @@ fn allocated_lifetimes_journal() {
             5,
             "-maximum-wide",
             &[WIDE_VERIFY],
-            (344700, 0xf9aea18cc42f0cef),
+            (344720, 0xd1d61ad5815e0131),
         ),
         (
             4,
@@ -115,7 +115,7 @@ fn allocated_lifetimes_journal() {
             5,
             "-phased",
             &[PHASED_DECODE_REDUCE],
-            (69598, 0x9b0ef3fd31ab281f),
+            (69618, 0xcab0f88685c5e330),
         ),
         (
             16,
@@ -123,7 +123,7 @@ fn allocated_lifetimes_journal() {
             5,
             "-odd-phased",
             &[PHASED_DECODE_REDUCE],
-            (189438, 0x080c5e3fec0dc081),
+            (189458, 0xfeb97887c8000bf6),
         ),
         (
             16,
@@ -131,7 +131,7 @@ fn allocated_lifetimes_journal() {
             5,
             "-odd-wide-draft",
             &[WIDE_VERIFY, WIDE_DRAFT],
-            (191870, 0xb5c6ca5d97ae39e1),
+            (191890, 0xd3548217c1a9d6a7),
         ),
         (
             32,
@@ -139,7 +139,7 @@ fn allocated_lifetimes_journal() {
             5,
             "-maximum-wide-draft",
             &[WIDE_VERIFY, WIDE_DRAFT],
-            (343700, 0xbd20401d8e734f35),
+            (343720, 0xd6ae1b16b150d3ab),
         ),
         (
             8,
@@ -147,7 +147,7 @@ fn allocated_lifetimes_journal() {
             5,
             "-markov-staged",
             &drafter[..1],
-            (107162, 0x56f83e9a42d89523),
+            (107182, 0x4a21c7c7a98ff0bc),
         ),
         (
             8,
@@ -155,7 +155,7 @@ fn allocated_lifetimes_journal() {
             5,
             "-hc-fusion",
             &drafter[1..2],
-            (107098, 0x4127601f7737c3f5),
+            (107118, 0x92af4aa2217cfa22),
         ),
         (
             8,
@@ -163,7 +163,7 @@ fn allocated_lifetimes_journal() {
             5,
             "-confidence-staged",
             &drafter[2..3],
-            (107182, 0xbf30cd6ddab8f17d),
+            (107202, 0x09b5fc343b368b6e),
         ),
         (
             8,
@@ -171,7 +171,7 @@ fn allocated_lifetimes_journal() {
             5,
             "-moe-direct",
             &drafter[3..4],
-            (107110, 0x51f4a30a4893dbb3),
+            (107130, 0xefd0c33a10dbe88c),
         ),
         (
             4,
@@ -179,9 +179,9 @@ fn allocated_lifetimes_journal() {
             5,
             "-hc-draft-rows",
             &[DSPARK_HC_FUSION, DSPARK_HC_DRAFT_ROWS],
-            (69502, 0xc9889469dd5a1dca),
+            (69522, 0x3f7fb513a72db399),
         ),
-        (4, 16, 5, "-drafter", &drafter, (69446, 0x9f6a3f60dd048a05)),
+        (4, 16, 5, "-drafter", &drafter, (69466, 0xaab4f6d86115c283)),
     ] {
         let (host, mut instance) = if options.is_empty() {
             create_with_limits(shape, 32, 192)

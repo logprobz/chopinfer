@@ -178,12 +178,12 @@ use super::*;
 // retain their launches, operands, grids and ordering under the typed handle
 // map; the journal declaration covers the create-time resource changes.
 const JOURNALS: [(u32, (usize, u64)); 6] = [
-    (4, (7396, 0xd9ca94810e078b1c)),
-    (6, (7556, 0xde9ee66b32d4f214)),
-    (8, (7720, 0x471494768cff6c14)),
-    (12, (8212, 0xcb45c4ad5dcd9341)),
-    (16, (8048, 0x22215141b2688816)),
-    (32, (7744, 0x942c93dcab296c27)),
+    (4, (7396, 0xe639d62fcb0647e8)),
+    (6, (7556, 0x16fd8a312728dc72)),
+    (8, (7720, 0xed6573e252847196)),
+    (12, (8212, 0x13039c148edcf871)),
+    (16, (8048, 0x3fd3bbcc40cd637c)),
+    (32, (7744, 0xeed6693810964199)),
 ];
 
 #[test]

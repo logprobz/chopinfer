@@ -146,12 +146,13 @@ fn the_candidates_start_beside_the_profiles() {
 }
 
 /// Each candidate configuration loads the snapshot copy kernel on each of
-/// its four ranks, and its base configuration loads it on none.
+/// its four ranks, and so does its base configuration, where the candidate
+/// is the default.
 #[test]
-fn only_the_candidates_load_the_snapshot_copy_kernel() {
+fn the_candidates_and_their_bases_load_the_snapshot_copy_kernel() {
     let profiles = CANDIDATES
         .into_iter()
-        .flat_map(|(profile, base)| [(profile, 4), (base, 0)]);
+        .flat_map(|(profile, base)| [(profile, 4), (base, 4)]);
     for (profile, ranks) in profiles {
         let serving = SnapshotCopy::servings()
             .into_iter()

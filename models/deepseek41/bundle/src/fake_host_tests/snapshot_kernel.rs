@@ -1,46 +1,47 @@
-//! Prefix snapshots under the `prefix_snapshot_copy_kernel` candidate:
-//! each rank moves its snapshot's pieces with one table upload and one
-//! launch of the shared snapshot copy kernel, which the fake host runs as
-//! the device copies its arguments and uploaded table name
+//! Prefix snapshots under the `prefix_snapshot_copy_kernel` candidate, on
+//! by default: each rank moves its snapshot's pieces with one table upload
+//! and one launch of the shared snapshot copy kernel, which the fake host
+//! runs as the device copies its arguments and uploaded table name
 //! (`FakeHost::run_snapshot_copy`). The pages and restored slots must hold
 //! what the device copies leave there, byte origin for byte origin, and the
 //! lifecycle keeps its rules: every rank that received work drains, an
 //! unconfirmed drain is INTERNAL_ERROR, which poisons, a refused plan
 //! submits nothing, and a failed or refused restore leaves the slot free.
-//! The prefix tests of this file's parent rerun here with the candidate
-//! on ([`with_kernel`]).
+//! The prefix tests of this file's parent rerun here with the option off
+//! ([`with_copies`]).
 
 use super::*;
 use model_deepseek41_contract::execution_options::PREFIX_SNAPSHOT_COPY_KERNEL;
 
-/// Runs `body` with the candidate on in every instance it creates, and
-/// fails unless some snapshot went through the kernel.
-pub(crate) fn with_kernel<T>(body: impl FnOnce() -> T) -> T {
+/// Runs `body` with the candidate off in every instance it creates, and
+/// fails if any snapshot went through the kernel.
+pub(crate) fn with_copies<T>(body: impl FnOnce() -> T) -> T {
     let before = SNAPSHOT_COPY_LAUNCHES.with(Cell::get);
     let result = crate::config::tests::with_record_options(
-        &[(PREFIX_SNAPSHOT_COPY_KERNEL, true.into())],
+        &[(PREFIX_SNAPSHOT_COPY_KERNEL, false.into())],
         body,
     );
-    assert!(
-        SNAPSHOT_COPY_LAUNCHES.with(Cell::get) > before,
-        "no snapshot went through the snapshot copy kernel"
+    assert_eq!(
+        SNAPSHOT_COPY_LAUNCHES.with(Cell::get),
+        before,
+        "a snapshot went through the snapshot copy kernel"
     );
     result
 }
 
 #[test]
-fn prefix_snapshots_round_trip_through_the_pages_with_the_kernel() {
-    with_kernel(super::prefix_snapshots_round_trip_through_the_pages);
+fn prefix_snapshots_round_trip_through_the_pages_with_device_copies() {
+    with_copies(super::prefix_snapshots_round_trip_through_the_pages);
 }
 
 #[test]
-fn a_state_slot_takes_a_new_request_once_its_holder_retires_with_the_kernel() {
-    with_kernel(super::a_state_slot_takes_a_new_request_once_its_holder_retires);
+fn a_state_slot_takes_a_new_request_once_its_holder_retires_with_device_copies() {
+    with_copies(super::a_state_slot_takes_a_new_request_once_its_holder_retires);
 }
 
 #[test]
-fn the_lifecycle_verifies_cancels_preempts_and_recycles_slots_with_the_kernel() {
-    with_kernel(super::the_lifecycle_verifies_cancels_preempts_and_recycles_slots);
+fn the_lifecycle_verifies_cancels_preempts_and_recycles_slots_with_device_copies() {
+    with_copies(super::the_lifecycle_verifies_cancels_preempts_and_recycles_slots);
 }
 
 /// The rank of the stream a journal line names (its second word).
@@ -151,8 +152,8 @@ fn ranks_of_launches(host: &FakeHost, from: usize) -> Vec<u32> {
     journal_ranks(host, from, "launch ", kernels_sm120::snapshot_copy::SYMBOL)
 }
 
-/// Without the candidate no instance loads the kernel's module; with it,
-/// each rank loads it once and resolves its entry.
+/// With the candidate off no instance loads the kernel's module; with it
+/// on, each rank loads it once and resolves its entry.
 #[test]
 fn only_a_candidate_instance_loads_the_kernel() {
     for kernel in [false, true] {
@@ -272,12 +273,12 @@ fn refused_pages_submit_nothing() {
 }
 
 /// The pinned Flash journals of each topology and KV layout with the
-/// candidate on (`journal_steps_with`). Each rank also allocates its table
-/// and resolves the kernel's symbol at acquire, and releases the table, the
-/// symbol and the module at destroy: five lines a rank. The lifecycle
-/// captures no snapshot, so nothing else changes.
+/// candidate off (`journal_steps_with`). No rank allocates the kernel's
+/// table or resolves its symbol at acquire, or releases the table, the
+/// symbol and the module at destroy: five lines fewer a rank. The
+/// lifecycle captures no snapshot, so nothing else changes.
 #[test]
-fn the_flash_journals_add_each_ranks_kernel_and_table() {
+fn the_flash_journals_with_device_copies_drop_each_ranks_kernel_and_table() {
     let mut mismatches = Vec::new();
     for (topology, storage, (default_lines, _)) in super::FLASH_JOURNALS {
         let shape = crate::shape::topologies()
@@ -289,23 +290,23 @@ fn the_flash_journals_add_each_ranks_kernel_and_table() {
             .find(|kv| kv.storage == storage)
             .unwrap();
         let host = FakeHost::new(shape, kv);
-        super::journal_steps_with(&host, &[(PREFIX_SNAPSHOT_COPY_KERNEL, true.into())]);
+        super::journal_steps_with(&host, &[(PREFIX_SNAPSHOT_COPY_KERNEL, false.into())]);
         assert_eq!(host.acquired.get(), host.released.get(), "{topology}");
         let lines = host.device.journal.borrow().clone();
         assert_eq!(
-            lines.len(),
-            default_lines + 5 * shape.ranks() as usize,
+            lines.len() + 5 * shape.ranks() as usize,
+            default_lines,
             "{topology} {storage:?}"
         );
         let layout = format!("{storage:?}").to_lowercase();
-        let (_, _, expected) = KERNEL_JOURNALS
+        let (_, _, expected) = COPIES_JOURNALS
             .iter()
             .find(|(id, kind, _)| *id == topology && *kind == storage)
             .unwrap();
         if let Err(observed) = bundle_runtime::fake_host::check_journal(
             &lines,
             *expected,
-            &format!("{topology}.{layout}.snapshot-kernel.journal"),
+            &format!("{topology}.{layout}.copies.journal"),
         ) {
             mismatches.push(format!("{topology} {layout}: {observed}"));
         }
@@ -313,36 +314,36 @@ fn the_flash_journals_add_each_ranks_kernel_and_table() {
     assert!(mismatches.is_empty(), "{mismatches:#?}");
 }
 
-/// The pins of [`the_flash_journals_add_each_ranks_kernel_and_table`].
-const KERNEL_JOURNALS: [(&str, KvStorage, (usize, u64)); 6] = [
+/// The pins of [`the_flash_journals_with_device_copies_drop_each_ranks_kernel_and_table`].
+const COPIES_JOURNALS: [(&str, KvStorage, (usize, u64)); 6] = [
     (
         "deepseek41-flash-tp1",
         KvStorage::Native,
-        (15530, 0x57f82e95cf5ad48d),
+        (15525, 0x7f80da60657b8f51),
     ),
     (
         "deepseek41-flash-tp1",
         KvStorage::Bf16,
-        (15384, 0x7b557b2e0e5340f1),
+        (15379, 0xe419bcbd959c831e),
     ),
     (
         "deepseek41-flash-tp2",
         KvStorage::Native,
-        (30985, 0x9bd4eb665c9886f3),
+        (30975, 0x71eb2d4066b5928e),
     ),
     (
         "deepseek41-flash-tp2",
         KvStorage::Bf16,
-        (30693, 0x5e0a2d315fd28dcb),
+        (30683, 0x237c390684736b5e),
     ),
     (
         "deepseek41-flash-tp4",
         KvStorage::Native,
-        (76821, 0x0187e258db1715bd),
+        (76801, 0xc9be576878c4bfc2),
     ),
     (
         "deepseek41-flash-tp4",
         KvStorage::Bf16,
-        (75201, 0x5429dc6d559b568b),
+        (75181, 0xf66925c8a454ce45),
     ),
 ];

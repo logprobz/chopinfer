@@ -254,7 +254,7 @@ fn target_snapshot(
         });
     let bytes: Vec<_> = host.device.journal.borrow()[before..]
         .iter()
-        .filter(|l| l.starts_with("copy "))
+        .filter(|l| super::prefill_anchor::is_copy(l))
         .map(|l| spans(l))
         .filter(|v| targets.iter().any(|&s| inside(v[0], s)))
         .flat_map(|v| host.memory.borrow().bytes(v[1]))

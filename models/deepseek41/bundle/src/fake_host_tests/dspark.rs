@@ -1338,13 +1338,13 @@ fn used_depth_graphs_recompute_five_positions_after_depth_three() {
 }
 
 /// The drafter tests that capture and restore, with the
-/// `prefix_snapshot_copy_kernel` candidate on
+/// `prefix_snapshot_copy_kernel` candidate off
 /// (`super::snapshot_kernel`).
-mod snapshot_kernel {
-    use super::super::snapshot_kernel::with_kernel;
+mod device_copies {
+    use super::super::snapshot_kernel::with_copies;
 
     #[test]
     fn instance_budget_prefixes_compute_the_same_full_drafter_program() {
-        with_kernel(super::instance_budget_prefixes_compute_the_same_full_drafter_program);
+        with_copies(super::instance_budget_prefixes_compute_the_same_full_drafter_program);
     }
 }

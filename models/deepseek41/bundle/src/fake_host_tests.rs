@@ -1548,39 +1548,41 @@ fn journal_steps_with(host: &Rc<Host>, options: &[(&str, serde_json::Value)]) {
 /// 70-row prefill's 80 unfused input norms per rank (the row norm, the
 /// widening after it where one runs and the serial quantizer) with one
 /// fused launch on the same stream and grid, at every topology and KV
-/// layout; every other line is identical.
+/// layout; every other line is identical. Each rank also allocates the
+/// snapshot copy kernel's table and resolves its symbol at acquire, and
+/// releases them and the module at destroy (`snapshot_kernel`).
 const FLASH_JOURNALS: [(&str, KvStorage, (usize, u64)); 6] = [
     (
         "deepseek41-flash-tp1",
         KvStorage::Native,
-        (15525, 0x7f80da60657b8f51),
+        (15530, 0x57f82e95cf5ad48d),
     ),
     (
         "deepseek41-flash-tp1",
         KvStorage::Bf16,
-        (15379, 0xe419bcbd959c831e),
+        (15384, 0x7b557b2e0e5340f1),
     ),
     (
         "deepseek41-flash-tp2",
         KvStorage::Native,
-        (30975, 0x71eb2d4066b5928e),
+        (30985, 0x9bd4eb665c9886f3),
     ),
     (
         "deepseek41-flash-tp2",
         KvStorage::Bf16,
-        (30683, 0x237c390684736b5e),
+        (30693, 0x5e0a2d315fd28dcb),
     ),
     (
         "deepseek41-flash-tp4",
         KvStorage::Native,
         // One dedicated data arena and table per rank, reserved before KV.
         // The full journal audit retains every other operation exactly.
-        (76801, 0xc9be576878c4bfc2),
+        (76821, 0x0187e258db1715bd),
     ),
     (
         "deepseek41-flash-tp4",
         KvStorage::Bf16,
-        (75181, 0xf66925c8a454ce45),
+        (75201, 0x5429dc6d559b568b),
     ),
 ];
 
@@ -1620,7 +1622,11 @@ fn every_geometry_topology_runs_the_fake_host_journal_and_lifecycle() {
                     *cubin, "sinkhorn_hc_deepseek41_completion_sm120",
                     "{topology}"
                 );
-                assert!(crate::serves(cubin, &shape), "{topology}: {cubin}");
+                // The snapshot copy module loads apart, under its option.
+                assert!(
+                    crate::serves(cubin, &shape) || *cubin == crate::sm120::snapshot_copy::CUBIN,
+                    "{topology}: {cubin}"
+                );
             }
             let lines = host.device.journal.borrow().clone();
             assert_launches_fit_configured_shared(&lines, &topology);

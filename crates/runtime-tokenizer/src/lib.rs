@@ -675,6 +675,9 @@ pub struct Tokenizer {
     added_by_text: BTreeMap<String, u32>,
     special_ids: BTreeSet<u32>,
     trie: Vec<TrieNode>,
+    /// Whether some added token starts with the byte: the trie root's
+    /// children.
+    special_starts: [bool; 256],
 }
 
 impl Tokenizer {
@@ -757,10 +760,10 @@ impl Tokenizer {
                     max_input_bytes,
                     &mut scratch,
                 )?;
-                if !allowed.contains(token.as_str()) {
+                if !allowed.contains(token) {
                     return Err(TokenizerError {
                         message: format!("disallowed special token '{token}' in input"),
-                        disallowed_special_token: Some(token),
+                        disallowed_special_token: Some(token.to_owned()),
                     });
                 }
                 output.push(id);
@@ -1077,7 +1080,10 @@ impl Tokenizer {
         }
     }
 
-    fn special_at(&self, bytes: &[u8], offset: usize) -> Option<(usize, u32, String)> {
+    fn special_at(&self, bytes: &[u8], offset: usize) -> Option<(usize, u32, &str)> {
+        if !self.special_starts[usize::from(bytes[offset])] {
+            return None;
+        }
         let mut node = 0;
         let mut best = None;
         for (relative, byte) in bytes[offset..].iter().enumerate() {
@@ -1086,7 +1092,7 @@ impl Tokenizer {
             };
             node = *next;
             if let Some((id, token)) = &self.trie[node].terminal {
-                best = Some((relative + 1, *id, token.clone()));
+                best = Some((relative + 1, *id, token.as_str()));
             }
         }
         best
@@ -1351,6 +1357,10 @@ fn parse_definition(bytes: &[u8], contract: &TokenizerContract) -> Result<Tokeni
     } else {
         None
     };
+    let mut special_starts = [false; 256];
+    for byte in parsed.trie[0].children.keys() {
+        special_starts[usize::from(*byte)] = true;
+    }
     Ok(Tokenizer {
         contract: contract.clone(),
         patterns,
@@ -1362,6 +1372,7 @@ fn parse_definition(bytes: &[u8], contract: &TokenizerContract) -> Result<Tokeni
         added_by_text: parsed.added_by_text,
         special_ids: parsed.special_ids,
         trie: parsed.trie,
+        special_starts,
     })
 }
 
@@ -2834,6 +2845,31 @@ mod tests {
             [byte(b'a'), byte(b'b'), byte(b'x')]
         );
         assert_eq!(tokenizer.encode("\0", &[]).unwrap(), [byte(0)]);
+    }
+
+    /// Only a byte some added token starts with can start one, and from it
+    /// the longest added token is found, whatever text surrounds it.
+    #[test]
+    fn added_tokens_are_found_from_their_first_bytes() {
+        let (definition, configuration, contract) = fixture();
+        let tokenizer =
+            Tokenizer::from_verified_bytes(&definition, &configuration, &contract).unwrap();
+        let byte = |value: u8| 3 + u32::from(value);
+        let allowed = [FIXTURE_BOS, FIXTURE_EOS];
+        assert_eq!(
+            tokenizer.encode("a<bos>b<bo<eos><", &allowed).unwrap(),
+            [
+                byte(b'a'),
+                0,
+                byte(b'b'),
+                byte(b'<'),
+                byte(b'b'),
+                byte(b'o'),
+                1,
+                byte(b'<')
+            ]
+        );
+        assert_eq!(tokenizer.encode("<<<", &allowed).unwrap(), [byte(b'<'); 3]);
     }
 
     #[test]

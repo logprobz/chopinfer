@@ -52,30 +52,28 @@ fn default_is_on_and_zero_keeps_the_legacy_choice() {
 }
 
 #[test]
-fn the_candidate_routes_are_selected_only_by_one() {
+fn the_candidate_routes_are_on_unless_a_selector_turns_one_off() {
     let route = |files: Option<&str>, direct: Option<&str>| {
         route_for(files.map(Into::into), direct.map(Into::into), 7)
     };
     let files = super::readers::MAX_PER_MAPPING;
-    assert_eq!(route(None, None), LargeRoute::SHARED);
+    let both = LargeRoute {
+        reader_files: files,
+        direct: Some(7),
+    };
+    assert_eq!(route(None, None), both);
+    assert_eq!(route(Some("1"), Some("1")), both);
     assert_eq!(
-        route(Some("1"), None),
+        route(None, Some("0")),
         LargeRoute {
             reader_files: files,
             direct: None
         }
     );
-    assert_eq!(
-        route(Some("1"), Some("1")),
-        LargeRoute {
-            reader_files: files,
-            direct: Some(7)
-        }
-    );
     // Direct reads need the reader descriptions.
-    assert_eq!(route(None, Some("1")), LargeRoute::SHARED);
+    assert_eq!(route(Some("0"), None), LargeRoute::SHARED);
     for value in ["0", "", "yes", "24"] {
-        assert_eq!(route(Some(value), Some("1")), LargeRoute::SHARED, "{value}");
+        assert_eq!(route(Some(value), None), LargeRoute::SHARED, "{value}");
         assert_eq!(route(Some("1"), Some(value)).direct, None, "{value}");
     }
 }

@@ -384,38 +384,42 @@ fn large_gathers_settle_release_and_fail_without_leaks() {
     settle_and_fail(FakeHostDeviceV1::new(), [0, 1], "settle-fake");
 }
 
-/// One candidate: its name, its selectors' values, and the log line that
-/// shows it engaged.
+/// One opt-out of the default route: its name, its selectors' values, and
+/// the log lines that show it engaged and that it did not take the default.
 struct Candidate {
     name: &'static str,
     selectors: &'static [(&'static str, &'static str)],
-    engaged: &'static str,
+    engaged: Option<&'static str>,
+    absent: &'static [&'static str],
 }
+
+const READER_FILES: &str = "\"phase\":\"reader-files\",\"descriptions\"";
+const DIRECT: &str = "\"phase\":\"direct-gather\"";
 
 const CANDIDATES: [Candidate; 2] = [
     Candidate {
         name: "reader-files",
-        selectors: &[("CHOPINFER_MAPPED_READER_FILES", "1")],
-        engaged: "\"phase\":\"reader-files\",\"descriptions\"",
+        selectors: &[("CHOPINFER_MAPPED_LARGE_GATHER_DIRECT", "0")],
+        engaged: Some(READER_FILES),
+        absent: &[DIRECT],
     },
     Candidate {
-        name: "direct",
-        selectors: &[
-            ("CHOPINFER_MAPPED_READER_FILES", "1"),
-            ("CHOPINFER_MAPPED_LARGE_GATHER_DIRECT", "1"),
-        ],
-        engaged: "\"phase\":\"direct-gather\"",
+        name: "shared",
+        selectors: &[("CHOPINFER_MAPPED_READER_FILES", "0")],
+        engaged: None,
+        absent: &[READER_FILES, DIRECT],
     },
 ];
 
-/// Runs test `name` of this binary in a child process under each
-/// candidate, which the child names in `child`, and checks the log line
-/// that shows it engaged.
+/// Runs test `name` of this binary in a child process under each opt-out,
+/// which the child names in `child`, and checks the log lines that show
+/// the route it took.
 fn under_candidates(name: &str, child: &str) {
     for Candidate {
         name: candidate,
         selectors,
         engaged,
+        absent,
     } in CANDIDATES
     {
         let mut command = std::process::Command::new(std::env::current_exe().unwrap());
@@ -434,7 +438,8 @@ fn under_candidates(name: &str, child: &str) {
         );
         assert!(output.status.success(), "{candidate}: {out}\n{errors}");
         assert!(out.contains("1 passed; 0 failed"), "{candidate}: {out}");
-        assert!(errors.contains(engaged), "{candidate}: {errors}");
+        assert!(engaged.is_none_or(|engaged| errors.contains(engaged)), "{candidate}: {errors}");
+        assert!(!absent.iter().any(|line| errors.contains(line)), "{candidate}: {errors}");
     }
 }
 

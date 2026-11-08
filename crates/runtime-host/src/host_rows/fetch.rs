@@ -154,14 +154,14 @@ impl LargeRoute {
     };
 }
 
-/// The candidate selectors' route, read once: `CHOPINFER_MAPPED_READER_FILES=1`
-/// reads each mapping of a large gather through up to
-/// [`readers::MAX_PER_MAPPING`] descriptions of its own, one per reader;
-/// unset or anything else reads through the mapping's one retained
-/// descriptor. With it, `CHOPINFER_MAPPED_LARGE_GATHER_DIRECT=1` reads the
-/// rows on scoped workers straight into the outputs and the twins' copies
-/// ([`direct`]); without it the reader pool reads them. The bytes are the
-/// same either way.
+/// The candidate selectors' route, read once: unset or `1` (the default),
+/// `CHOPINFER_MAPPED_READER_FILES` reads each mapping of a large gather
+/// through up to [`readers::MAX_PER_MAPPING`] descriptions of its own, one
+/// per reader; anything else reads through the mapping's one retained
+/// descriptor. With it, `CHOPINFER_MAPPED_LARGE_GATHER_DIRECT` unset or `1`
+/// (the default) reads the rows on scoped workers straight into the outputs
+/// and the twins' copies ([`direct`]); anything else has the reader pool
+/// read them. The bytes are the same either way.
 pub(crate) fn large_route() -> LargeRoute {
     static ROUTE: OnceLock<LargeRoute> = OnceLock::new();
     *ROUTE.get_or_init(|| {
@@ -178,13 +178,12 @@ fn route_for(
     direct: Option<std::ffi::OsString>,
     workers: usize,
 ) -> LargeRoute {
-    let on = |value: Option<std::ffi::OsString>| value.is_some_and(|value| value == "1");
-    if !on(reader_files) {
+    if !configured(reader_files) {
         return LargeRoute::SHARED;
     }
     LargeRoute {
         reader_files: readers::MAX_PER_MAPPING,
-        direct: on(direct).then_some(workers),
+        direct: configured(direct).then_some(workers),
     }
 }
 

@@ -1583,8 +1583,17 @@ impl GenerationBackend for EngineGenerationBackend {
                 // Compile before publishing any of the group to the worker.
                 // A failed member retains its own admission error. Chains
                 // are hashed after it, so a job waiting for the pool holds
-                // none.
+                // none. The group waits for the pool in a slot this task
+                // empties once every member is cancelled, as the worker
+                // would admit none of them.
+                let cancellations = submissions
+                    .iter()
+                    .map(|submission| submission.request.cancellation.clone())
+                    .collect::<Vec<_>>();
+                let group = Arc::new(Mutex::new(Some(submissions)));
+                let queued = Arc::clone(&group);
                 let compiled = tokio::task::spawn_blocking(move || {
+                    let submissions = queued.lock().ok()?.take()?;
                     let mut submissions = submissions
                         .into_iter()
                         .filter_map(|mut submission| {
@@ -1611,11 +1620,25 @@ impl GenerationBackend for EngineGenerationBackend {
                         })
                         .collect::<Vec<_>>();
                     offers.offer(&mut submissions);
-                    submissions
-                })
-                .await;
-                if let Ok(submissions) = compiled {
-                    enqueue_submissions(control, state, submissions);
+                    Some(submissions)
+                });
+                let cancelled = async {
+                    for cancellation in &cancellations {
+                        cancellation.cancelled().await;
+                    }
+                };
+                tokio::select! {
+                    biased;
+                    () = cancelled => {
+                        if let Ok(mut group) = group.lock() {
+                            drop(group.take());
+                        }
+                    }
+                    compiled = compiled => {
+                        if let Ok(Some(submissions)) = compiled {
+                            enqueue_submissions(control, state, submissions);
+                        }
+                    }
                 }
             });
         } else {

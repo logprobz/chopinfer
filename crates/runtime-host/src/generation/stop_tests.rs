@@ -2392,3 +2392,82 @@ fn a_waiting_group_drops_the_offers_of_cancelled_members() {
         waiting.pop().unwrap().await.unwrap();
     });
 }
+
+/// A constrained group whose members are all cancelled while its grammar
+/// job waits for a saturated blocking pool leaves the job no request: the
+/// prompts the worker would never admit are dropped at once, not when the
+/// pool reaches the job. A group with a live member still waits whole, and
+/// the worker admits only that member. This retention predates the prefix
+/// offers; the job held these requests at the base too.
+#[test]
+fn a_cancelled_grammar_group_leaves_no_request_in_a_saturated_blocking_pool() {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .max_blocking_threads(1)
+        .build()
+        .unwrap();
+    let backend = offering_backend(engine(vec![X], false, false));
+    // Each queued request holds one reference.
+    let grammar = Arc::new(runtime_grammar::regex_grammar("x").unwrap());
+    let constrained = |tokens: usize| {
+        let mut request = token_request(tokens);
+        request.constraint = Some(Arc::clone(&grammar));
+        request
+    };
+    runtime.block_on(async {
+        // Occupy the pool's only thread.
+        let (entered, ready) = oneshot::channel();
+        let (release, blocked) = std::sync::mpsc::channel::<()>();
+        let blocker = tokio::task::spawn_blocking(move || {
+            entered.send(()).unwrap();
+            let _ = blocked.recv();
+        });
+        ready.await.unwrap();
+        for _ in 0..8 {
+            let request = constrained(94_080);
+            let cancellation = request.cancellation.clone();
+            let (sender, mut reader) = tokio::sync::mpsc::channel(1);
+            let admitted = backend.submit_batch(vec![(request, EventSender::new(sender))]);
+            // The group's grammar job queues behind the blocker.
+            tokio::task::yield_now().await;
+            cancellation.cancel();
+            drop(admitted);
+            let ended = tokio::time::timeout(Duration::from_secs(5), reader.recv()).await;
+            assert_eq!(ended, Ok(None));
+        }
+        let released = tokio::time::timeout(Duration::from_secs(5), async {
+            while Arc::strong_count(&grammar) > 1 {
+                tokio::time::sleep(Duration::from_millis(1)).await;
+            }
+        })
+        .await;
+        assert!(
+            released.is_ok(),
+            "{} cancelled requests wait for the pool",
+            Arc::strong_count(&grammar) - 1
+        );
+        let group = vec![constrained(8), constrained(8)];
+        group[0].cancellation.cancel();
+        let mut readers = Vec::new();
+        let mut admitted = backend.submit_batch(
+            group
+                .into_iter()
+                .map(|request| {
+                    let (sender, reader) = tokio::sync::mpsc::channel(8);
+                    readers.push(reader);
+                    (request, EventSender::new(sender))
+                })
+                .collect(),
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        assert_eq!(Arc::strong_count(&grammar), 3);
+        release.send(()).unwrap();
+        blocker.await.unwrap();
+        let live = admitted.pop().unwrap();
+        assert_eq!(live.await, Ok(()));
+        assert_eq!(
+            admitted.pop().unwrap().await,
+            Err(AdmissionError::WorkerUnavailable)
+        );
+    });
+}

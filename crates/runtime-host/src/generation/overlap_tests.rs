@@ -270,6 +270,7 @@ fn run(scenario: &Scenario, overlap: bool) -> Run {
         .unwrap();
     let mut forwarding = Vec::new();
     let tokenizer = Arc::new(super::stop_tests::tokenizer());
+    let echoes = PromptEchoes::new(Arc::clone(&tokenizer));
     for (index, planned) in scenario.requests.iter().enumerate() {
         let id = RequestId::new(index as u64 + 1);
         scripts.insert(id, planned.script.clone());
@@ -314,7 +315,7 @@ fn run(scenario: &Scenario, overlap: bool) -> Run {
                 forward,
                 EventSender::new(client),
                 request.cancellation.clone(),
-                Arc::clone(&tokenizer),
+                echoes.clone(),
             ));
             (sender, Ok(events))
         } else {
@@ -858,7 +859,7 @@ fn reply_history_waits_for_the_real_terminal_relay_handoff() {
                 EventSender::new(client),
                 cancellation,
                 Some(receipt),
-                Arc::new(super::stop_tests::tokenizer()),
+                PromptEchoes::new(Arc::new(super::stop_tests::tokenizer())),
             ));
             outbox.try_emit(finish()).unwrap();
             if !succeeds {

@@ -387,6 +387,7 @@ impl std::error::Error for EngineBackendStartupError {}
 pub struct EngineGenerationBackend {
     reply_history: Option<runtime_engine::ReplyHistoryObserver>,
     tokenizer: Arc<Tokenizer>,
+    prompt_echoes: PromptEchoes,
     grammars: Arc<crate::grammar::GrammarServiceV1>,
     policy: EngineModelPolicyV1,
     tokenizer_input_bytes: usize,
@@ -609,6 +610,7 @@ impl EngineGenerationBackend {
                 model_vocabulary.get(),
                 boundary_token_ids_v1(&policy),
             )),
+            prompt_echoes: PromptEchoes::new(Arc::clone(&tokenizer)),
             tokenizer,
             policy,
             tokenizer_input_bytes: config.tokenizer_input_bytes,
@@ -1551,7 +1553,7 @@ impl GenerationBackend for EngineGenerationBackend {
                 events,
                 request.cancellation.clone(),
                 receipt,
-                Arc::clone(&self.tokenizer),
+                self.prompt_echoes.clone(),
             ));
             let (response, admitted) = oneshot::channel();
             let prefix_chain = prefix_chain_v1(self.prefix_chain_block_tokens, &request);
@@ -1709,9 +1711,9 @@ async fn forward_events(
     forward_receiver: tokio::sync::mpsc::Receiver<WorkerEvent>,
     events: EventSender,
     cancellation: CancellationSignal,
-    tokenizer: Arc<Tokenizer>,
+    echoes: PromptEchoes,
 ) {
-    forward_events_observed(forward_receiver, events, cancellation, None, tokenizer).await;
+    forward_events_observed(forward_receiver, events, cancellation, None, echoes).await;
 }
 
 async fn forward_events_observed(
@@ -1719,7 +1721,7 @@ async fn forward_events_observed(
     events: EventSender,
     cancellation: CancellationSignal,
     mut observation: Option<runtime_engine::ReplyHistoryDelivery>,
-    tokenizer: Arc<Tokenizer>,
+    echoes: PromptEchoes,
 ) {
     loop {
         let event = tokio::select! {
@@ -1733,21 +1735,12 @@ async fn forward_events_observed(
             // The echo is built here, off the engine thread, before any
             // later event is relayed.
             Some(WorkerEvent::PromptEcho { token_ids, labels }) => {
-                let tokenizer = Arc::clone(&tokenizer);
-                let built = tokio::task::spawn_blocking(move || {
-                    prompt_echo_v1(&tokenizer, token_ids, labels)
-                });
-                match tokio::select! {
-                    biased;
-                    () = cancellation.cancelled() => return,
-                    built = built => built,
-                } {
-                    Ok(event) => event,
-                    Err(_) => {
-                        cancellation.cancel();
-                        return;
-                    }
-                }
+                let Some(event) = echoes.build(token_ids, labels, &cancellation).await else {
+                    // Cancelled, or the job failed: nobody gets the echo.
+                    cancellation.cancel();
+                    return;
+                };
+                event
             }
         };
         let terminal = matches!(&event, GenerationEvent::Finished { .. });
@@ -1762,6 +1755,65 @@ async fn forward_events_observed(
         }
         if terminal && let Some(observation) = observation.take() {
             observation.succeeded();
+        }
+    }
+}
+
+/// Prompt echoes one backend builds or queues on the blocking pool at once.
+/// A job that a cancelled relay leaves queued keeps its permit until the
+/// pool runs it, so this also bounds what departed clients leave there.
+const PROMPT_ECHO_JOBS: usize = 4;
+
+/// Builds a backend's prompt echoes on the blocking pool, at most
+/// [`PROMPT_ECHO_JOBS`] at once.
+#[derive(Clone)]
+struct PromptEchoes {
+    tokenizer: Arc<Tokenizer>,
+    jobs: Arc<tokio::sync::Semaphore>,
+}
+
+impl PromptEchoes {
+    fn new(tokenizer: Arc<Tokenizer>) -> Self {
+        Self {
+            tokenizer,
+            jobs: Arc::new(tokio::sync::Semaphore::new(PROMPT_ECHO_JOBS)),
+        }
+    }
+
+    /// The echo of `token_ids`, or `None` once `cancellation` ends the wait
+    /// or the job fails. A job holds its permit until it returns. A
+    /// cancelled wait takes the prompt and tokenizer back from a job the
+    /// pool has not started, and a job started after cancellation decodes
+    /// nothing.
+    async fn build(
+        &self,
+        token_ids: Vec<u32>,
+        labels: bool,
+        cancellation: &CancellationSignal,
+    ) -> Option<GenerationEvent> {
+        let permit = tokio::select! {
+            biased;
+            () = cancellation.cancelled() => return None,
+            permit = Arc::clone(&self.jobs).acquire_owned() => permit.ok()?,
+        };
+        let prompt = Arc::new(Mutex::new(Some((Arc::clone(&self.tokenizer), token_ids))));
+        let queued = Arc::clone(&prompt);
+        let skip = cancellation.clone();
+        let built = tokio::task::spawn_blocking(move || {
+            let _permit = permit;
+            let taken = queued.lock().ok()?.take();
+            let (tokenizer, token_ids) = taken.filter(|_| !skip.is_cancelled())?;
+            Some(prompt_echo_v1(&tokenizer, token_ids, labels))
+        });
+        tokio::select! {
+            biased;
+            () = cancellation.cancelled() => {
+                if let Ok(mut prompt) = prompt.lock() {
+                    drop(prompt.take());
+                }
+                None
+            }
+            built = built => built.ok().flatten(),
         }
     }
 }
@@ -7786,7 +7838,7 @@ mod tests {
                 forward,
                 EventSender::new(client),
                 cancellation.clone(),
-                Arc::new(stop_tests::tokenizer()),
+                PromptEchoes::new(Arc::new(stop_tests::tokenizer())),
             ));
             for tokens in [vec![1], vec![2], vec![3]] {
                 worker
@@ -7834,7 +7886,7 @@ mod tests {
                 forward,
                 EventSender::new(client),
                 CancellationSignal::new(),
-                Arc::new(stop_tests::tokenizer()),
+                PromptEchoes::new(Arc::new(stop_tests::tokenizer())),
             ));
             for token in 0..32 {
                 worker
@@ -7912,7 +7964,7 @@ mod tests {
                     forward,
                     EventSender::new(client),
                     CancellationSignal::new(),
-                    Arc::new(stop_tests::tokenizer()),
+                    PromptEchoes::new(Arc::new(stop_tests::tokenizer())),
                 )
                 .await;
                 std::iter::from_fn(|| reader.try_recv().ok()).collect::<Vec<_>>()
@@ -7930,6 +7982,80 @@ mod tests {
                 ]
             );
         }
+    }
+
+    /// A relay cancelled while its echo waits for a saturated blocking pool
+    /// leaves no job holding the prompt or the tokenizer to decode it with.
+    /// At most `PROMPT_ECHO_JOBS` jobs queue there, each keeping its permit
+    /// until it returns, and a later relay still receives its echo.
+    #[test]
+    fn cancelled_relays_leave_no_prompt_in_a_saturated_blocking_pool() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .max_blocking_threads(1)
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            // Occupy the pool's only thread.
+            let (entered, ready) = oneshot::channel();
+            let (release, blocked) = std::sync::mpsc::channel::<()>();
+            let blocker = tokio::task::spawn_blocking(move || {
+                entered.send(()).unwrap();
+                let _ = blocked.recv();
+            });
+            ready.await.unwrap();
+            let tokenizer = Arc::new(stop_tests::tokenizer());
+            let echoes = PromptEchoes::new(Arc::clone(&tokenizer));
+            let relay = |cancellation: &CancellationSignal| {
+                let (worker, forward) = tokio::sync::mpsc::channel(2);
+                let (client, reader) = tokio::sync::mpsc::channel(2);
+                let relay = tokio::spawn(forward_events(
+                    forward,
+                    EventSender::new(client),
+                    cancellation.clone(),
+                    echoes.clone(),
+                ));
+                (worker, reader, relay)
+            };
+            let prompt = vec![u32::from(b'x') + 3; 94_080];
+            for _ in 0..2 * PROMPT_ECHO_JOBS {
+                let cancellation = CancellationSignal::new();
+                let (worker, _reader, relay) = relay(&cancellation);
+                worker
+                    .send(WorkerEvent::PromptEcho {
+                        token_ids: prompt.clone(),
+                        labels: true,
+                    })
+                    .await
+                    .unwrap();
+                // The relay has taken the echo.
+                while worker.capacity() != 2 {
+                    tokio::task::yield_now().await;
+                }
+                cancellation.cancel();
+                relay.await.unwrap();
+            }
+            assert_eq!(Arc::strong_count(&tokenizer), 2);
+            assert_eq!(echoes.jobs.available_permits(), 0);
+            release.send(()).unwrap();
+            blocker.await.unwrap();
+            // The pool runs jobs in order, so this one follows the rest.
+            tokio::task::spawn_blocking(|| ()).await.unwrap();
+            assert_eq!(echoes.jobs.available_permits(), PROMPT_ECHO_JOBS);
+            let (worker, mut reader, relay) = relay(&CancellationSignal::new());
+            WorkerEvents(worker)
+                .try_emit_prompt_echo(prompt[..3].to_vec(), false)
+                .unwrap();
+            relay.await.unwrap();
+            assert_eq!(
+                reader.recv().await,
+                Some(GenerationEvent::Prompt {
+                    token_ids: prompt[..3].to_vec(),
+                    text: "xxx".to_owned(),
+                    tokens: Vec::new(),
+                })
+            );
+        });
     }
 }
 

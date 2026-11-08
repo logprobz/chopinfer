@@ -128,8 +128,7 @@ fn pin_untuned_served_keys() {
     for ranks in [1, 2, 4] {
         for entry in crate::sm120::mxfp8_fold::prefill_entries(&FLASH, ranks).unwrap() {
             let q = entry.query;
-            // The served main projection rows and the
-            // `dspark_main_short_rows` candidate's.
+            // The served main projection rows of both sites.
             for site in ["dspark_main", "dspark_main_short"] {
                 if (q.n, q.k, q.groups) == (5120, 15360, 1) {
                     domain.insert(key(

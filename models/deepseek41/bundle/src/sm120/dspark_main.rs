@@ -11,8 +11,7 @@ use model_deepseek41_contract::tuning::{Family, table};
 use std::ops::RangeInclusive;
 
 const SITE: &str = "dense_prefill.dspark_main.prefill";
-/// The `dspark_main_short_rows` candidate's rows, read only with its option
-/// on.
+/// The rows below the main site's, 65 to 128 at TP4.
 const SHORT_SITE: &str = "dense_prefill.dspark_main_short.prefill";
 const FAMILY: &str = "dspark_main";
 
@@ -31,11 +30,7 @@ fn recipe(shape: &crate::shape::Shape, query: Mxfp8FoldGemmQuery) -> Result<Vec<
         ("ranks".into(), shape.ranks()),
     ]
     .into();
-    let sites: &[&str] = if shape.dspark_main_short_rows {
-        &[SITE, SHORT_SITE]
-    } else {
-        &[SITE]
-    };
+    let sites = [SITE, SHORT_SITE];
     let mut rows: Vec<_> = table
         .rows()
         .iter()
@@ -46,7 +41,7 @@ fn recipe(shape: &crate::shape::Shape, query: Mxfp8FoldGemmQuery) -> Result<Vec<
                 && row.key.bucket == query.m_capacity
         })
         .collect();
-    // Each site's rows are in row order; the candidate's go between them.
+    // Both sites' rows, in row order.
     rows.sort_by_key(|row| row.key.rows);
     recipe_rows(rows.into_iter())
 }
@@ -401,27 +396,19 @@ mod tests {
         assert_eq!(tags.len(), admitted.len());
     }
 
-    /// At TP4 the stage-2 m64 pair serves 129 to 511 rows and, with the
-    /// `dspark_main_short_rows` candidate on, the stage-3 m32 pair 65 to 128;
-    /// every other count and topology keeps the generic fold's launches and
-    /// routes.
+    /// At TP4 the stage-2 m64 pair serves 129 to 511 rows and the stage-3
+    /// m32 pair 65 to 128; every other count and topology keeps the generic
+    /// fold's launches and routes.
     #[test]
     fn main_ranges_keep_every_other_launch_and_layout() {
-        for (ranks, short) in [Ranks::TP1, Ranks::TP2, Ranks::TP4]
-            .into_iter()
-            .flat_map(|ranks| [(ranks, false), (ranks, true)])
-        {
-            let shape = crate::shape::Shape::new(&FLASH, ranks)
-                .unwrap()
-                .with_dspark_main_short_rows(short);
+        for ranks in [Ranks::TP1, Ranks::TP2, Ranks::TP4] {
+            let shape = crate::shape::Shape::new(&FLASH, ranks).unwrap();
             let backend = crate::Kernels::new(&shape).unwrap();
             let base = main_entry(&shape);
             let q = base.query;
             let mut ranges = Vec::new();
             if ranks == Ranks::TP4 {
-                if short {
-                    ranges.push((65..=128, 3));
-                }
+                ranges.push((65..=128, 3));
                 ranges.push((129..=511, 2));
             }
             assert_eq!(recipe(&shape, q).unwrap(), ranges);
@@ -451,7 +438,7 @@ mod tests {
                 let a = old.launches(&buffers, View::EMPTY, counts).unwrap();
                 let b = new.launches(&buffers, View::EMPTY, counts).unwrap();
                 let selected = match count {
-                    65..=128 if short => Some(("m32_n128_s3", "m64_n128_s3", 65..=128)),
+                    65..=128 => Some(("m32_n128_s3", "m64_n128_s3", 65..=128)),
                     129..=511 => Some(("m64_n128_s2", "m64_n128_s2", 129..=511)),
                     _ => None,
                 };
@@ -478,7 +465,7 @@ mod tests {
                         );
                     }
                 } else {
-                    assert_eq!(a, b, "rank={ranks:?} short={short} rows={count}");
+                    assert_eq!(a, b, "rank={ranks:?} rows={count}");
                     for call in &b {
                         assert_eq!(new.route(counts, call), old.route(counts, call));
                     }

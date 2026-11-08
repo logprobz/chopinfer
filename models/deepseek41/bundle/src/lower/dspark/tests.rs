@@ -102,12 +102,8 @@ fn every_compiled_topology_prepares_the_drafter_primitives() {
 fn main_projection_binds_only_measured_packed_fold_rows() {
     use runtime_bundle_abi::{BundleDeviceBufferHandleV1, DeviceBufferSpanV1 as Span};
     let span = |id, bytes| Span::new(BundleDeviceBufferHandleV1::from_raw(id), 0, bytes);
-    // The `dspark_main_short_rows` candidate's compact pair runs 65 to 128
-    // rows at TP4.
-    let shapes = crate::shape::topologies()
-        .into_iter()
-        .flat_map(|shape| [false, true].map(|short| shape.with_dspark_main_short_rows(short)));
-    for shape in shapes {
+    // The compact pair runs 65 to 128 rows at TP4.
+    for shape in crate::shape::topologies() {
         let kernels = crate::Kernels::new(&shape).unwrap();
         let prepared = Prepared::prepare(kernels.backend.as_ref(), shape).unwrap();
         let n = u64::from(shape.geometry.shape.hidden);
@@ -169,8 +165,7 @@ fn main_projection_binds_only_measured_packed_fold_rows() {
                     0
                 }
             );
-            let compact =
-                shape.dspark_main_short_rows && shape.ranks() == 4 && (65..=128).contains(&count);
+            let compact = shape.ranks() == 4 && (65..=128).contains(&count);
             assert_eq!(
                 launches.len(),
                 if packed {

@@ -8,9 +8,8 @@
 # the profile's shapes, tp4-dspark-rows192-wide, the same override with the
 # `wide_verify` candidate on, tp4-dspark-rows192-wide-draft, with
 # `wide_draft` too, tp4-dspark-rows192-phased, with the
-# `phased_decode_reduce` candidate on, tp4-dspark-drafter, the profile
-# with the five drafter cost candidates on, and tp4-dspark-main-short,
-# with the `dspark_main_short_rows` candidate on.
+# `phased_decode_reduce` candidate on, and tp4-dspark-drafter, the profile
+# with the five drafter cost candidates on.
 
 [[allow]]
 profiles = ["tp4-ar", "tp4-dspark*"]

@@ -79,7 +79,7 @@ fn each_rank_moves_a_snapshot_in_one_launch() {
 
 /// The ranks of the snapshot copy launches from journal line `from` on.
 fn ranks_of_launches(host: &FakeHost, from: usize) -> Vec<u32> {
-    journal_ranks(host, from, "launch ", kernels_sm120::snapshot_copy::SYMBOL)
+    journal_ranks(host, from, "launch ", crate::sm120::snapshot_copy::SYMBOL)
 }
 
 /// Each rank loads the kernel's module once.

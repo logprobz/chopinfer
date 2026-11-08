@@ -968,7 +968,7 @@ impl FakePackage for FakeHost {
                 replay.launch(self, stream, name, config, arguments);
             }
         });
-        if name == kernels_sm120::snapshot_copy::SYMBOL {
+        if name == crate::sm120::snapshot_copy::SYMBOL {
             self.run_snapshot_copy(stream, arguments);
         }
         Ok(())

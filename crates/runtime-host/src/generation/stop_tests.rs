@@ -895,11 +895,8 @@ fn a_generation_leaves_the_worker_at_the_event_that_ends_its_output() {
                     Vec::new()
                 };
                 let (mut generation, _) = active(0, &stops);
-                generation.events = Outbox::new(
-                    EventSender::new(sender),
-                    generation.cancellation.clone(),
-                    false,
-                );
+                generation.events =
+                    Outbox::new(WorkerEvents(sender), generation.cancellation.clone(), false);
                 generations.insert(id, generation);
             }
             let cancellations = ids.map(|id| generations[&id].cancellation.clone());
@@ -924,7 +921,7 @@ fn a_generation_leaves_the_worker_at_the_event_that_ends_its_output() {
                     let stream_finished = index != full && {
                         let before = delivered[index].len();
                         while let Ok(event) = receivers[index].try_recv() {
-                            delivered[index].push(event);
+                            delivered[index].push(event.into_event());
                         }
                         delivered[index][before..]
                             .iter()
@@ -971,7 +968,7 @@ fn a_generation_leaves_the_worker_at_the_event_that_ends_its_output() {
                 });
             }
             while let Ok(event) = receivers[full].try_recv() {
-                delivered[full].push(event);
+                delivered[full].push(event.into_event());
             }
             let finish = |events: &[GenerationEvent]| match events.last() {
                 Some(GenerationEvent::Finished { reason, usage }) => {

@@ -128,6 +128,8 @@ fn run(concurrency: usize, drafts: usize) -> Vec<Duration> {
         .enable_all()
         .build()
         .unwrap();
+    let tokenizer = Arc::new(super::stop_tests::tokenizer());
+    let echoes = PromptEchoes::new(Arc::clone(&tokenizer));
     let mut submissions = Vec::new();
     for index in 0..concurrency {
         let id = RequestId::new(index as u64 + 1);
@@ -167,6 +169,7 @@ fn run(concurrency: usize, drafts: usize) -> Vec<Duration> {
             forward,
             EventSender::new(client),
             request.cancellation.clone(),
+            echoes.clone(),
         ));
         relays.spawn(async move { while events.recv().await.is_some() {} });
         let (response, _admitted) = oneshot::channel();
@@ -176,7 +179,8 @@ fn run(concurrency: usize, drafts: usize) -> Vec<Duration> {
             id,
             request: Box::new(request),
             constraint: None,
-            events: EventSender::new(sender),
+            prefix_chain: None,
+            events: WorkerEvents(sender),
             response,
         });
     }
@@ -210,7 +214,6 @@ fn run(concurrency: usize, drafts: usize) -> Vec<Duration> {
         config
     };
     let engine = Engine::new(config, executor).unwrap();
-    let tokenizer = Arc::new(super::stop_tests::tokenizer());
     let backend = EngineBackendConfig::default();
     let worker = thread::spawn(move || {
         let state = AtomicU8::new(READY);

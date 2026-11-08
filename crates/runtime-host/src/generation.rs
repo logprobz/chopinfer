@@ -27,7 +27,7 @@ use runtime_kv::KvMetrics;
 use runtime_model_api::ModelVocabulary;
 use runtime_sampling::SamplingParameters;
 use runtime_scheduler::RequestState;
-use runtime_tokenizer::Tokenizer;
+use runtime_tokenizer::{PieceMemory, Tokenizer};
 use tokio::sync::oneshot;
 
 mod heap;
@@ -1374,6 +1374,7 @@ impl GenerationBackend for EngineGenerationBackend {
                     &self.policy,
                     run,
                     self.tokenizer_input_bytes,
+                    &mut PieceMemory::default(),
                 )
             };
             let template = |text: &str| {
@@ -3239,9 +3240,9 @@ impl<'a> PromptPiecesV1<'a> {
     /// identifier, and a media part by `media`, which appends its tokens.
     /// Under explicit special tokens the text and special tokens are then
     /// held to the token limit together.
-    fn encode<T, M>(&self, mut text: T, mut media: M) -> Result<Vec<u32>, AdmissionError>
+    fn encode<'s, T, M>(&'s self, mut text: T, mut media: M) -> Result<Vec<u32>, AdmissionError>
     where
-        T: FnMut(&str) -> Result<Vec<u32>, AdmissionError>,
+        T: FnMut(&'s str) -> Result<Vec<u32>, AdmissionError>,
         M: FnMut(usize, &mut Vec<u32>) -> Result<(), AdmissionError>,
     {
         let mut tokens = Vec::new();
@@ -3271,16 +3272,24 @@ impl<'a> PromptPiecesV1<'a> {
 /// How a rendered chat's text segments encode: as plain text under
 /// explicit special tokens, where the render names its special tokens as
 /// segments, and otherwise scanned for the declared prompt special tokens.
-fn prompt_text_v1(
+/// The segments of one prompt share `memory`, each encoding as it would
+/// alone.
+fn prompt_text_v1<'a>(
     tokenizer: &Tokenizer,
     policy: &EngineModelPolicyV1,
-    text: &str,
+    text: &'a str,
     max_input_bytes: usize,
+    memory: &mut PieceMemory<'a>,
 ) -> Result<Vec<u32>, AdmissionError> {
     if policy.declaration().vocabulary.explicit_special_tokens {
-        tokenizer.encode_plain_with_input_limit(text, max_input_bytes)
+        tokenizer.encode_plain_remembering(text, max_input_bytes, memory)
     } else {
-        tokenizer.encode_with_input_limit(text, &policy.prompt_special_tokens(), max_input_bytes)
+        tokenizer.encode_remembering(
+            text,
+            &policy.prompt_special_tokens(),
+            max_input_bytes,
+            memory,
+        )
     }
     .map_err(prompt_tokenization_error)
 }
@@ -3305,14 +3314,15 @@ where
     if !vocabulary.explicit_special_tokens {
         return Err(AdmissionError::InvalidPrompt);
     }
-    PromptPiecesV1::new(
+    let pieces = PromptPiecesV1::new(
         vocabulary,
         segments,
         max_input_bytes,
         tokenizer.model_max_length(),
-    )?
-    .encode(
-        |run| prompt_text_v1(tokenizer, policy, run, max_input_bytes),
+    )?;
+    let mut memory = PieceMemory::default();
+    pieces.encode(
+        |run| prompt_text_v1(tokenizer, policy, run, max_input_bytes, &mut memory),
         media,
     )
 }
@@ -3348,7 +3358,15 @@ fn tokenize_prompt(
             &policy.declaration().vocabulary,
             &pieces,
             media,
-            |run| prompt_text_v1(tokenizer, policy, run, tokenizer_input_bytes),
+            |run| {
+                prompt_text_v1(
+                    tokenizer,
+                    policy,
+                    run,
+                    tokenizer_input_bytes,
+                    &mut PieceMemory::default(),
+                )
+            },
             scan,
             |_part, _modality| {
                 Err(AdmissionError::Rejected(

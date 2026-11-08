@@ -479,9 +479,23 @@ impl Hasher for TableHasher {
 /// adjacent pair merges, so both give the same tokens.
 const SCANNED_PIECE_BYTES: usize = 64;
 
-/// The most pieces one ordinary segment's encode remembers the tokens of.
-/// Tests reach the bound with a few dozen pieces.
+/// The most pieces a [`PieceMemory`] remembers the tokens of. Tests reach
+/// the bound with a few dozen pieces.
 const REMEMBERED_PIECES: usize = if cfg!(test) { 16 } else { 1 << 16 };
+
+/// The tokens of the short pieces the encodes of one prompt's texts met.
+///
+/// A piece encodes to the same tokens wherever it stands, so an encode that
+/// meets a piece again copies its tokens instead of merging it. Each text
+/// encodes to the tokens it encodes to alone. The memory holds the texts'
+/// pieces by reference and at most `REMEMBERED_PIECES` of them, and their
+/// tokens, which never outnumber the encodes' own output; drop it with the
+/// texts.
+#[derive(Debug, Default)]
+pub struct PieceMemory<'a> {
+    pieces: HashMap<&'a str, (usize, usize), TableHash>,
+    tokens: Vec<u32>,
+}
 
 /// The buffers one encode reuses for every piece it merges by scanning.
 #[derive(Default)]
@@ -741,6 +755,23 @@ impl Tokenizer {
         allowed_special_tokens: &[&str],
         max_input_bytes: usize,
     ) -> Result<Vec<u32>> {
+        self.encode_remembering(
+            text,
+            allowed_special_tokens,
+            max_input_bytes,
+            &mut PieceMemory::default(),
+        )
+    }
+
+    /// [`Self::encode_with_input_limit`], sharing `memory` with the other
+    /// encodes of one prompt's texts.
+    pub fn encode_remembering<'a>(
+        &self,
+        text: &'a str,
+        allowed_special_tokens: &[&str],
+        max_input_bytes: usize,
+        memory: &mut PieceMemory<'a>,
+    ) -> Result<Vec<u32>> {
         check_input_limit(text, max_input_bytes)?;
         let mut allowed = BTreeSet::new();
         for token in allowed_special_tokens {
@@ -763,6 +794,7 @@ impl Tokenizer {
                     &mut output,
                     max_input_bytes,
                     &mut scratch,
+                    memory,
                 )?;
                 if !allowed.contains(token) {
                     return Err(TokenizerError {
@@ -784,6 +816,7 @@ impl Tokenizer {
             &mut output,
             max_input_bytes,
             &mut scratch,
+            memory,
         )?;
         self.within_token_limit(output)
     }
@@ -799,6 +832,17 @@ impl Tokenizer {
         text: &str,
         max_input_bytes: usize,
     ) -> Result<Vec<u32>> {
+        self.encode_plain_remembering(text, max_input_bytes, &mut PieceMemory::default())
+    }
+
+    /// [`Self::encode_plain_with_input_limit`], sharing `memory` with the
+    /// other encodes of one prompt's texts.
+    pub fn encode_plain_remembering<'a>(
+        &self,
+        text: &'a str,
+        max_input_bytes: usize,
+        memory: &mut PieceMemory<'a>,
+    ) -> Result<Vec<u32>> {
         check_input_limit(text, max_input_bytes)?;
         let mut output = self.token_output(text)?;
         self.encode_ordinary(
@@ -806,6 +850,7 @@ impl Tokenizer {
             &mut output,
             max_input_bytes,
             &mut PieceScratch::default(),
+            memory,
         )?;
         self.within_token_limit(output)
     }
@@ -911,31 +956,43 @@ impl Tokenizer {
             .ok_or_else(|| TokenizerError::new("token ID is outside the vocabulary"))
     }
 
-    fn encode_ordinary(
+    fn encode_ordinary<'a>(
         &self,
-        text: &str,
+        text: &'a str,
         output: &mut Vec<u32>,
         max_input_bytes: usize,
         scratch: &mut PieceScratch,
+        memory: &mut PieceMemory<'a>,
     ) -> Result<()> {
         if text.is_empty() {
             return Ok(());
         }
-        let normalized;
-        let text = match self.contract.dialect.normalizer {
-            NormalizerPolicy::IdentitySequence | NormalizerPolicy::Null => text,
-            // Text the quick check finds normalized is its own NFC form.
-            NormalizerPolicy::Nfc if is_nfc_quick(text.chars()) == IsNormalized::Yes => text,
-            NormalizerPolicy::Nfc => {
-                normalized = text.nfc().collect::<String>();
-                if normalized.len() > max_input_bytes {
-                    return Err(TokenizerError::new(
-                        "normalized tokenizer input exceeds the byte limit",
-                    ));
-                }
-                &normalized
+        // Text the quick check finds normalized is its own NFC form.
+        if self.contract.dialect.normalizer == NormalizerPolicy::Nfc
+            && is_nfc_quick(text.chars()) != IsNormalized::Yes
+        {
+            let normalized = text.nfc().collect::<String>();
+            if normalized.len() > max_input_bytes {
+                return Err(TokenizerError::new(
+                    "normalized tokenizer input exceeds the byte limit",
+                ));
             }
-        };
+            // The normalized copy lives for this segment only, and so does
+            // the memory of its pieces.
+            let mut local = PieceMemory::default();
+            for piece in self.pieces(&normalized)? {
+                self.encode_remembered(piece, output, scratch, &mut local)?;
+            }
+            return Ok(());
+        }
+        for piece in self.pieces(text)? {
+            self.encode_remembered(piece, output, scratch, memory)?;
+        }
+        Ok(())
+    }
+
+    /// The pieces of `text`, split by each pretokenizer pattern in turn.
+    fn pieces<'t>(&self, text: &'t str) -> Result<Vec<&'t str>> {
         let mut pieces = vec![text];
         for pattern in &self.patterns {
             let mut split = Vec::new();
@@ -947,27 +1004,37 @@ impl Tokenizer {
             }
             pieces = split;
         }
-        // A piece encodes to the same tokens wherever it stands, so a
-        // repeated short piece copies the tokens it encoded to before.
-        let mut remembered: HashMap<&str, (usize, usize), TableHash> =
-            HashMap::with_hasher(TableHash);
-        remembered
-            .try_reserve(pieces.len().min(REMEMBERED_PIECES))
-            .map_err(|_| TokenizerError::new("piece memory allocation failed"))?;
-        for piece in pieces {
-            if piece.len() > SCANNED_PIECE_BYTES {
-                self.encode_piece(piece.as_bytes(), output, scratch)?;
-                continue;
-            }
-            if let Some((start, end)) = remembered.get(piece) {
-                output.extend_from_within(*start..*end);
-                continue;
-            }
-            let start = output.len();
-            self.encode_piece(piece.as_bytes(), output, scratch)?;
-            if remembered.len() < REMEMBERED_PIECES {
-                remembered.insert(piece, (start, output.len()));
-            }
+        Ok(pieces)
+    }
+
+    /// Encodes `piece`, copying its tokens from `memory` when it remembers
+    /// them, and otherwise remembering them while it has room.
+    fn encode_remembered<'a>(
+        &self,
+        piece: &'a str,
+        output: &mut Vec<u32>,
+        scratch: &mut PieceScratch,
+        memory: &mut PieceMemory<'a>,
+    ) -> Result<()> {
+        if piece.len() > SCANNED_PIECE_BYTES {
+            return self.encode_piece(piece.as_bytes(), output, scratch);
+        }
+        if let Some((start, end)) = memory.pieces.get(piece) {
+            output.extend_from_slice(&memory.tokens[*start..*end]);
+            return Ok(());
+        }
+        let start = output.len();
+        self.encode_piece(piece.as_bytes(), output, scratch)?;
+        if memory.pieces.len() < REMEMBERED_PIECES {
+            let failed = |_| TokenizerError::new("piece memory allocation failed");
+            memory.pieces.try_reserve(1).map_err(failed)?;
+            memory
+                .tokens
+                .try_reserve(output.len() - start)
+                .map_err(failed)?;
+            let from = memory.tokens.len();
+            memory.tokens.extend_from_slice(&output[start..]);
+            memory.pieces.insert(piece, (from, memory.tokens.len()));
         }
         Ok(())
     }
@@ -2665,6 +2732,60 @@ mod tests {
         assert_eq!(tokenizer.encode(&text, &[]).unwrap(), one_at_a_time);
         let distinct: BTreeSet<&String> = pieces.iter().collect();
         assert!(distinct.len() > 4 * REMEMBERED_PIECES, "{}", distinct.len());
+    }
+
+    /// Texts that share a piece memory encode as they do alone, with added
+    /// tokens between their pieces or none recognized, before and after the
+    /// memory's bound.
+    #[test]
+    fn texts_sharing_a_piece_memory_encode_as_they_do_alone() {
+        let tokenizer = cascading_merges_tokenizer_split_by("[,]");
+        let mut state = 0x2f69_93c1_57e8_0d4b_u64;
+        let mut next = |bound: u64| {
+            state = state
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
+            ((state >> 33) % bound) as usize
+        };
+        let words: Vec<String> = (0..120)
+            .map(|_| (0..1 + next(7)).map(|_| ['a', 'b', 'c'][next(3)]).collect())
+            .collect();
+        let texts: Vec<String> = (0..60)
+            .map(|_| {
+                (0..1 + next(12))
+                    .map(|_| {
+                        let word = &words[next(words.len() as u64)];
+                        match next(5) {
+                            0 => format!("{word}{FIXTURE_BOS}"),
+                            _ => word.clone(),
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .join(",")
+            })
+            .collect();
+        let mut plain = PieceMemory::default();
+        let mut special = PieceMemory::default();
+        for text in &texts {
+            assert_eq!(
+                tokenizer
+                    .encode_plain_remembering(text, 1024, &mut plain)
+                    .unwrap(),
+                tokenizer.encode_plain_with_input_limit(text, 1024).unwrap(),
+                "{text}"
+            );
+            assert_eq!(
+                tokenizer
+                    .encode_remembering(text, &[FIXTURE_BOS], 1024, &mut special)
+                    .unwrap(),
+                tokenizer
+                    .encode_with_input_limit(text, &[FIXTURE_BOS], 1024)
+                    .unwrap(),
+                "{text}"
+            );
+        }
+        assert_eq!(plain.pieces.len(), REMEMBERED_PIECES);
+        assert_eq!(special.pieces.len(), REMEMBERED_PIECES);
     }
 
     #[test]

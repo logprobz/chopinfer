@@ -170,7 +170,7 @@ fn wide_successors_plan_up_to_the_item_bound_and_project_in_several_launches() {
             outcome(&mut feedback, depth);
             assert!(
                 feedback.plan(&state, 100, 8).unwrap().is_none(),
-                "the default bound plans at most eight items"
+                "a bound of eight plans at most eight items"
             );
             if items > 9 {
                 assert!(feedback.plan(&state, 100, items - 1).unwrap().is_none());

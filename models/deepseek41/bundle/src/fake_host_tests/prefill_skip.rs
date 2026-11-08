@@ -341,7 +341,7 @@ fn shared_prefix_endpoint(kernel: bool) {
         let (name, expected) = match (dspark, kernel) {
             (true, false) => (
                 "flash-tp4-dspark-shared-anchor.journal",
-                (78110, 0xaef5ea8f2a389592),
+                (78110, 0x2c3cc0a6c95b6abe),
             ),
             (false, false) => (
                 "flash-tp4-ar-shared-anchor.journal",
@@ -349,7 +349,7 @@ fn shared_prefix_endpoint(kernel: bool) {
             ),
             (true, true) => (
                 "flash-tp4-dspark-shared-anchor-snapshot-kernel.journal",
-                (78146, 0x75bb4a39d10caaa1),
+                (78146, 0x7be76da1bbe2e71d),
             ),
             (false, true) => (
                 "flash-tp4-ar-shared-anchor-snapshot-kernel.journal",

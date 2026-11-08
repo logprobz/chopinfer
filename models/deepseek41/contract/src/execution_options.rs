@@ -45,14 +45,14 @@ pub const DSPARK_MOE_DIRECT: &str = "dspark_moe_direct";
 /// the drafter table (`hc.draft_admit.verify`), so their stage boundaries
 /// fuse as the measured rows' do.
 pub const DSPARK_HC_DRAFT_ROWS: &str = "dspark_hc_draft_rows";
-/// Candidate knob: the most drafting items a DSpark successor plans. Above
-/// eight, a plan may project its accepted rows in several batched launches
-/// of at most 32 rows, and its saved status holds every item's depth-five
-/// maximum. Eight keeps the one-launch bound.
+/// Candidate knob: the most drafting items a DSpark successor plans, by
+/// default the widest. Above eight, a plan may project its accepted rows in
+/// several batched launches of at most 32 rows, and its saved status holds
+/// every item's depth-five maximum. Eight keeps the one-launch bound.
 pub const DSPARK_SUCCESSOR_ITEMS: &str = "dspark_successor_items";
-/// The successor item bound a create record without the option keeps.
-pub const DEFAULT_SUCCESSOR_ITEMS: u32 = 8;
-/// The widest successor the candidate plans.
+/// The successor item bound before the candidate, the knob's least value.
+pub const MIN_SUCCESSOR_ITEMS: u32 = 8;
+/// The widest successor the candidate plans, and the knob's default.
 pub const MAX_SUCCESSOR_ITEMS: u32 = 16;
 /// Candidate: a prefix capture or restore moves its snapshot's pieces on
 /// each rank with one upload of the snapshot table and one launch of the
@@ -133,8 +133,8 @@ pub fn declarations() -> [ModelOptionV1; 16] {
         (
             DSPARK_SUCCESSOR_ITEMS,
             OptionDefinitionV1::Integer {
-                default: i64::from(DEFAULT_SUCCESSOR_ITEMS),
-                minimum: i64::from(DEFAULT_SUCCESSOR_ITEMS),
+                default: i64::from(MAX_SUCCESSOR_ITEMS),
+                minimum: i64::from(MIN_SUCCESSOR_ITEMS),
                 maximum: i64::from(MAX_SUCCESSOR_ITEMS),
             },
         ),
@@ -419,7 +419,7 @@ mod tests {
             dspark_confidence_staged: false,
             dspark_hc_fusion: false,
             dspark_markov_staged: false,
-            dspark_successor_items: 8,
+            dspark_successor_items: 16,
             prefix_snapshot_copy_kernel: false,
             dspark_main_short_rows: false,
         };
@@ -445,7 +445,7 @@ mod tests {
             (DSPARK_CONFIDENCE_STAGED.into(), "true".into()),
             (DSPARK_HC_FUSION.into(), "true".into()),
             (DSPARK_MARKOV_STAGED.into(), "true".into()),
-            (DSPARK_SUCCESSOR_ITEMS.into(), "16".into()),
+            (DSPARK_SUCCESSOR_ITEMS.into(), "8".into()),
             (PREFIX_SNAPSHOT_COPY_KERNEL.into(), "true".into()),
             (DSPARK_MAIN_SHORT_ROWS.into(), "true".into()),
         ]);
@@ -466,7 +466,7 @@ mod tests {
                 dspark_confidence_staged: true,
                 dspark_hc_fusion: true,
                 dspark_markov_staged: true,
-                dspark_successor_items: 16,
+                dspark_successor_items: 8,
                 prefix_snapshot_copy_kernel: true,
                 dspark_main_short_rows: true,
             }

@@ -3,7 +3,7 @@
 //! projection of every item's accepted rows, in launches of at most 32
 //! rows, and its draft, in one forward through twelve items and two above,
 //! and the next step reuses both: its target work and boundary readback are
-//! the inline path's. The default bound of eight queues none above eight
+//! the inline path's. A bound of eight queues none above eight
 //! items, and steps of at most eight items are unchanged at any bound.
 use super::results::{DeviceSink, batch, metadata};
 use super::*;
@@ -198,7 +198,7 @@ fn finish(host: &Host, mut instance: BundleInstanceV1, items: u32, kept_rows: u3
 /// projection launch a 32 rows of the accepted rows and the draft's one or
 /// two forwards a rank. The next step launches neither before its hash,
 /// and from the hash through its boundary readback it issues the inline
-/// path's journal. At the default bound neither step queues one.
+/// path's journal. At a bound of eight neither step queues one.
 #[test]
 fn wide_device_feedback_queues_a_successor_the_next_step_reuses() {
     for items in [9, 12, 13, 16] {

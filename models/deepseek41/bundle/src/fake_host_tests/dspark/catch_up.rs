@@ -202,12 +202,12 @@ fn prefix_capture_catch_up(kernel: bool) {
     let (name, expected) = if kernel {
         (
             "flash-tp4-dspark-prefix-capture-snapshot-kernel.journal",
-            (40296, 0xc37ff480477a2b73),
+            (40296, 0x0522d8e8a6d9dddb),
         )
     } else {
         (
             "flash-tp4-dspark-prefix-capture.journal",
-            (40260, 0x285bf685078676d9),
+            (40260, 0x95676a3ee2a68441),
         )
     };
     if let Err(error) = bundle_runtime::fake_host::check_journal(&lines, expected, name) {

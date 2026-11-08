@@ -3,8 +3,7 @@ use super::Instance;
 #[cfg(test)]
 use crate::dspark::device::DECODE_BASE;
 use crate::dspark::device::slice;
-use crate::dspark::execution::{DraftInput, Input};
-use crate::dspark::state::{BLOCK_ROWS, DraftBlock, Kind};
+use crate::dspark::execution::Input;
 #[cfg(test)]
 use crate::dspark::transfers;
 use runtime_bundle_abi::DeviceBufferSpanV1 as Span;
@@ -80,10 +79,10 @@ impl Instance {
             .as_ref()
             .ok_or("DSpark lifecycle borrowed")?
             .state();
-        let Some(mut plan) = feedback.plan(
+        let Some(plan) = feedback.plan(
             state,
             device.shape.geometry.shape.vocab,
-            device.prefetch.successor.items,
+            device.prefetch.items,
         )?
         else {
             return Ok(());
@@ -123,28 +122,8 @@ impl Instance {
             self.prefetch_copy(rank, ring, undo)?;
         }
         let items = plan.drafts.len();
-        let prefetch = &mut self.dspark.as_mut().expect("drafter").prefetch;
-        plan.ring_writes = prefetch.ring_writes.get();
-        prefetch.plan = Some(plan);
-        self.prefetch_trace("queued", items, started.elapsed().as_nanos(), "");
-        Ok(())
-    }
-
-    /// Zero every item's draft IDs and confidence past `depth` on every
-    /// rank, as an inline draft of `depth` heads leaves them.
-    fn cut_successor_heads(&self, items: usize, depth: u32) -> Result<(), String> {
-        let device = self.dspark.as_ref().ok_or("DSpark absent")?;
-        let tail = u64::from(BLOCK_ROWS - depth) * 4;
-        for (rank, stored) in device.ranks.iter().enumerate() {
-            for output in [stored.draft_ids, stored.confidence] {
-                for item in 0..items as u64 {
-                    let at = (item * u64::from(BLOCK_ROWS) + u64::from(depth)) * 4;
-                    self.services
-                        .zero_device_buffer(self.ranks[rank].2, slice(output, at, tail)?)
-                        .map_err(|e| format!("DSpark successor head cut: {e:?}"))?;
-                }
-            }
-        }
+        self.dspark.as_mut().expect("drafter").prefetch.plan = Some(plan);
+        self.prefetch_trace("queued", items, started.elapsed().as_nanos());
         Ok(())
     }
 
@@ -153,7 +132,6 @@ impl Instance {
         inputs: &[Input],
         allocated: bool,
     ) -> Result<(), String> {
-        let logs = self.config.execution.diagnostic_step_logs;
         let device = self.dspark.as_mut().ok_or("DSpark absent")?;
         device.prefetch.feedback = None;
         device.prefetch.reused = false;
@@ -162,12 +140,6 @@ impl Instance {
         let Some(plan) = device.prefetch.plan.take() else {
             return Ok(());
         };
-        let prefill = device.prefetch.successor.prefill;
-        let restored: Vec<_> = inputs
-            .iter()
-            .filter(|input| matches!(input.rows.kind, Kind::Prefill { .. }))
-            .map(|input| input.rows.request)
-            .collect();
         let runtime = device.runtime.as_mut().ok_or("DSpark lifecycle borrowed")?;
         let mut probe = runtime.state().clone();
         let required_positions = if allocated {
@@ -179,30 +151,15 @@ impl Instance {
                 .max()
                 .unwrap_or(0)
         };
-        let covered = device.prefetch.computed_positions >= required_positions
-            && probe
+        if device.prefetch.computed_positions < required_positions
+            || !plan.matches(runtime.state(), inputs)
+            || probe
                 .prepare(inputs.iter().map(|input| input.rows).collect())
-                .is_ok();
-        // Beside prefill items the state may differ by restores, so the
-        // committed ring must also be as the queue left it: the whole-ring
-        // copy below rewrites every slot.
-        let relaxed = || {
-            plan.matches_with_prefill(runtime.state(), inputs)
-                && plan.ring_writes == device.prefetch.ring_writes.get()
-        };
-        let matched = covered
-            && if prefill {
-                relaxed()
-            } else {
-                plan.matches(runtime.state(), inputs)
-            };
-        if !matched {
-            // Without the option, whether its rule would have served the step.
-            let would = logs && !prefill && covered && relaxed();
+                .is_err()
+        {
             #[cfg(feature = "state-capture")]
             device.prefetch.outcome.set("discarded");
-            let extra = format!(",\"prefill_items\":{},\"relaxed\":{would}", restored.len());
-            self.prefetch_trace("discarded", plan.drafts.len(), 0, &extra);
+            self.prefetch_trace("discarded", plan.drafts.len(), 0);
             return Ok(());
         }
         let started = std::time::Instant::now();
@@ -232,37 +189,6 @@ impl Instance {
         for (rank, destination, source) in copies {
             self.prefetch_copy(rank, destination, source)?;
         }
-        let mut computed = self
-            .dspark
-            .as_ref()
-            .expect("drafter")
-            .prefetch
-            .computed_positions;
-        if prefill {
-            // The heads the step's own draft would compute: a five-head
-            // successor serves a compact three-head step cut to its heads.
-            let drafts: Vec<_> = inputs
-                .iter()
-                .filter(|input| input.rows.kind.drafts() > 0)
-                .map(|input| DraftInput {
-                    block: DraftBlock {
-                        request: input.rows.request,
-                        slot: input.rows.slot,
-                        main_rows: input.rows.start,
-                        compute_rows: BLOCK_ROWS,
-                        emit_rows: input.rows.kind.drafts(),
-                        verify_rows: input.rows.kind.drafts() + 1,
-                    },
-                    bonus: input.tokens[0],
-                    noise: input.noise,
-                })
-                .collect();
-            let depth = self.draft_positions(&drafts, allocated)?;
-            if depth < computed {
-                self.cut_successor_heads(drafts.len(), depth)?;
-                computed = depth;
-            }
-        }
         let device = self.dspark.as_mut().expect("drafter");
         for (rank, memory) in device.prefetch.ranks.iter().enumerate() {
             device.ranks[rank]
@@ -273,32 +199,20 @@ impl Instance {
             .runtime
             .as_mut()
             .expect("lifecycle")
-            .adopt_projections(
-                &plan.committed,
-                prefill.then_some(restored.as_slice()),
-                &plan.projections,
-            )?;
-        device.computed_positions = computed;
+            .adopt_projections(&plan.committed, &plan.projections)?;
+        device.computed_positions = device.prefetch.computed_positions;
         device.prefetch.reused = true;
         #[cfg(feature = "state-capture")]
         device.prefetch.outcome.set("reused");
-        let extra = format!(",\"prefill_items\":{},\"heads\":{computed}", restored.len());
-        self.prefetch_trace(
-            "reused",
-            plan.drafts.len(),
-            started.elapsed().as_nanos(),
-            &extra,
-        );
+        self.prefetch_trace("reused", plan.drafts.len(), started.elapsed().as_nanos());
         Ok(())
     }
 
-    /// A diagnostic record of the successor: `extra` adds fields after
-    /// the host time.
-    fn prefetch_trace(&self, event: &str, items: usize, nanos: u128, extra: &str) {
+    fn prefetch_trace(&self, event: &str, items: usize, nanos: u128) {
         if self.config.execution.diagnostic_step_logs {
             let _ = self.services.log(
                 format!(
-                    "{{\"schema\":\"chopinfer.deepseek41.step-shape.v1\",\"phase\":\"dspark-prefetch\",\"event\":\"{event}\",\"items\":{items},\"host_ns\":{nanos}{extra}}}"
+                    "{{\"schema\":\"chopinfer.deepseek41.step-shape.v1\",\"phase\":\"dspark-prefetch\",\"event\":\"{event}\",\"items\":{items},\"host_ns\":{nanos}}}"
                 ).as_bytes(),
             );
         }
@@ -320,7 +234,7 @@ pub(crate) fn for_test(
             .plan(
                 state,
                 device.shape.geometry.shape.vocab,
-                device.prefetch.successor.items,
+                device.prefetch.items,
             )
             .unwrap()
             .expect("predictable test");
@@ -426,44 +340,5 @@ pub(crate) fn status_for_test(
                 )
             })
             .collect()
-    })
-}
-
-/// The instance's committed ring writes after adding `add`, a stand-in
-/// for a committed writer that leaves the drafter state unchanged.
-#[cfg(test)]
-pub(crate) fn ring_writes_for_test(handle: runtime_bundle_abi::BundleHandleV1, add: u64) -> u64 {
-    crate::instance::INSTANCES.with(|table| {
-        let mut table = table.borrow_mut();
-        let device = table
-            .get_mut(handle)
-            .and_then(|instance| instance.dspark.as_ref())
-            .expect("drafter");
-        let writes = &device.prefetch.ring_writes;
-        writes.set(writes.get() + add);
-        writes.get()
-    })
-}
-
-/// Each rank's draft IDs and confidence the target reads, and the heads
-/// the drafter last reported.
-#[cfg(test)]
-pub(crate) fn draft_outputs_for_test(
-    handle: runtime_bundle_abi::BundleHandleV1,
-) -> (Vec<(Span, Span)>, u32) {
-    crate::instance::INSTANCES.with(|table| {
-        let mut table = table.borrow_mut();
-        let device = table
-            .get_mut(handle)
-            .and_then(|instance| instance.dspark.as_ref())
-            .expect("drafter");
-        (
-            device
-                .ranks
-                .iter()
-                .map(|rank| (rank.draft_ids, rank.confidence))
-                .collect(),
-            device.computed_positions,
-        )
     })
 }

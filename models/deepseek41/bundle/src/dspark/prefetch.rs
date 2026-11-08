@@ -10,7 +10,6 @@ use runtime_bundle_abi::device_results::{
     BUNDLE_ACCEPTANCE_ALLOCATED_V1, BundleAcceptanceResultV1, DeviceAcceptanceV1,
     DeviceCycleMetadataV1,
 };
-use std::cell::Cell;
 use std::collections::BTreeMap;
 
 /// Most items a successor plans within one batched projection launch,
@@ -35,18 +34,9 @@ pub(crate) fn status_rows(items: u32) -> u32 {
     projection_rows(items, BATCH_PROJECTION_ROWS) + items.max(ONE_LAUNCH_ITEMS) * BLOCK_ROWS
 }
 
-/// What successors a drafter queues and consumes, from the
-/// `dspark_successor_items` and `dspark_successor_prefill` model options.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct Successor {
-    /// Most drafting items a successor plans.
-    pub items: u32,
-    /// Whether a step that adds prefill items may consume one.
-    pub prefill: bool,
-}
-
 pub(crate) struct Cache {
-    pub successor: Successor,
+    /// Most drafting items a successor plans (`dspark_successor_items`).
+    pub items: u32,
     pub ranks: Vec<Memory>,
     pub graphs: BTreeMap<u32, GraphCache<DeepSeek>>,
     pub plan: Option<Plan>,
@@ -55,14 +45,9 @@ pub(crate) struct Cache {
     pub computed_positions: u32,
     pub done: Vec<runtime_bundle_abi::BundleEventHandleV1>,
     pub joined: Option<runtime_bundle_abi::BundleEventHandleV1>,
-    /// Committed `dspark.ring` writes so far: row and bulk catch-up,
-    /// eager projections and commit projections, a commit's tails and
-    /// anchors and a capture's catch-up among them. A successor's private
-    /// projection and its ring copies are not committed writes.
-    pub ring_writes: Cell<u64>,
     /// The last step's successor: `none`, `discarded` or `reused`.
     #[cfg(feature = "state-capture")]
-    pub outcome: Cell<&'static str>,
+    pub outcome: std::cell::Cell<&'static str>,
 }
 
 pub(crate) struct Memory {
@@ -74,9 +59,9 @@ pub(crate) struct Memory {
 }
 
 impl Cache {
-    pub fn new(successor: Successor) -> Self {
+    pub fn new(items: u32) -> Self {
         Self {
-            successor,
+            items,
             ranks: Vec::new(),
             graphs: BTreeMap::new(),
             plan: None,
@@ -85,9 +70,8 @@ impl Cache {
             computed_positions: BLOCK_ROWS,
             done: Vec::new(),
             joined: None,
-            ring_writes: Cell::new(0),
             #[cfg(feature = "state-capture")]
-            outcome: Cell::new("none"),
+            outcome: std::cell::Cell::new("none"),
         }
     }
 }
@@ -105,8 +89,6 @@ pub(crate) struct Plan {
     pub retain: CommitPlan,
     pub projections: Vec<RowProjection>,
     pub drafts: Vec<DraftInput>,
-    /// [`Cache::ring_writes`] once the queue finished.
-    pub ring_writes: u64,
 }
 
 impl Feedback {
@@ -232,7 +214,6 @@ impl Feedback {
             retain,
             projections,
             drafts,
-            ring_writes: 0,
         }))
     }
 }
@@ -240,55 +221,23 @@ impl Feedback {
 #[cfg(test)]
 mod tests;
 
-/// Whether `input` drafts the item `draft` predicted, at a depth its heads
-/// cover: a compact three-head draft serves only depth three.
-fn admits(draft: &DraftInput, input: &Input) -> bool {
-    matches!(
-        input.rows.kind,
-        Kind::Decode {
-            drafts: 1..=BLOCK_ROWS
-        }
-    ) && input.rows.kind.drafts() <= draft.block.emit_rows
-        && (draft.block.emit_rows != 3 || input.rows.kind.drafts() == 3)
-        && input.rows.request == draft.block.request
-        && input.rows.slot == draft.block.slot
-        && input.rows.start == draft.block.main_rows
-        && input.tokens == [draft.bonus]
-        && input.noise == draft.noise
-}
-
 impl Plan {
     pub fn matches(&self, state: &State, inputs: &[Input]) -> bool {
         state == &self.committed
             && inputs.len() == self.drafts.len()
-            && inputs
-                .iter()
-                .zip(&self.drafts)
-                .all(|(input, draft)| admits(draft, input))
-    }
-
-    /// [`Plan::matches`] for a step that may also add prefill items: the
-    /// step's prefill items come first and name no planned request or
-    /// slot, its other items are the planned drafts in order, and the
-    /// state is the predicted one with only prefix restores of those
-    /// prefill requests added since ([`State::extends`]).
-    pub fn matches_with_prefill(&self, state: &State, inputs: &[Input]) -> bool {
-        let prefills = inputs
-            .iter()
-            .take_while(|input| matches!(input.rows.kind, Kind::Prefill { .. }))
-            .count();
-        let (prefill, decode) = inputs.split_at(prefills);
-        let requests: Vec<_> = prefill.iter().map(|input| input.rows.request).collect();
-        decode.len() == self.drafts.len()
-            && decode
-                .iter()
-                .zip(&self.drafts)
-                .all(|(input, draft)| admits(draft, input))
-            && prefill.iter().all(|input| {
-                self.drafts.iter().all(|draft| {
-                    draft.block.request != input.rows.request && draft.block.slot != input.rows.slot
-                })
+            && inputs.iter().zip(&self.drafts).all(|(input, draft)| {
+                matches!(
+                    input.rows.kind,
+                    Kind::Decode {
+                        drafts: 1..=BLOCK_ROWS
+                    }
+                ) && input.rows.kind.drafts() <= draft.block.emit_rows
+                    && (draft.block.emit_rows != 3 || input.rows.kind.drafts() == 3)
+                    && input.rows.request == draft.block.request
+                    && input.rows.slot == draft.block.slot
+                    && input.rows.start == draft.block.main_rows
+                    && input.tokens == [draft.bonus]
+                    && input.noise == draft.noise
             })
-            && state.extends(&self.committed, &requests)
     }
 }

@@ -236,20 +236,13 @@ impl Runtime {
     }
 
     /// The private preview completed these exact projections on every rank.
-    /// A real host commit must first produce the identical committed state,
-    /// or, for a step adding the prefill requests `restored`, that state
-    /// with only their prefix restores added ([`State::extends`]).
+    /// A real host commit must first produce the identical committed state.
     pub(crate) fn adopt_projections(
         &mut self,
         expected: &State,
-        restored: Option<&[u64]>,
         passes: &[state::RowProjection],
     ) -> state::Result<()> {
-        let committed = match restored {
-            Some(requests) => self.state.extends(expected, requests),
-            None => &self.state == expected,
-        };
-        if !committed || self.state.is_pending() {
+        if &self.state != expected || self.state.is_pending() {
             return Err("DSpark successor commit differs");
         }
         let mut projected = self.state.clone();

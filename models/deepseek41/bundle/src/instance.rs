@@ -1041,10 +1041,7 @@ fn create(services: HostServicesV1, bytes: &[u8]) -> Result<Instance, Failed<Ins
                 } else {
                     crate::lower::dspark::DraftMode::Greedy
                 },
-                crate::dspark::prefetch::Successor {
-                    items: config.execution.dspark_successor_items,
-                    prefill: config.execution.dspark_successor_prefill,
-                },
+                config.execution.dspark_successor_items,
             )
             .map_err(|error| {
                 log(&error);
@@ -1569,13 +1566,9 @@ pub(crate) use dspark::drafter_launches_at_depth_for_test as dspark_drafter_laun
 #[cfg(test)]
 pub(crate) use dspark::drafter_launches_for_test as dspark_drafter_launches;
 #[cfg(test)]
-pub(crate) use dspark::prefetch::draft_outputs_for_test as dspark_draft_outputs_for_test;
-#[cfg(test)]
 pub(crate) use dspark::prefetch::for_test as dspark_prefetch_for_test;
 #[cfg(test)]
 pub(crate) use dspark::prefetch::queued_for_test as dspark_successor_for_test;
-#[cfg(test)]
-pub(crate) use dspark::prefetch::ring_writes_for_test as dspark_ring_writes_for_test;
 #[cfg(test)]
 pub(crate) use dspark::prefetch::rings_for_test as dspark_successor_rings_for_test;
 #[cfg(test)]

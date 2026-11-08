@@ -722,9 +722,6 @@ impl<P: FakePackage> HostServicesBackendV1 for Backend<P> {
         stream: BundleStreamHandleV1,
         destination: DeviceBufferSpanV1,
     ) -> HostServiceResultV1<()> {
-        if self.0.device().fail_zero.fails() {
-            return Err(BundleStatusV1::HostError);
-        }
         self.0.check_span(destination);
         self.0.device().zero(stream, destination);
         self.0.on_zero(stream, destination);

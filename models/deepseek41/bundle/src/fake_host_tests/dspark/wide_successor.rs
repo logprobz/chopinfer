@@ -307,46 +307,6 @@ fn at_most_eight_items_keep_the_default_journal_at_every_bound() {
     }
 }
 
-/// `dspark_successor_prefill` changes nothing a decode step after an
-/// unallocated one runs: at C8, depth three, the compact successor is the
-/// step's own three heads, and above eight items both compute five, so
-/// with the bound at 16 every journal of two cycles is the same with the
-/// option on or off.
-#[test]
-fn the_prefill_option_keeps_the_decode_journals() {
-    use model_deepseek41_contract::execution_options::DSPARK_SUCCESSOR_PREFILL;
-    for items in [8, 13] {
-        let mut journals = Vec::new();
-        for prefill in [false, true] {
-            let (host, mut instance) =
-                prompted(items, 64, 16, &[(DSPARK_SUCCESSOR_PREFILL, prefill.into())]);
-            for (epoch, start, projected) in [(1, 3, items * 3), (2, 7, items * 4)] {
-                cycle(
-                    &host,
-                    &mut instance,
-                    (items, 3, start),
-                    (projected, 3),
-                    epoch,
-                )
-                .unwrap();
-                instance
-                    .commit_accepted(
-                        &(1..=items)
-                            .map(|id| kept(u64::from(id), 4))
-                            .collect::<Vec<_>>(),
-                    )
-                    .unwrap();
-            }
-            for request in 1..=items {
-                instance.retire_request(u64::from(request)).unwrap();
-            }
-            instance.destroy().unwrap();
-            journals.push(host.journal.borrow().clone());
-        }
-        assert_eq!(journals[0], journals[1], "items={items}");
-    }
-}
-
 /// Above eight items both paths compute five heads, so a wide successor
 /// serves the next step at a shallower or a deeper draft budget: depth
 /// five to three and three to five each reuse it, in one or two forwards.
@@ -777,15 +737,10 @@ fn c16_mixed(request: u64, slot: u64, prefix: u64, rows: u64, start: u64, k: u32
 /// A wide successor follows the request lifecycle. A cancel of the step
 /// that queued it retires every item, and the next step discards it; an
 /// item that retires before the next step discards it; and so does a
-/// prefix restore, unless `dspark_successor_prefill` lets the restored
-/// prompt join the 16 decoders, a C16 mixed step, which then reuses the
-/// five-head successor as it is and, from its draft readback, issues the
-/// inline step's journal.
+/// prefix restore whose prompt joins the 16 decoders in a C16 mixed step.
 #[test]
 fn wide_successors_follow_cancel_retirement_and_restore() {
-    use model_deepseek41_contract::execution_options::{
-        DIAGNOSTIC_STEP_LOGS, DSPARK_SUCCESSOR_PREFILL,
-    };
+    use model_deepseek41_contract::execution_options::DIAGNOSTIC_STEP_LOGS;
     let items = 16;
     let logs = [(DIAGNOSTIC_STEP_LOGS, serde_json::Value::from(true))];
 
@@ -841,76 +796,44 @@ fn wide_successors_follow_cancel_retirement_and_restore() {
     finish(&host, instance, items - 1, 4);
 
     let ids: Vec<u32> = (0..141).collect();
-    let mut targets = Vec::new();
-    let mut drafts = Vec::new();
-    for prefill in [false, true] {
-        let options = [logs[0].clone(), (DSPARK_SUCCESSOR_PREFILL, prefill.into())];
-        let (host, mut instance) = prompted_in(items, 20, 64, 16, &options);
-        execute(
-            &mut instance,
-            &host,
-            &super::super::prompt(200, 16, 0, 141, true),
-        );
-        instance.commit().unwrap();
-        let count_pages = instance.describe_prefix_state().unwrap();
-        assert!(SNAPSHOT_PAGE + count_pages <= KV_PAGES);
-        let pages: Vec<_> = (0..count_pages).map(|page| SNAPSHOT_PAGE + page).collect();
-        instance.capture_prefix_state(200, 141, &pages).unwrap();
-        instance.retire_request(200).unwrap();
-        cycle(&host, &mut instance, (items, 3, 3), (items * 3, 3), 1).unwrap();
-        instance
-            .commit_accepted(
-                &(1..=items)
-                    .map(|id| kept(u64::from(id), 4))
-                    .collect::<Vec<_>>(),
-            )
-            .unwrap();
-        instance
-            .restore_prefix_state_in_slot(201, &ids, &pages, 17)
-            .unwrap();
-        let from = host.logs.borrow().len();
-        let begin = host.journal.borrow().len();
-        let sink = execute(&mut instance, &host, &c16_mixed(201, 17, 141, 20, 7, 3));
-        let step = host.journal.borrow()[begin..].to_vec();
-        let records = events(&host, from);
-        assert_eq!(records.len(), 1, "prefill={prefill}");
-        if prefill {
-            assert_eq!(records[0]["event"], "reused");
-            assert_eq!(records[0]["prefill_items"], 1);
-            assert_eq!(records[0]["heads"], 5);
-        } else {
-            assert_eq!(records[0]["event"], "discarded");
-            assert_eq!(records[0]["relaxed"], true);
-        }
-        let (outputs, heads) = crate::instance::dspark_draft_outputs_for_test(instance.handle());
-        assert_eq!(heads, 5);
-        let ids_span = outputs[0].0;
-        let readback = format!(
-            "download {} {:?}",
-            host.rank_streams.borrow()[&0],
-            DeviceBufferSpanV1::new(ids_span.buffer, ids_span.offset, u64::from(items) * 20)
-        );
-        let at = step
-            .iter()
-            .position(|line| *line == readback)
-            .expect("the draft ID readback");
-        targets.push((count(&step[..at], "replay "), step[at..].to_vec()));
-        drafts.push(sink.draft_tokens());
-        instance
-            .commit_accepted(
-                &(1..=items)
-                    .map(|id| kept(u64::from(id), 4))
-                    .collect::<Vec<_>>(),
-            )
-            .unwrap();
-        for request in (1..=u64::from(items)).chain([201]) {
-            instance.retire_request(request).unwrap();
-        }
-        instance.destroy().unwrap();
-        assert_eq!(host.acquired.get(), host.released.get());
+    let (host, mut instance) = prompted_in(items, 20, 64, 16, &logs);
+    execute(
+        &mut instance,
+        &host,
+        &super::super::prompt(200, 16, 0, 141, true),
+    );
+    instance.commit().unwrap();
+    let count_pages = instance.describe_prefix_state().unwrap();
+    assert!(SNAPSHOT_PAGE + count_pages <= KV_PAGES);
+    let pages: Vec<_> = (0..count_pages).map(|page| SNAPSHOT_PAGE + page).collect();
+    instance.capture_prefix_state(200, 141, &pages).unwrap();
+    instance.retire_request(200).unwrap();
+    cycle(&host, &mut instance, (items, 3, 3), (items * 3, 3), 1).unwrap();
+    instance
+        .commit_accepted(
+            &(1..=items)
+                .map(|id| kept(u64::from(id), 4))
+                .collect::<Vec<_>>(),
+        )
+        .unwrap();
+    instance
+        .restore_prefix_state_in_slot(201, &ids, &pages, 17)
+        .unwrap();
+    let from = host.logs.borrow().len();
+    execute(&mut instance, &host, &c16_mixed(201, 17, 141, 20, 7, 3));
+    let records = events(&host, from);
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0]["event"], "discarded");
+    instance
+        .commit_accepted(
+            &(1..=items)
+                .map(|id| kept(u64::from(id), 4))
+                .collect::<Vec<_>>(),
+        )
+        .unwrap();
+    for request in (1..=u64::from(items)).chain([201]) {
+        instance.retire_request(request).unwrap();
     }
-    // Per rank: the decoders' two 32-row catch-up launches and two forwards.
-    assert_eq!(targets[0].0 - targets[1].0, 4 * 4);
-    assert_eq!(targets[0].1, targets[1].1);
-    assert_eq!(drafts[0], drafts[1]);
+    instance.destroy().unwrap();
+    assert_eq!(host.acquired.get(), host.released.get());
 }

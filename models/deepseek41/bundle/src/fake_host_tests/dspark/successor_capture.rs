@@ -98,28 +98,21 @@ fn a_device_result_step_under_every_control() {
 }
 
 /// A legacy verify step queues the successor `successor.json` names, and
-/// the next step reuses it: an allocated five-head one, kept whole without
-/// `dspark_successor_prefill` and cut to the step's three heads with it.
-/// With `successors-off` the same steps queue none and draft inline. Each
+/// the next step reuses it whole: an allocated five-head one. With
+/// `successors-off` the same steps queue none and draft inline. Each
 /// drafted step dumps every rank's saved status, draft outputs and item
 /// rings, and its heads and successor outcome, once: its commit writes
 /// none after the dump is taken away.
 #[cfg(feature = "state-capture")]
 #[test]
 fn forced_feedback_and_the_off_switch_drive_both_arms_and_dump_each_step() {
-    use model_deepseek41_contract::execution_options::DSPARK_SUCCESSOR_PREFILL;
-    for (label, prefill, off, heads) in [
-        ("whole", false, false, 5),
-        ("cut", true, false, 3),
-        ("inline", true, true, 3),
-    ] {
+    for (label, off, heads) in [("whole", false, 5), ("inline", true, 3)] {
         let mut controls = vec!["successor-steps"];
         if off {
             controls.push("successors-off");
         }
         let root = capture_directory(label, &controls, true, 2);
-        let (host, mut instance) =
-            prompted(8, 64, 8, &[(DSPARK_SUCCESSOR_PREFILL, prefill.into())]);
+        let (host, mut instance) = prompted(8, 64, 8, &[]);
         let handle = instance.handle();
         crate::instance::set_dspark_state_capture_root_for_test(handle, Some(root.clone()));
         execute(&mut instance, &host, &batch(8, 3, 3));
@@ -215,47 +208,13 @@ fn forced_feedback_and_the_off_switch_drive_both_arms_and_dump_each_step() {
 /// arm runs that test's drafted steps (warm, queueing, consumer and
 /// follow-up) through the shared protocol (`successor_protocol`), which
 /// writes the controls, takes every step's dump and compares the arms as
-/// the GPU test does. The consumer is a mixed step beside a cold prompt at
-/// C3, from an allocated five-head successor, and a decode step at C8
-/// (allocated) and C9 (wide). On this device every arm's bytes match; a
-/// missing dump file, an unchecked status or a wrong outcome fails here
-/// before any GPU run.
+/// the GPU test does. The consumer is a decode step at C8 and C9 (wide).
+/// On this device every arm's bytes match; a missing dump file, an
+/// unchecked status or a wrong outcome fails here before any GPU run.
 #[cfg(feature = "state-capture")]
 #[test]
 fn the_gpu_comparison_protocol_walks_every_file_on_the_fake_host() {
     use super::successor_protocol as protocol;
-    use model_deepseek41_contract::execution_options::DSPARK_SUCCESSOR_PREFILL;
-    /// The cold prompt the mixed consumer adds, in the slot after the
-    /// decoders.
-    const PROMPT: u64 = 60;
-    fn mixed(items: u32, start: u64, k: u32) -> Vec<u8> {
-        let mut entries = vec![BatchItemV1::new(PROMPT, false, 40, true, (0..40).collect())];
-        let mut appends = vec![BatchAppendV1::new(0, 40, 40, vec![100], None)];
-        for slot in 0..items {
-            entries.push(BatchItemV1::verify(
-                u64::from(slot + 1),
-                k + 1,
-                true,
-                vec![7],
-            ));
-            let end = start + u64::from(k + 1);
-            appends.push(BatchAppendV1::new(
-                start,
-                u64::from(k + 1),
-                end,
-                vec![u64::from(slot)],
-                None,
-            ));
-        }
-        BatchRequestV1::new(BatchWireVersionV1::V3, entries, appends)
-            .with_state_slots(
-                std::iter::once(u64::from(items))
-                    .chain(0..u64::from(items))
-                    .collect(),
-            )
-            .encode()
-            .unwrap()
-    }
     let root = PathBuf::from(std::env::var_os("CHOPINFER_DATA").expect("external test data"))
         .join("deepseek41-tests")
         .join(format!("dspark-successor-protocol-{}", std::process::id()));
@@ -265,20 +224,11 @@ fn the_gpu_comparison_protocol_walks_every_file_on_the_fake_host() {
     let state = root.join("state");
     std::fs::create_dir_all(&state).unwrap();
     protocol::start(&state).unwrap();
-    for (label, items, allocated, cold) in [
-        ("c3-mixed-cold", 3, true, true),
-        ("c8-decode-cut", 8, true, false),
-        ("c9-wide", 9, false, false),
-    ] {
+    for (label, items) in [("c8-decode", 8), ("c9-wide", 9)] {
         let case = root.join("output").join(label);
         for inline in [false, true] {
-            let (host, mut instance) = super::wide_successor::prompted_in(
-                items,
-                items + 1,
-                64,
-                16,
-                &[(DSPARK_SUCCESSOR_PREFILL, true.into())],
-            );
+            let (host, mut instance) =
+                super::wide_successor::prompted_in(items, items + 1, 64, 16, &[]);
             crate::instance::set_dspark_state_capture_root_for_test(
                 instance.handle(),
                 Some(state.clone()),
@@ -294,17 +244,12 @@ fn the_gpu_comparison_protocol_walks_every_file_on_the_fake_host() {
             protocol::take_dump(&state, &arm.join("warm")).unwrap();
             instance.commit_accepted(&decoders(1)).unwrap();
             let accepted: Vec<_> = (1..=u64::from(items)).map(|id| (id, 2, 7)).collect();
-            protocol::write_feedback(&state, allocated, &accepted).unwrap();
+            protocol::write_feedback(&state, false, &accepted).unwrap();
             execute(&mut instance, &host, &batch(items, 4, 3));
             protocol::take_dump(&state, &arm.join("queue")).unwrap();
             assert_eq!(protocol::take_feedback(&state).unwrap(), accepted);
             instance.commit_accepted(&decoders(3)).unwrap();
-            let consumer = if cold {
-                mixed(items, 7, 3)
-            } else {
-                batch(items, 7, 3)
-            };
-            execute(&mut instance, &host, &consumer);
+            execute(&mut instance, &host, &batch(items, 7, 3));
             let record = protocol::take_dump(&state, &arm.join("consume")).unwrap();
             assert_eq!(record["computed_positions"], if items < 9 { 3 } else { 5 });
             instance.commit_accepted(&decoders(1)).unwrap();
@@ -313,9 +258,6 @@ fn the_gpu_comparison_protocol_walks_every_file_on_the_fake_host() {
             instance.commit_accepted(&decoders(1)).unwrap();
             for request in 1..=u64::from(items) {
                 instance.retire_request(request).unwrap();
-            }
-            if cold {
-                instance.retire_request(PROMPT).unwrap();
             }
             instance.destroy().unwrap();
             assert_eq!(host.acquired.get(), host.released.get());

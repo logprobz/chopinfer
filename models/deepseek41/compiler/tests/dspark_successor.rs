@@ -16,7 +16,7 @@
 //! reused the successor. A case either forces its acceptance or takes each
 //! item's greedy acceptance from the queueing step's own target logits.
 use model_deepseek41_contract::execution_options::{
-    DSPARK_GRAPH_HANDLES_PER_RANK, DSPARK_SUCCESSOR_ITEMS, DSPARK_SUCCESSOR_PREFILL,
+    DSPARK_GRAPH_HANDLES_PER_RANK, DSPARK_SUCCESSOR_ITEMS,
 };
 use runtime_bundle_abi::*;
 use serde::Deserialize;
@@ -57,18 +57,6 @@ enum Acceptance {
     Greedy,
 }
 
-/// The step that consumes the successor.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum Next {
-    /// The decoders alone.
-    Decode,
-    /// The decoders beside a fresh 40-token prompt.
-    Cold,
-    /// The decoders beside 20 more tokens of a prompt restored from a
-    /// prefix captured at 141 tokens, restored after the queueing step.
-    Restored,
-}
-
 #[derive(Clone, Copy, Debug)]
 struct Case {
     label: &'static str,
@@ -80,7 +68,6 @@ struct Case {
     acceptance: Acceptance,
     /// Whether the successor is an allocated step's, of five heads.
     allocated: bool,
-    next: Next,
 }
 
 const fn case(
@@ -90,7 +77,6 @@ const fn case(
     depth: u32,
     acceptance: Acceptance,
     allocated: bool,
-    next: Next,
 ) -> Case {
     Case {
         label,
@@ -99,69 +85,27 @@ const fn case(
         depth,
         acceptance,
         allocated,
-        next,
     }
 }
 
 use Acceptance::{Forced, Greedy as Natural};
 
-/// Every case. Decode-to-mixed steps take a five-head successor into a
-/// three-head consumer at C3 and C8 (C16 computes five); decode-only
-/// allocated-to-unallocated steps cut the same way; depth five accepts all
-/// five drafts, at C5 within one 32-row projection and at C16 with its
-/// saved status at the 1,408-byte bound (C6 to C8 queue none); a 125-token
-/// prompt's successor projects across the 128-cell ring wrap; 9 to 16
-/// items take the wide successor. Every kind but all-accepted, which
+/// Every case, each a decode step consuming the successor: depth five
+/// accepts all five drafts, at C5 within one 32-row projection and at C16
+/// with its saved status at the 1,408-byte bound (C6 to C8 queue none); a
+/// 125-token prompt's successor projects across the 128-cell ring wrap; 9
+/// to 16 items take the wide successor. Every kind but all-accepted, which
 /// forcing defines, also has a greedy case.
 const CASES: &[Case] = &[
-    case("c3-mixed-cold", 3, 40, 3, Forced(2), true, Next::Cold),
-    case(
-        "c8-mixed-restored",
-        8,
-        40,
-        3,
-        Forced(2),
-        true,
-        Next::Restored,
-    ),
-    case("c16-mixed-cold", 16, 40, 3, Forced(2), true, Next::Cold),
-    case("c8-mixed-greedy", 8, 40, 3, Natural, true, Next::Cold),
-    case("c3-decode-cut", 3, 40, 3, Forced(2), true, Next::Decode),
-    case("c8-decode-cut", 8, 40, 3, Forced(1), true, Next::Decode),
-    case(
-        "c8-decode-cut-greedy",
-        8,
-        40,
-        3,
-        Natural,
-        true,
-        Next::Decode,
-    ),
-    case("c5-all-accepted", 5, 40, 5, Forced(5), false, Next::Decode),
-    case(
-        "c16-all-accepted",
-        16,
-        40,
-        5,
-        Forced(5),
-        false,
-        Next::Decode,
-    ),
-    case("c8-ring-wrap", 8, 125, 3, Forced(3), false, Next::Decode),
-    case(
-        "c8-ring-wrap-greedy",
-        8,
-        125,
-        3,
-        Natural,
-        false,
-        Next::Decode,
-    ),
-    case("c9-wide", 9, 40, 3, Forced(3), false, Next::Decode),
-    case("c12-wide", 12, 40, 3, Forced(3), false, Next::Decode),
-    case("c13-wide", 13, 40, 3, Forced(3), false, Next::Decode),
-    case("c16-wide", 16, 40, 3, Forced(3), false, Next::Decode),
-    case("c12-wide-greedy", 12, 40, 3, Natural, false, Next::Decode),
+    case("c5-all-accepted", 5, 40, 5, Forced(5), false),
+    case("c16-all-accepted", 16, 40, 5, Forced(5), false),
+    case("c8-ring-wrap", 8, 125, 3, Forced(3), false),
+    case("c8-ring-wrap-greedy", 8, 125, 3, Natural, false),
+    case("c9-wide", 9, 40, 3, Forced(3), false),
+    case("c12-wide", 12, 40, 3, Forced(3), false),
+    case("c13-wide", 13, 40, 3, Forced(3), false),
+    case("c16-wide", 16, 40, 3, Forced(3), false),
+    case("c12-wide-greedy", 12, 40, 3, Natural, false),
 ];
 
 const FORCED_BONUS: u32 = 13;
@@ -169,20 +113,11 @@ const FORCED_BONUS: u32 = 13;
 const WARM_INPUT: u32 = 7;
 const QUEUE_INPUT: u32 = 11;
 const FOLLOW_INPUT: u32 = 17;
-/// The prefill request and the source of its restored prefix.
-const PREFILL: u64 = 100;
-const SOURCE: u64 = 200;
-const SOURCE_SLOT: u64 = 19;
-const SOURCE_TOKENS: usize = 141;
 
 fn prompt(decoder: u64, tokens: usize) -> Vec<u32> {
     (0..tokens as u64)
         .map(|at| 100 + ((at * 7 + decoder * 131) % 4000) as u32)
         .collect()
-}
-
-fn source_prompt() -> Vec<u32> {
-    (0..SOURCE_TOKENS as u32 + 20).map(|at| 6000 + at).collect()
 }
 
 /// One arm's captures and decided acceptance.
@@ -215,21 +150,6 @@ fn run_arm(fixture: &mut Fixture, case: &Case, inline: bool, output: &Path) -> R
     let mut captures = BTreeMap::new();
     let mut records = BTreeMap::new();
     let decoders = u64::from(case.decoders);
-    let mut pages = Vec::new();
-    if case.next == Next::Restored {
-        fixture.admit(SOURCE, SOURCE_SLOT)?;
-        let tokens = source_prompt()[..SOURCE_TOKENS].to_vec();
-        fixture.step(
-            &[Scheduled {
-                request: SOURCE,
-                item: Item::Prefill { tokens },
-            }],
-            None,
-        )?;
-        fixture.commit(&BTreeMap::new())?;
-        pages = fixture.capture(SOURCE, SOURCE_TOKENS)?;
-        fixture.preempt(SOURCE)?;
-    }
     let mut prompts = Vec::new();
     for request in 1..=decoders {
         fixture.admit(request, request - 1)?;
@@ -288,31 +208,12 @@ fn run_arm(fixture: &mut Fixture, case: &Case, inline: bool, output: &Path) -> R
         .map(|&(request, _, bonus)| (request, bonus))
         .collect();
     fixture.commit(&kept)?;
-    let mut items = Vec::new();
-    match case.next {
-        Next::Decode => {}
-        Next::Cold => {
-            fixture.admit(PREFILL, decoders)?;
-            items.push(Scheduled {
-                request: PREFILL,
-                item: Item::Prefill {
-                    tokens: (0..40).map(|at| 5000 + at).collect(),
-                },
-            });
-        }
-        Next::Restored => {
-            let ids = source_prompt();
-            fixture.restore(SOURCE, PREFILL, decoders, &ids[..SOURCE_TOKENS], &pages)?;
-            items.push(Scheduled {
-                request: PREFILL,
-                item: Item::Prefill {
-                    tokens: ids[SOURCE_TOKENS..].to_vec(),
-                },
-            });
-        }
-    }
-    items.extend(verify(case.decoders, &bonus, case.depth));
-    drafted(fixture, "consume", &items, None)?;
+    drafted(
+        fixture,
+        "consume",
+        &verify(case.decoders, &bonus, case.depth),
+        None,
+    )?;
     fixture.commit(&each(case.decoders, 1))?;
     drafted(
         fixture,
@@ -327,12 +228,6 @@ fn run_arm(fixture: &mut Fixture, case: &Case, inline: bool, output: &Path) -> R
     fixture.commit(&each(case.decoders, 1))?;
     for request in 1..=decoders {
         fixture.retire(request)?;
-    }
-    if case.next != Next::Decode {
-        fixture.retire(PREFILL)?;
-    }
-    if case.next == Next::Restored {
-        fixture.release(SOURCE)?;
     }
     Ok(Arm {
         captures,
@@ -377,10 +272,7 @@ fn run(extra: &[(&str, &str)]) -> Result<()> {
         .map_err(|error| format!("{}: {error}", path.display()))?;
     std::fs::create_dir(&config.output)
         .map_err(|error| format!("{}: {error}", config.output.display()))?;
-    let mut options = BTreeMap::from([
-        (DSPARK_SUCCESSOR_ITEMS.to_owned(), "16".to_owned()),
-        (DSPARK_SUCCESSOR_PREFILL.to_owned(), "true".to_owned()),
-    ]);
+    let mut options = BTreeMap::from([(DSPARK_SUCCESSOR_ITEMS.to_owned(), "16".to_owned())]);
     options.extend(
         extra
             .iter()
@@ -397,7 +289,7 @@ fn run(extra: &[(&str, &str)]) -> Result<()> {
         receipts.push(json!({
             "case": case.label, "decoders": case.decoders, "prompt": case.prompt,
             "depth": case.depth, "acceptance": format!("{:?}", case.acceptance),
-            "allocated": case.allocated, "next": format!("{:?}", case.next),
+            "allocated": case.allocated,
             "feedback": reuse.feedback, "consumer_heads": heads,
         }));
         eprintln!(

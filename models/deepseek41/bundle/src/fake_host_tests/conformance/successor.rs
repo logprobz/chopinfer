@@ -1,23 +1,18 @@
-//! Route coverage with the DSpark successor candidates on
-//! (`dspark_successor_items` at 16 and `dspark_successor_prefill`). The
-//! options move when the drafter's projection and draft run, not what they
-//! lower, so the servings and their allowlist entries are the profile's
-//! own and the options are the instance's overrides, as the template
-//! sweep's verify mode is. The sweep's fake device writes no acceptance
-//! record a successor can plan from, so its steps queue none: this checks
-//! that every route stays admitted with the options on, and the fake-host
-//! successor tests cover the successors' launches. Every tier sweeps it.
+//! Route coverage with the DSpark successor candidate on
+//! (`dspark_successor_items` at 16). The option moves when the drafter's
+//! projection and draft run, not what they lower, so the servings and
+//! their allowlist entries are the profile's own and the option is the
+//! instance's override, as the template sweep's verify mode is. The
+//! sweep's fake device writes no acceptance record a successor can plan
+//! from, so its steps queue none: this checks that every route stays
+//! admitted with the option on, and the fake-host successor tests cover
+//! the successors' launches. Every tier sweeps it.
 use super::*;
 use bundle_runtime::fake_host::conformance::route_guard;
 use conformance::Startup;
-use model_deepseek41_contract::execution_options::{
-    DSPARK_SUCCESSOR_ITEMS, DSPARK_SUCCESSOR_PREFILL,
-};
+use model_deepseek41_contract::execution_options::DSPARK_SUCCESSOR_ITEMS;
 
-const OPTIONS: [(&str, &str); 2] = [
-    (DSPARK_SUCCESSOR_ITEMS, "16"),
-    (DSPARK_SUCCESSOR_PREFILL, "true"),
-];
+const OPTIONS: [(&str, &str); 1] = [(DSPARK_SUCCESSOR_ITEMS, "16")];
 
 struct Successor(Served);
 

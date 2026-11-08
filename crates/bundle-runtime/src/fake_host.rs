@@ -264,7 +264,6 @@ pub struct FakeDevice<O = NoObserver> {
     pub fail_record: Countdown,
     pub fail_wait: Countdown,
     pub fail_copy: Countdown,
-    pub fail_zero: Countdown,
     pub fail_launch: Countdown,
     pub fail_graph_end: Countdown,
     pub fail_graph_launch: Countdown,

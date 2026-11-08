@@ -188,8 +188,6 @@ pub struct Fixture {
     pub root: PathBuf,
     /// Each live request's sequence and state slot.
     requests: BTreeMap<u64, (SequenceHandle, u64)>,
-    /// Preempted requests' sequences, pinned for prefix restores.
-    preempted: BTreeMap<u64, SequenceHandle>,
     open: Option<Open>,
 }
 
@@ -262,7 +260,6 @@ impl Fixture {
             pool: KvPool::new(KvGeometry::new(64, REQUEST_PAGES)?, SEQUENCES as usize)?,
             root,
             requests: BTreeMap::new(),
-            preempted: BTreeMap::new(),
             open: None,
         })
     }
@@ -273,51 +270,6 @@ impl Fixture {
         if self.requests.insert(request, (handle, slot)).is_some() {
             return Err(format!("request {request} is already live").into());
         }
-        Ok(())
-    }
-
-    /// Captures `request`'s first `tokens` tokens into the snapshot pages.
-    pub fn capture(&mut self, request: u64, tokens: usize) -> Result<Vec<u64>> {
-        let count = self.instance.describe_prefix_state()?;
-        if REQUEST_PAGES as u64 + count > DEVICE_PAGES {
-            return Err("snapshot exceeds reserved pages".into());
-        }
-        let pages = (REQUEST_PAGES as u64..REQUEST_PAGES as u64 + count).collect::<Vec<_>>();
-        self.instance
-            .capture_prefix_state(request, tokens as u64, &pages)?;
-        Ok(pages)
-    }
-
-    /// Retires `request` from its state slot, keeping its KV pages for
-    /// prefix restores.
-    pub fn preempt(&mut self, request: u64) -> Result<()> {
-        let (handle, _) = self
-            .requests
-            .remove(&request)
-            .ok_or("preempted request is absent")?;
-        self.instance.retire_request(request)?;
-        self.preempted.insert(request, handle);
-        Ok(())
-    }
-
-    /// Restores preempted `source`'s captured prefix `ids` for `request` in
-    /// `slot`, sharing `source`'s KV pages.
-    pub fn restore(
-        &mut self,
-        source: u64,
-        request: u64,
-        slot: u64,
-        ids: &[u32],
-        pages: &[u64],
-    ) -> Result<()> {
-        let handle = *self
-            .preempted
-            .get(&source)
-            .ok_or("restore source is not preempted")?;
-        let child = self.pool.fork(handle, QUOTA)?;
-        self.instance
-            .restore_prefix_state_in_slot(request, ids, pages, slot)?;
-        self.requests.insert(request, (child, slot));
         Ok(())
     }
 
@@ -457,16 +409,6 @@ impl Fixture {
         Ok(())
     }
 
-    /// Releases preempted `request`'s pinned sequence.
-    pub fn release(&mut self, request: u64) -> Result<()> {
-        let handle = self
-            .preempted
-            .remove(&request)
-            .ok_or("released request is not preempted")?;
-        self.pool.release(handle)?;
-        Ok(())
-    }
-
     /// Retires `request`, releasing its sequence.
     pub fn retire(&mut self, request: u64) -> Result<()> {
         let (handle, _) = self
@@ -490,9 +432,6 @@ impl Fixture {
         }
         for request in self.requests.keys().copied().collect::<Vec<_>>() {
             self.retire(request)?;
-        }
-        for (_, handle) in std::mem::take(&mut self.preempted) {
-            self.pool.release(handle)?;
         }
         self.instance.destroy()?;
         if self.backend.live_resource_count() != 0 {

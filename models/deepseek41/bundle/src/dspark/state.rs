@@ -263,8 +263,6 @@ pub struct State {
     committed: BTreeMap<u64, Context>,
     pending: Option<Pending>,
     serial: u64,
-    /// Prefix restores so far; each also advances the serial.
-    restores: u64,
     poisoned: bool,
     batch_rows: u32,
 }
@@ -277,7 +275,6 @@ impl State {
             committed: BTreeMap::new(),
             pending: None,
             serial: 0,
-            restores: 0,
             poisoned: false,
             batch_rows: BATCH_PROJECTION_ROWS,
         })
@@ -828,7 +825,6 @@ impl State {
             },
         );
         self.serial = lease;
-        self.restores += 1;
         Ok(())
     }
 
@@ -836,57 +832,6 @@ impl State {
         self.idle()?;
         self.committed.remove(&request);
         Ok(())
-    }
-
-    /// Whether this state is `base` with only prefix restores of
-    /// `requests` since: neither holds a transaction or is poisoned, every
-    /// context of `base` is unchanged, every other context is one
-    /// `restore` created for one of `requests`, with a lease after `base`'s
-    /// serial, and the serial advanced once per such restore and by
-    /// nothing else.
-    pub fn extends(&self, base: &State, requests: &[u64]) -> bool {
-        if self.config != base.config
-            || self.batch_rows != base.batch_rows
-            || self.pending.is_some()
-            || base.pending.is_some()
-            || self.poisoned
-            || base.poisoned
-            || base
-                .committed
-                .iter()
-                .any(|(request, context)| self.committed.get(request) != Some(context))
-        {
-            return false;
-        }
-        let mut leases = BTreeSet::new();
-        let mut restored = 0_u64;
-        for (request, context) in &self.committed {
-            if base.committed.contains_key(request) {
-                continue;
-            }
-            let start = context.end.saturating_sub(u64::from(self.config.window));
-            let fresh = Context {
-                slot: context.slot,
-                retained_start: start,
-                end: context.end,
-                projected: vec![start; self.config.stages as usize],
-                lease: context.lease,
-                bulk: (context.end - start > u64::from(self.batch_rows))
-                    .then_some((start, context.end)),
-            };
-            if !requests.contains(request)
-                || context.end == 0
-                || *context != fresh
-                || context.lease <= base.serial
-                || context.lease > self.serial
-                || !leases.insert(context.lease)
-            {
-                return false;
-            }
-            restored += 1;
-        }
-        self.serial.checked_sub(base.serial) == Some(restored)
-            && self.restores.checked_sub(base.restores) == Some(restored)
     }
 }
 

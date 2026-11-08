@@ -397,8 +397,10 @@ pub struct EngineGenerationBackend {
     maximum_sequence_tokens: usize,
     startup_page_tokens: usize,
     startup_pages: usize,
-    /// The page tokens of the prefix chains the engine keys prompts with,
-    /// when it keys them; a submission hashes them off the engine thread.
+    /// The page tokens of the prefix chains the engine keys its prefix cache
+    /// with, when it has one; a submission hashes them off the engine thread.
+    /// Reply-history observation alone hashes at admission, inside its
+    /// memory reservation.
     prefix_chain_block_tokens: Option<usize>,
     metrics: EngineMetrics,
     kv_metrics: KvMetrics,

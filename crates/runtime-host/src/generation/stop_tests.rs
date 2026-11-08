@@ -2181,3 +2181,35 @@ fn a_submission_hashes_the_prefix_chain_the_engine_builds() {
         assert!(prefix_chain_v1(Some(64), &request).is_none());
     }
 }
+
+/// Reply-history observation alone builds a prompt's chain at admission,
+/// inside the observer's memory reservation, so no submission hashes one
+/// beforehand; only a prefix cache's chains are hashed at submission.
+#[test]
+fn only_a_prefix_cache_has_chains_hashed_before_admission() {
+    let config = |cached: bool| {
+        let config = EngineConfig::new(
+            SchedulerConfig::new(128, 256, 8192, 8192, 1).unwrap(),
+            KvGeometry::new(256, 2048).unwrap(),
+            ModelVocabulary::new(259).unwrap(),
+            262_144,
+            64,
+        )
+        .unwrap()
+        .with_reply_history_observer(true);
+        if cached {
+            config.with_prefix_cache(1)
+        } else {
+            config
+        }
+    };
+    let mut request = raw_request(true);
+    request.prompt = PreparedPrompt::TokenIds(vec![X; 250_000]);
+    let observed = Engine::new(config(false), ScriptedModel::default()).unwrap();
+    assert!(!observed.prefix_cache_enabled());
+    assert!(observed.reply_history_observer().is_some());
+    assert!(prefix_chain_v1(observed.prefix_chain_block_tokens(), &request).is_none());
+    let cached = Engine::new(config(true), ScriptedModel::default()).unwrap();
+    assert_eq!(cached.prefix_chain_block_tokens(), Some(256));
+    assert!(prefix_chain_v1(cached.prefix_chain_block_tokens(), &request).is_some());
+}

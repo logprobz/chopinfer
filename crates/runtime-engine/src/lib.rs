@@ -2351,14 +2351,15 @@ impl<E: ModelExecutor> Engine<E> {
         Ok(())
     }
 
-    /// The page tokens of the prefix chain a submission builds for its
-    /// prompt, when it builds one: to key the prefix cache, or to observe
-    /// reply history. A chain offered with
+    /// The page tokens of the prefix chain a submission keys the prefix
+    /// cache with, when prefix caching is on. A chain offered with
     /// [`EngineRequest::with_prefix_chain`] counts only at this size.
+    /// Reply-history observation alone reports none: it builds its chain at
+    /// submission, inside the observer's memory reservation, and a chain
+    /// hashed before then would be outside it.
     #[must_use]
-    pub fn prefix_chain_block_tokens(&self) -> Option<usize> {
-        (self.prefix_block_tokens.is_some() || self.reply_history.is_some())
-            .then(|| self.scheduler.kv_geometry().block_tokens())
+    pub const fn prefix_chain_block_tokens(&self) -> Option<usize> {
+        self.prefix_block_tokens
     }
 
     /// Whether step tracing reads host clocks (`CHOPINFER_STEP_TRACE=1`), so

@@ -58,9 +58,7 @@ impl<'de> Deserialize<'de> for FrontendJsonV1 {
     where
         D: Deserializer<'de>,
     {
-        deserializer.deserialize_any(OrderedVisitorV1 {
-            duplicates: DuplicateKeysV1::Refuse,
-        })
+        deserializer.deserialize_any(OrderedVisitorV1::REFUSING_DUPLICATES)
     }
 }
 
@@ -91,8 +89,16 @@ enum DuplicateKeysV1 {
     KeepLast,
 }
 
-struct OrderedVisitorV1 {
+pub(crate) struct OrderedVisitorV1 {
     duplicates: DuplicateKeysV1,
+}
+
+impl OrderedVisitorV1 {
+    /// The visitor [`FrontendJsonV1`] reads with, which refuses a key an
+    /// object names twice.
+    pub(crate) const REFUSING_DUPLICATES: Self = Self {
+        duplicates: DuplicateKeysV1::Refuse,
+    };
 }
 
 impl<'de> Visitor<'de> for OrderedVisitorV1 {

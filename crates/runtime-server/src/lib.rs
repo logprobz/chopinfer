@@ -20,6 +20,7 @@
 
 mod aliases;
 mod backend;
+mod completion_prompt;
 mod constraint;
 mod context;
 mod error;

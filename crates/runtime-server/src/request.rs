@@ -8,6 +8,7 @@ use crate::backend::{
     CancellationSignal, ChatMetadata, DecodingOptions, PreparedPrompt, PreparedRequest,
     RequestedLogprobs,
 };
+use crate::completion_prompt::{PromptElement, PromptInput};
 use crate::constraint::{RequestedConstraint, requested_constraint};
 use crate::error::ApiError;
 use crate::frontend::{
@@ -288,12 +289,14 @@ struct MessageInput {
     prefix: Option<bool>,
 }
 
+/// A completion request, generic over how its prompt reads so that a test
+/// can read it as the JSON value it was read as before.
 #[derive(Deserialize)]
-struct CompletionRequest {
+struct CompletionRequest<Prompt = PromptInput> {
     truncate_prompt_tokens: Option<i64>,
     truncation_side: Option<String>,
     model: Option<String>,
-    prompt: FrontendJsonV1,
+    prompt: Prompt,
     max_tokens: Option<usize>,
     temperature: Option<f64>,
     top_p: Option<f64>,
@@ -784,39 +787,22 @@ fn json_error_parameter(message: &str) -> Option<&str> {
     None
 }
 
+/// One prompt of a completion: a string, or a nonempty array of token IDs.
 fn completion_prompt(
-    prompt: FrontendJsonV1,
+    prompt: PromptElement,
     max_string_bytes: usize,
 ) -> Result<PreparedPrompt, ApiError> {
     Ok(match prompt {
-        FrontendJsonV1::String(value) => {
+        PromptElement::Value(FrontendJsonV1::String(value)) => {
             validate_string(&value, "prompt", max_string_bytes)?;
             PreparedPrompt::Raw(value)
         }
-        FrontendJsonV1::Array(ids) if !ids.is_empty() => {
-            if ids.len() > 1_048_576 {
-                return Err(ApiError::invalid(
-                    "token-ID prompt exceeds the token limit",
-                    Some("prompt"),
-                ));
-            }
-            let mut tokens = Vec::with_capacity(ids.len());
-            for id in ids {
-                let FrontendJsonV1::Number(id) = id else {
-                    return Err(ApiError::invalid(
-                        "token-ID prompt must contain unsigned integers",
-                        Some("prompt"),
-                    ));
-                };
-                let Some(id) = id.as_u64().and_then(|id| u32::try_from(id).ok()) else {
-                    return Err(ApiError::invalid(
-                        "token-ID prompt must contain unsigned 32-bit integers",
-                        Some("prompt"),
-                    ));
-                };
-                tokens.push(id);
-            }
-            PreparedPrompt::TokenIds(tokens)
+        PromptElement::Ids(ids) if !ids.is_empty() => {
+            within_prompt_token_limit(ids.len())?;
+            PreparedPrompt::TokenIds(ids)
+        }
+        PromptElement::Value(FrontendJsonV1::Array(values)) if !values.is_empty() => {
+            token_id_prompt(values.into_iter().map(PromptElement::Value))?
         }
         _ => {
             return Err(ApiError::invalid(
@@ -825,6 +811,47 @@ fn completion_prompt(
             ));
         }
     })
+}
+
+/// The token-ID prompt of a nonempty array, every element of which has to
+/// be an unsigned 32-bit integer.
+fn token_id_prompt(
+    elements: impl ExactSizeIterator<Item = PromptElement>,
+) -> Result<PreparedPrompt, ApiError> {
+    within_prompt_token_limit(elements.len())?;
+    let mut tokens = Vec::with_capacity(elements.len());
+    for element in elements {
+        let id = match element {
+            PromptElement::Id(id) => Some(id),
+            PromptElement::Value(FrontendJsonV1::Number(id)) => {
+                id.as_u64().and_then(|id| u32::try_from(id).ok())
+            }
+            PromptElement::Ids(_) | PromptElement::Value(_) => {
+                return Err(ApiError::invalid(
+                    "token-ID prompt must contain unsigned integers",
+                    Some("prompt"),
+                ));
+            }
+        };
+        let Some(id) = id else {
+            return Err(ApiError::invalid(
+                "token-ID prompt must contain unsigned 32-bit integers",
+                Some("prompt"),
+            ));
+        };
+        tokens.push(id);
+    }
+    Ok(PreparedPrompt::TokenIds(tokens))
+}
+
+fn within_prompt_token_limit(tokens: usize) -> Result<(), ApiError> {
+    if tokens > 1_048_576 {
+        return Err(ApiError::invalid(
+            "token-ID prompt exceeds the token limit",
+            Some("prompt"),
+        ));
+    }
+    Ok(())
 }
 
 fn prepare_completion(
@@ -849,32 +876,43 @@ fn prepare_completion(
         .unwrap_or(&frontend.models()[0].id)
         .to_owned();
     validate_model(frontend, &model)?;
-    let prompts = match request.prompt {
-        FrontendJsonV1::Array(values)
-            if values.first().is_some_and(|value| {
-                matches!(value, FrontendJsonV1::String(_) | FrontendJsonV1::Array(_))
-            }) =>
+    // An array that starts with a string or an array is a batch of prompts,
+    // and any other value one prompt.
+    let mut prompts = match request.prompt {
+        PromptInput::Elements(elements)
+            if elements
+                .first()
+                .is_some_and(|element| element.is_string() || element.is_array()) =>
         {
-            let strings = matches!(values[0], FrontendJsonV1::String(_));
-            if values.len() > 128
-                || values
+            let strings = elements[0].is_string();
+            if elements.len() > 128
+                || elements
                     .iter()
-                    .any(|value| strings != matches!(value, FrontendJsonV1::String(_)))
+                    .any(|element| strings != element.is_string())
             {
                 return Err(ApiError::invalid(
                     "prompt batch must contain at most 128 homogeneous prompts",
                     Some("prompt"),
                 ));
             }
-            values
+            elements
+                .into_iter()
+                .map(|prompt| completion_prompt(prompt, max_string_bytes))
+                .collect::<Result<Vec<_>, _>>()?
         }
-        prompt => vec![prompt],
-    };
-    let mut prompts = prompts
-        .into_iter()
-        .map(|prompt| completion_prompt(prompt, max_string_bytes))
-        .collect::<Result<Vec<_>, _>>()?
-        .into_iter();
+        PromptInput::Elements(elements) => vec![token_id_prompt(elements.into_iter())?],
+        PromptInput::Ids(ids) => vec![completion_prompt(
+            PromptElement::Ids(ids),
+            max_string_bytes,
+        )?],
+        PromptInput::Value(value) => {
+            vec![completion_prompt(
+                PromptElement::Value(value),
+                max_string_bytes,
+            )?]
+        }
+    }
+    .into_iter();
     let prompt = prompts.next().expect("nonempty prompt list");
     let additional_prompts = prompts.collect();
     validate_choices(request.n)?;
@@ -2594,6 +2632,293 @@ fn nullable_bool<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<bo
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Serves one model and renders nothing.
+    struct OneModel;
+
+    impl ServerFrontendV1 for OneModel {
+        fn models(&self) -> &[crate::FrontendModelV1] {
+            static MODELS: std::sync::LazyLock<[crate::FrontendModelV1; 1]> =
+                std::sync::LazyLock::new(|| [crate::FrontendModelV1::new("m", "test")]);
+            &*MODELS
+        }
+        fn maximum_total_tokens(&self) -> usize {
+            1 << 21
+        }
+        fn maximum_tool_calls(&self) -> usize {
+            1
+        }
+        fn render_chat(
+            &self,
+            _: FrontendChatRequestV1,
+        ) -> Result<crate::FrontendRenderedChatV1, FrontendErrorV1> {
+            Err(FrontendErrorV1::new("no chat", None))
+        }
+        fn validate_tool_call(&self, _: &str, _: &str) -> Result<(), FrontendErrorV1> {
+            Ok(())
+        }
+    }
+
+    /// What a client learns of a refusal and what its log line says.
+    type Refusal = (u16, String, &'static str, Option<String>, String);
+
+    fn refusal(error: &ApiError) -> Refusal {
+        (
+            error.status.as_u16(),
+            error.message.to_string(),
+            error.kind,
+            error.parameter.clone(),
+            format!("{:?}", error.log),
+        )
+    }
+
+    /// A completion's prompts as they were read before token IDs were read
+    /// as IDs: the prompt as a JSON value, then the same checks.
+    fn reference_prompts(body: &[u8]) -> Result<Vec<PreparedPrompt>, Refusal> {
+        let request: CompletionRequest<FrontendJsonV1> =
+            decode(body).map_err(|error| refusal(&error))?;
+        let prompts = match request.prompt {
+            FrontendJsonV1::Array(values)
+                if values.first().is_some_and(|value| {
+                    matches!(value, FrontendJsonV1::String(_) | FrontendJsonV1::Array(_))
+                }) =>
+            {
+                let strings = matches!(values[0], FrontendJsonV1::String(_));
+                if values.len() > 128
+                    || values
+                        .iter()
+                        .any(|value| strings != matches!(value, FrontendJsonV1::String(_)))
+                {
+                    return Err(refusal(&ApiError::invalid(
+                        "prompt batch must contain at most 128 homogeneous prompts",
+                        Some("prompt"),
+                    )));
+                }
+                values
+            }
+            prompt => vec![prompt],
+        };
+        prompts
+            .into_iter()
+            .map(|prompt| {
+                Ok(match prompt {
+                    FrontendJsonV1::String(value) => {
+                        validate_string(&value, "prompt", 64).map_err(|error| refusal(&error))?;
+                        PreparedPrompt::Raw(value)
+                    }
+                    FrontendJsonV1::Array(ids) if !ids.is_empty() => {
+                        let refused =
+                            |message| refusal(&ApiError::invalid(message, Some("prompt")));
+                        if ids.len() > 1_048_576 {
+                            return Err(refused("token-ID prompt exceeds the token limit"));
+                        }
+                        let mut tokens = Vec::with_capacity(ids.len());
+                        for id in ids {
+                            let FrontendJsonV1::Number(id) = id else {
+                                return Err(refused(
+                                    "token-ID prompt must contain unsigned integers",
+                                ));
+                            };
+                            let Some(id) = id.as_u64().and_then(|id| u32::try_from(id).ok()) else {
+                                return Err(refused(
+                                    "token-ID prompt must contain unsigned 32-bit integers",
+                                ));
+                            };
+                            tokens.push(id);
+                        }
+                        PreparedPrompt::TokenIds(tokens)
+                    }
+                    _ => {
+                        return Err(refusal(&ApiError::invalid(
+                            "prompt must be a single string or a nonempty token-ID array",
+                            Some("prompt"),
+                        )));
+                    }
+                })
+            })
+            .collect()
+    }
+
+    fn served_prompts(body: &[u8]) -> Result<Vec<PreparedPrompt>, Refusal> {
+        let parsed = parse(
+            &OneModel,
+            SamplingDefaults::EMPTY,
+            Endpoint::Completion,
+            RequestAcceptanceProfile::General,
+            RequestSurfaceV1::Full,
+            64,
+            body,
+            RequestIdentityV1 {
+                request_id: "r".to_owned(),
+                client_request_id: None,
+                generated_seed: 0,
+                cancellation: CancellationSignal::new(),
+            },
+        )
+        .map_err(|error| refusal(&error))?;
+        Ok(std::iter::once(parsed.prepared.prompt)
+            .chain(parsed.additional_prompts)
+            .collect())
+    }
+
+    /// Every prompt reads to the same prompts, or the same refusal, as the
+    /// prompt read as a JSON value: token IDs at their bounds and past them,
+    /// negative zero, floats and huge numbers, strings, nulls, objects with
+    /// a key named twice, batches of strings and of arrays at and past their
+    /// bound, arrays mixed at both depths and deeper, invalid JSON, and
+    /// random mixes of all of these, at the start, the middle or the end of
+    /// the body.
+    #[test]
+    fn completion_prompts_read_and_refuse_as_json_values_did() {
+        let mut prompts: Vec<String> = [
+            r#""text""#,
+            r#""""#,
+            r#""café
+""#,
+            r#""a long string past sixty-four bytes, which the test's limit refuses.""#,
+            "[]",
+            "[0]",
+            "[1,2,3]",
+            "[4294967295]",
+            "[4294967296]",
+            "[-1]",
+            "[-0]",
+            "[0.0]",
+            "[1.0]",
+            "[1e2]",
+            "[1E2]",
+            "[-0.0]",
+            "[18446744073709551615]",
+            "[18446744073709551616]",
+            "[-9223372036854775808]",
+            "[-9223372036854775809]",
+            "[1e400]",
+            "[1,\"a\"]",
+            "[\"a\",1]",
+            "[1,[2]]",
+            "[1,null]",
+            "[1,true]",
+            "[1,{}]",
+            r#"[1,{"a":1,"a":2}]"#,
+            r#"[{"a":1,"a":2},1]"#,
+            "[[]]",
+            "[[1,2],[3]]",
+            "[[1,2],[]]",
+            r#"[[1,2],"a"]"#,
+            r#"[["a"]]"#,
+            r#"[[1,"a"]]"#,
+            "[[1,2],[3,4.5]]",
+            "[[1,[2]]]",
+            r#"[[1,{"a":1}]]"#,
+            r#"[[1,{"a":1,"a":2}]]"#,
+            r#"["a","b"]"#,
+            r#"["a",["b"]]"#,
+            r#"["a",null]"#,
+            "[[1],5]",
+            "[[1],null]",
+            "[[-0,4294967296]]",
+            "[[4294967295,-0]]",
+            "5",
+            "5.5",
+            "-3",
+            "null",
+            "true",
+            "{}",
+            r#"{"a":1}"#,
+            r#"{"a":1,"a":2}"#,
+            "[[[1]]]",
+            "[[[]]]",
+            "[ 1 , 2 ,\n3 ]",
+            "[01]",
+            "[1,]",
+            "[1 2]",
+            "[\"\\ud800\"]",
+            "[1e-400]",
+            r#"[[1],[2],"c"]"#,
+            r#"[{"$serde_json::private::Number":"1"}]"#,
+        ]
+        .map(str::to_owned)
+        .to_vec();
+        for (count, element) in [(128, r#""s""#), (129, r#""s""#), (128, "[7]"), (129, "[7]")] {
+            prompts.push(format!("[{}]", vec![element; count].join(",")));
+        }
+        for count in [1_048_576, 1_048_577] {
+            prompts.push(format!("[{}]", vec!["9"; count].join(",")));
+            prompts.push(format!("[[{}]]", vec!["9"; count].join(",")));
+        }
+        let pool = [
+            "0",
+            "7",
+            "4294967295",
+            "4294967296",
+            "-0",
+            "-1",
+            "1.5",
+            "2e3",
+            "18446744073709551616",
+            r#""s""#,
+            "null",
+            "false",
+            "{}",
+            r#"{"k":[1]}"#,
+            "[]",
+            "[1]",
+            "[1,-0]",
+            r#"[1,"s"]"#,
+            "[[1]]",
+            r#"[{"a":0,"a":1}]"#,
+        ];
+        let mut state = 0x9e37_79b9_7f4a_7c15_u64;
+        let mut next = |bound: usize| {
+            state = state
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
+            (state >> 33) as usize % bound
+        };
+        for _ in 0..3000 {
+            let length = next(8);
+            let elements: Vec<&str> = (0..length).map(|_| pool[next(pool.len())]).collect();
+            let array = format!("[{}]", elements.join(","));
+            prompts.push(if next(4) == 0 {
+                format!("[{array}]")
+            } else {
+                array
+            });
+        }
+        let mut accepted = 0;
+        for prompt in &prompts {
+            for body in [
+                format!(r#"{{"model":"m","prompt":{prompt},"max_tokens":1}}"#),
+                format!(r#"{{"prompt":{prompt}}}"#),
+                format!(r#"{{"max_tokens":1,"seed":2,"prompt":{prompt}}}"#),
+            ] {
+                let served = served_prompts(body.as_bytes());
+                assert_eq!(
+                    served,
+                    reference_prompts(body.as_bytes()),
+                    "{}",
+                    &body[..body.len().min(200)]
+                );
+                accepted += usize::from(served.is_ok());
+            }
+        }
+        assert!(accepted > 400 && accepted < 3 * prompts.len(), "{accepted}");
+        for body in [
+            r#"{"model":"m"}"#,
+            r#"{"model":"m","prompt":[1],"prompt":[2]}"#,
+            r#"{"model":"m","prompt":[1],"max_tokens":"x"}"#,
+            r#"{"model":"m","prompt":[1,2"#,
+        ] {
+            assert_eq!(
+                served_prompts(body.as_bytes()),
+                reference_prompts(body.as_bytes()),
+                "{body}"
+            );
+        }
+        // The model is checked before the prompt, as before.
+        let refused = served_prompts(br#"{"model":"n","prompt":[1,"a"]}"#).unwrap_err();
+        assert_eq!(refused.1, "model 'n' is not available");
+    }
 
     struct Panics;
 

@@ -765,3 +765,22 @@ It resolved gains in stalls per 1,000 decode event gaps (0.80 fewer at
 C8 and 0.76 at C16), in stall time per 1,000 gaps (389 and 319 ms less)
 and in the C16 event-gap p50 (0.42%), with no resolved regression and no
 energy veto; TTFT p50 stayed unresolved.
+
+Later on 2026-11-08 a replay of the same design compared the host changes
+that followed U against U: the device-wait fields of the step trace, the
+reused weight census, word-at-a-time packing of prefill Engram ids, event
+handling in the serving loop, prefix chains hashed at submission, prompt
+echoes built in the request's relay, and faster tokenizing and reading of
+long chat requests. An exactness run before it matched them against U bit
+for bit on the live cohorts, on cold and restored prefills and on 2,016 API
+requests. The replay resolved a 6.7% gain in the C8 TTFT p50 (372 and
+371 ms to 347 and 350 ms) and a 0.54% regression in the C8 event-gap p50
+(26.93 and 27.05 ms to 27.10 and 27.17 ms), which makes a tradeoff; C16
+output throughput rose 0.73%, outside the declared metrics, and nothing
+else resolved. Decode steps of equal verify item and row counts took the
+same time within 0.3% in each pair. The C8 gaps fall in two modes, 20 to
+22 ms and 27 to 29 ms, and the p50 sits at the upper mode's edge, so it
+moved with the share of gaps from larger steps, which rose in both newer
+visits (gaps below 26 ms: 46.1% and 44.4% of U's, 44.7% and 42.5% of the
+newer visits'). These changes cannot be serving options, so they were
+adopted as the default with this tradeoff by the maintainers' decision.

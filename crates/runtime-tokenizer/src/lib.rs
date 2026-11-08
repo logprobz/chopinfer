@@ -18,7 +18,7 @@ use std::path::{Component, Path};
 use fancy_regex::{Expr, Regex};
 use json::Value;
 use runtime_weights::sha256_bytes;
-use unicode_normalization::UnicodeNormalization;
+use unicode_normalization::{IsNormalized, UnicodeNormalization, is_nfc_quick};
 
 const MAX_TOKENIZER_FILE_BYTES: u64 = 32 * 1024 * 1024;
 const MAX_CONFIG_FILE_BYTES: u64 = 64 * 1024;
@@ -920,6 +920,8 @@ impl Tokenizer {
         let normalized;
         let text = match self.contract.dialect.normalizer {
             NormalizerPolicy::IdentitySequence | NormalizerPolicy::Null => text,
+            // Text the quick check finds normalized is its own NFC form.
+            NormalizerPolicy::Nfc if is_nfc_quick(text.chars()) == IsNormalized::Yes => text,
             NormalizerPolicy::Nfc => {
                 normalized = text.nfc().collect::<String>();
                 if normalized.len() > max_input_bytes {
@@ -2870,6 +2872,84 @@ mod tests {
             ]
         );
         assert_eq!(tokenizer.encode("<<<", &allowed).unwrap(), [byte(b'<'); 3]);
+    }
+
+    /// Text skips normalization only when the quick check finds it in NFC,
+    /// where it is its own normal form, so every text encodes as its NFC
+    /// form does.
+    #[test]
+    fn text_encodes_as_its_normal_form_does() {
+        let definition = replace_once(
+            &fixture_definition(),
+            "\"normalizer\":{\"type\":\"Sequence\",\"normalizers\":[]}",
+            "\"normalizer\":{\"type\":\"NFC\"}",
+        );
+        let configuration = fixture_configuration();
+        let mut dialect = literal_prefix_policy(259, 3);
+        dialect.normalizer = NormalizerPolicy::Nfc;
+        let contract = fixture_contract_counts_with_dialect(
+            &definition,
+            &configuration,
+            259,
+            259,
+            0,
+            &dialect,
+        );
+        let tokenizer =
+            Tokenizer::from_verified_bytes(&definition, &configuration, &contract).unwrap();
+        let mut texts: Vec<String> = [
+            "plain ascii",
+            "\u{e9}",
+            "e\u{301}",
+            "\u{212b}",
+            "\u{1100}\u{1161}",
+            "\u{ac00}\u{11a8}",
+            "e\u{323}\u{302}",
+            "e\u{302}\u{323}",
+            "\u{344}",
+            "\u{f900}",
+            "\u{fb01}",
+            "\u{1e9b}\u{323}",
+            "a\u{301}\u{301}\u{316}",
+        ]
+        .map(str::to_owned)
+        .to_vec();
+        let marks = [
+            '\u{300}', '\u{301}', '\u{316}', '\u{323}', '\u{334}', '\u{345}', '\u{1161}',
+            '\u{11a8}',
+        ];
+        for base in (0x20..0x250)
+            .chain(0x1100..0x1200)
+            .chain(0x1e00..0x1f00)
+            .chain(0xac00..0xac40)
+        {
+            let Some(base) = char::from_u32(base) else {
+                continue;
+            };
+            texts.push(base.to_string());
+            for mark in marks {
+                texts.push(format!("{base}{mark}"));
+                texts.push(format!("x{base}{mark}{mark}y"));
+            }
+        }
+        let mut quick = 0;
+        for text in &texts {
+            let normal: String = text.nfc().collect();
+            if is_nfc_quick(text.chars()) == IsNormalized::Yes {
+                assert_eq!(&normal, text);
+                quick += 1;
+            }
+            assert_eq!(
+                tokenizer.encode(text, &[]).unwrap(),
+                tokenizer.encode(&normal, &[]).unwrap(),
+                "{text:?}"
+            );
+        }
+        assert!(
+            quick > 100 && quick < texts.len(),
+            "{quick} of {}",
+            texts.len()
+        );
     }
 
     #[test]

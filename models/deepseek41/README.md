@@ -325,6 +325,17 @@ teardown keep their stream fences. Adopted on 2026-11-06 ([served
 timing](#served-timing)), after served and fixed-batch replays of DeepSeek
 and GLM matched bitwise.
 
+A large mapped Engram gather on the host (8192 row ids or more, a prefill
+of 342 rows or more at 24 ids a row) reads each mapping through open file
+descriptions of its own, at most 24, and its rows on scoped workers
+straight into the gather's outputs and the other ranks' copies, instead of
+the reader pool's shares through the mapping's one retained descriptor
+([observability](../../docs/operations-observability.md)). The bytes are
+unchanged. Adopted on 2026-11-08 with the combined candidate ([served
+timing](#served-timing)) from the `CHOPINFER_MAPPED_READER_FILES` and
+`CHOPINFER_MAPPED_LARGE_GATHER_DIRECT` candidate switches, which were then
+removed.
+
 ## Reference
 
 `reference.py` is the refrun adapter (`tools/refrun`). It executes the

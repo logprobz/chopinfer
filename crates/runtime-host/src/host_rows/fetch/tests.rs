@@ -52,33 +52,6 @@ fn default_is_on_and_zero_keeps_the_legacy_choice() {
 }
 
 #[test]
-fn the_candidate_routes_are_on_unless_a_selector_turns_one_off() {
-    let route = |files: Option<&str>, direct: Option<&str>| {
-        route_for(files.map(Into::into), direct.map(Into::into), 7)
-    };
-    let files = super::readers::MAX_PER_MAPPING;
-    let both = LargeRoute {
-        reader_files: files,
-        direct: Some(7),
-    };
-    assert_eq!(route(None, None), both);
-    assert_eq!(route(Some("1"), Some("1")), both);
-    assert_eq!(
-        route(None, Some("0")),
-        LargeRoute {
-            reader_files: files,
-            direct: None
-        }
-    );
-    // Direct reads need the reader descriptions.
-    assert_eq!(route(Some("0"), None), LargeRoute::SHARED);
-    for value in ["0", "", "yes", "24"] {
-        assert_eq!(route(Some(value), None), LargeRoute::SHARED, "{value}");
-        assert_eq!(route(Some("1"), Some(value)).direct, None, "{value}");
-    }
-}
-
-#[test]
 fn reader_window_defaults_and_accepts_only_the_reader_thread_range() {
     assert!(valid_readers(DEFAULT_READERS));
     assert_eq!(configured_readers(None), DEFAULT_READERS);
@@ -391,28 +364,23 @@ fn large_copies_read_every_position_of_every_plane_in_one_batch() {
             },
         ],
         &mut [],
-        LargeRoute::SHARED,
-        |groups, outputs| {
+        large_route(),
+        |planes, twins, files, workers| {
             asked.push(
-                groups
+                planes
                     .iter()
-                    .map(|(_, requests)| requests.to_vec())
+                    .map(|plane| (plane.rows.to_vec(), plane.width))
                     .collect::<Vec<_>>(),
             );
-            pool::read_groups_into(groups, outputs)
+            direct::copy(planes, twins, files, workers)
         },
     )
     .unwrap();
-    // One read for both tables, every position in order, duplicates too.
-    let reads = |width: usize| {
-        rows.iter()
-            .map(|&row| (300 + u64::from(row) * width as u64, width))
-            .collect::<Vec<_>>()
-    };
-    assert_eq!(asked, [vec![reads(97), reads(8)]]);
+    // One gather for both tables, every position in order, duplicates too.
+    assert_eq!(asked, [vec![(rows.to_vec(), 97), (rows.to_vec(), 8)]]);
     assert_eq!(code_out, codes.expected(&rows));
     assert_eq!(scale_out, scales.expected(&rows));
-    // The served reader copies the same bytes.
+    // The served copy writes the same bytes.
     code_out.fill(0xa5);
     copy_large(&mut [PlaneCopy {
         mapping: &codes.mapping,
@@ -424,9 +392,11 @@ fn large_copies_read_every_position_of_every_plane_in_one_batch() {
     assert_eq!(code_out, codes.expected(&rows));
     // A bad row in any plane is refused before any read or write.
     let mut poison = (vec![0xa5; 2 * 97], vec![0xa5; 2 * 8]);
-    let refuse = |_: &[pool::Group<'_>], _: &mut [&mut [u8]]| -> Result<bool, String> {
-        panic!("read after a bad row")
-    };
+    let refuse = |_: &mut [PlaneCopy<'_>],
+                  _: &mut [Vec<&mut [u8]>],
+                  _: &[Vec<Arc<File>>],
+                  _: usize|
+     -> Result<(), String> { panic!("read after a bad row") };
     assert!(
         copy_large_with(
             &mut [
@@ -444,7 +414,7 @@ fn large_copies_read_every_position_of_every_plane_in_one_batch() {
                 },
             ],
             &mut [],
-            LargeRoute::SHARED,
+            large_route(),
             refuse,
         )
         .is_err()
@@ -495,15 +465,12 @@ fn a_large_fanout_serves_later_ranks_the_first_ranks_bytes() {
 }
 
 /// Each plane's descriptions in one large read, as [`copy_large_with`]
-/// hands them to the pool, read by the served pool.
-fn descriptions_of(
-    planes: &mut [PlaneCopy<'_>],
-    route: LargeRoute,
-) -> Vec<Vec<std::sync::Arc<File>>> {
+/// hands them to the direct workers, read by the served copy.
+fn descriptions_of(planes: &mut [PlaneCopy<'_>], route: LargeRoute) -> Vec<Vec<Arc<File>>> {
     let mut seen = Vec::new();
-    copy_large_with(planes, &mut [], route, |groups, outputs| {
-        seen = groups.iter().map(|(files, _)| files.to_vec()).collect();
-        pool::read_groups_into(groups, outputs)
+    copy_large_with(planes, &mut [], route, |planes, twins, files, workers| {
+        seen = files.to_vec();
+        direct::copy(planes, twins, files, workers)
     })
     .unwrap();
     seen
@@ -518,8 +485,8 @@ fn large_copies_read_each_mapping_through_its_own_bounded_descriptions() {
     let rows = (0..20_000_u32)
         .map(|i| i.wrapping_mul(2_654_435_761) % 3000)
         .collect::<Vec<_>>();
-    let share = pool::share_rows(2 * rows.len(), readers());
-    let shares = rows.len().div_ceil(share);
+    // Fewer workers than the most descriptions a round wants.
+    let workers = 7;
     let mut code_out = vec![0xa5; rows.len() * 97];
     let mut scale_out = vec![0xa5; rows.len() * 8];
     let mut most = 0;
@@ -529,7 +496,7 @@ fn large_copies_read_each_mapping_through_its_own_bounded_descriptions() {
         scale_out.fill(0xa5);
         let route = LargeRoute {
             reader_files: wanted,
-            direct: None,
+            workers,
         };
         let seen = descriptions_of(
             &mut [
@@ -556,9 +523,9 @@ fn large_copies_read_each_mapping_through_its_own_bounded_descriptions() {
                 assert!(files.len() == 1 && Arc::ptr_eq(&files[0], retained));
                 continue;
             }
-            // At most one description per share, never the retained one, all
+            // At most one description per worker, never the retained one, all
             // of the mapping's file; a smaller bound reuses the first held.
-            assert_eq!(files.len(), wanted.min(shares), "round {round}");
+            assert_eq!(files.len(), wanted.min(workers), "round {round}");
             let file = retained.metadata().unwrap();
             for description in files {
                 assert!(!Arc::ptr_eq(description, retained));
@@ -568,7 +535,7 @@ fn large_copies_read_each_mapping_through_its_own_bounded_descriptions() {
             // The mapping keeps what it opened: the most any round wanted.
             assert_eq!(
                 super::readers::tests::links(&fixture.path).len(),
-                1 + most.min(shares),
+                1 + most.min(workers),
                 "round {round}"
             );
         }
@@ -599,7 +566,7 @@ fn dropping_a_mapping_closes_its_reader_descriptions() {
         }],
         LargeRoute {
             reader_files: 24,
-            direct: None,
+            workers: 7,
         },
     )
     .unwrap();
@@ -646,7 +613,7 @@ fn a_mapping_whose_reader_descriptions_failed_reads_through_its_retained_one() {
         }],
         LargeRoute {
             reader_files: 24,
-            direct: None,
+            workers: 7,
         },
     );
     assert!(seen.len() == 1 && seen[0].len() == 1 && Arc::ptr_eq(&seen[0][0], retained));
@@ -697,7 +664,7 @@ fn a_low_open_file_limit_bounds_reader_descriptions_and_keeps_bytes_exact() {
                 ],
                 LargeRoute {
                     reader_files: 24,
-                    direct: None,
+                    workers: 24,
                 },
             )
             .unwrap();

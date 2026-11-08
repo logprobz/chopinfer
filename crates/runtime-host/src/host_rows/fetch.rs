@@ -25,8 +25,6 @@ const READERS_ENV: &str = "CHOPINFER_MAPPED_MISS_READERS";
 const START_ENV: &str = "CHOPINFER_MAPPED_MISS_START";
 const JOINT_ENV: &str = "CHOPINFER_MAPPED_MISS_JOINT_PLANES";
 const LARGE_ENV: &str = "CHOPINFER_MAPPED_LARGE_GATHER_FETCH";
-const READER_FILES_ENV: &str = "CHOPINFER_MAPPED_READER_FILES";
-const DIRECT_ENV: &str = "CHOPINFER_MAPPED_LARGE_GATHER_DIRECT";
 /// Reader threads one batch's rows are split across. A drafted DSpark step
 /// gathers its first Engram layer after the drafter, and at 32 rows on rows
 /// no request read before about 450 of each plane's 768 rows miss; with 16
@@ -135,55 +133,24 @@ pub(crate) fn large_reads() -> bool {
     enabled() && start_reads() && *LARGE.get_or_init(|| configured(std::env::var_os(LARGE_ENV)))
 }
 
-/// How a large gather ([`copy_large`]) reads its rows.
+/// How a large gather ([`copy_large`]) reads its rows: on `workers` scoped
+/// workers straight into the outputs and the twins' copies ([`direct`]),
+/// each mapping through up to `reader_files` descriptions of its own
+/// ([`ReaderFiles`]), one per worker. With 0, or once a mapping's
+/// descriptions failed, the workers read through the mapping's retained
+/// descriptor.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct LargeRoute {
-    /// The most descriptions of each mapping its readers read through
-    /// ([`ReaderFiles`]), or 0 for the mapping's retained descriptor alone.
     pub(crate) reader_files: usize,
-    /// The workers that read the rows straight into the outputs
-    /// ([`direct`]), or `None` for the reader pool.
-    pub(crate) direct: Option<usize>,
+    pub(crate) workers: usize,
 }
 
-impl LargeRoute {
-    /// The reader pool, every reader on the retained descriptor.
-    pub(crate) const SHARED: Self = Self {
-        reader_files: 0,
-        direct: None,
-    };
-}
-
-/// The candidate selectors' route, read once: unset or `1` (the default),
-/// `CHOPINFER_MAPPED_READER_FILES` reads each mapping of a large gather
-/// through up to [`readers::MAX_PER_MAPPING`] descriptions of its own, one
-/// per reader; anything else reads through the mapping's one retained
-/// descriptor. With it, `CHOPINFER_MAPPED_LARGE_GATHER_DIRECT` unset or `1`
-/// (the default) reads the rows on scoped workers straight into the outputs
-/// and the twins' copies ([`direct`]); anything else has the reader pool
-/// read them. The bytes are the same either way.
+/// The served route: up to [`readers::MAX_PER_MAPPING`] descriptions of each
+/// mapping, on the workers this process may run ([`direct::workers`]).
 pub(crate) fn large_route() -> LargeRoute {
-    static ROUTE: OnceLock<LargeRoute> = OnceLock::new();
-    *ROUTE.get_or_init(|| {
-        route_for(
-            std::env::var_os(READER_FILES_ENV),
-            std::env::var_os(DIRECT_ENV),
-            direct::workers(),
-        )
-    })
-}
-
-fn route_for(
-    reader_files: Option<std::ffi::OsString>,
-    direct: Option<std::ffi::OsString>,
-    workers: usize,
-) -> LargeRoute {
-    if !configured(reader_files) {
-        return LargeRoute::SHARED;
-    }
     LargeRoute {
         reader_files: readers::MAX_PER_MAPPING,
-        direct: configured(direct).then_some(workers),
+        workers: direct::workers(),
     }
 }
 
@@ -225,7 +192,7 @@ pub(crate) fn snapshot() -> serde_json::Value {
         "reader_files_held":readers::budget().held(),
         "reader_files_budget":readers::budget().limit(),
         "reader_file_failures":readers::failures(),
-        "direct_workers":large_route().direct, "direct":direct::snapshot(),
+        "direct_workers":large_route().workers, "direct":direct::snapshot(),
         "nowait":source::snapshot(),
         "mapped_fallback_rows":MAPPED.load(Ordering::Relaxed),
         "legacy_async_gathers":legacy_gathers, "legacy_async_misses":legacy_misses,
@@ -486,14 +453,13 @@ fn copy_planes_with(
     Ok(())
 }
 
-/// Copies every plane's rows as exact reads of their file ranges through the
-/// reader threads, all planes in one batch, so the gather waits for the
-/// device once: the large-gather route ([`reads_large`]), read as the
-/// selectors choose ([`large_route`]). Every position is read, duplicates
-/// included, as the mapped copy reads them; the resident cache is neither
-/// consulted nor filled, so a streaming gather cannot displace the rows
-/// decode steps reuse. Refuses a bad row or a plane without a descriptor
-/// before any write.
+/// Copies every plane's rows as exact reads of their file ranges on the
+/// direct workers, all planes in one gather, so the gather waits for the
+/// device once: the large-gather route ([`reads_large`], [`large_route`]).
+/// Every position is read, duplicates included, as the mapped copy reads
+/// them; the resident cache is neither consulted nor filled, so a streaming
+/// gather cannot displace the rows decode steps reuse. Refuses a bad row or
+/// a plane without a descriptor before any write.
 pub(crate) fn copy_large(planes: &mut [PlaneCopy<'_>]) -> Result<(), String> {
     copy_large_routed(planes, large_route())
 }
@@ -514,14 +480,21 @@ pub(crate) fn copy_large_twinned(
     twins: &mut [Vec<&mut [u8]>],
     route: LargeRoute,
 ) -> Result<(), String> {
-    copy_large_with(planes, twins, route, pool::read_groups_into)
+    copy_large_with(planes, twins, route, direct::copy)
 }
 
+/// [`copy_large_twinned`] that reads through `copy`, called as
+/// [`direct::copy`] is: plane `p` through `descriptions[p]`.
 fn copy_large_with(
     planes: &mut [PlaneCopy<'_>],
     twins: &mut [Vec<&mut [u8]>],
     route: LargeRoute,
-    read: impl FnOnce(&[pool::Group<'_>], &mut [&mut [u8]]) -> Result<bool, String>,
+    copy: impl FnOnce(
+        &mut [PlaneCopy<'_>],
+        &mut [Vec<&mut [u8]>],
+        &[Vec<std::sync::Arc<std::fs::File>>],
+        usize,
+    ) -> Result<(), String>,
 ) -> Result<(), String> {
     if !twins.is_empty()
         && (twins.len() != planes.len()
@@ -544,19 +517,14 @@ fn copy_large_with(
         );
     }
     let started = std::time::Instant::now();
-    // Each plane's descriptions: one per reader of its rows (a direct
-    // worker, or a share the pool reads), up to the route's bound, or the
-    // retained descriptor alone.
-    let share = pool::share_rows(planes.iter().map(|plane| plane.rows.len()).sum(), readers());
+    // Each plane's descriptions: one per worker, up to the route's bound, or
+    // the retained descriptor alone.
     let mut own = false;
     let descriptions = planes
         .iter()
         .zip(&sources)
         .map(|(plane, &source)| {
-            let readers = route
-                .direct
-                .unwrap_or_else(|| plane.rows.len().div_ceil(share));
-            let wanted = route.reader_files.min(readers);
+            let wanted = route.reader_files.min(route.workers);
             let files = if wanted > 0 {
                 plane.mapping.readers.get(source, wanted)
             } else {
@@ -570,53 +538,12 @@ fn copy_large_with(
             }
         })
         .collect::<Vec<_>>();
-    let serial = match route.direct {
-        Some(workers) => {
-            direct::copy(planes, twins, &descriptions, workers)?;
-            false
-        }
-        None => {
-            let requests = planes
-                .iter()
-                .map(|plane| {
-                    let base = plane.mapping.file_offset();
-                    // validate established row * width < mapping length, and
-                    // the mapping constructor checked its whole file interval.
-                    plane
-                        .rows
-                        .iter()
-                        .map(|&row| (base + u64::from(row) * plane.width as u64, plane.width))
-                        .collect::<Vec<_>>()
-                })
-                .collect::<Vec<_>>();
-            let groups = descriptions
-                .iter()
-                .zip(&requests)
-                .map(|(files, requests)| (files.as_slice(), requests.as_slice()))
-                .collect::<Vec<_>>();
-            let serial = read(
-                &groups,
-                &mut planes
-                    .iter_mut()
-                    .map(|plane| &mut *plane.out)
-                    .collect::<Vec<_>>(),
-            )?;
-            for (plane, twins) in planes.iter().zip(twins.iter_mut()) {
-                for twin in twins {
-                    twin.copy_from_slice(plane.out);
-                }
-            }
-            serial
-        }
-    };
+    copy(planes, twins, &descriptions, route.workers)?;
     let rows = planes.iter().map(|plane| plane.rows.len()).sum::<usize>() as u64;
     BATCHES.fetch_add(planes.len() as u64, Ordering::Relaxed);
     ROWS.fetch_add(rows, Ordering::Relaxed);
     for plane in planes.iter() {
         count_reads(plane.rows.len(), plane.width, false);
-    }
-    if serial {
-        SERIAL.fetch_add(1, Ordering::Relaxed);
     }
     if planes.len() > 1 {
         JOINT.fetch_add(1, Ordering::Relaxed);

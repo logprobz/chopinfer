@@ -1,7 +1,7 @@
-//! Direct large gathers (`CHOPINFER_MAPPED_LARGE_GATHER_DIRECT`): scoped
-//! workers read a large gather's rows straight into its outputs, and write
-//! the twins' copies of each row as it lands, instead of reader-pool shares
-//! that reply with owned buffers the caller copies into place.
+//! Direct large gathers: scoped workers read a large gather's rows straight
+//! into its outputs, and write the twins' copies of each row as it lands,
+//! with no reader-pool shares that reply with owned buffers the caller
+//! copies into place.
 //!
 //! The calling thread is worker 0 and starts the others. Work items are
 //! [`CHUNK_ROWS`] positions of one plane, each with disjoint slices of the

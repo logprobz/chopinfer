@@ -177,7 +177,8 @@ enum Lead {
 /// resident-path leaders (at least two) read their misses as one batch, and
 /// the large leaders read all their rows as one batch, so the gather waits
 /// for the device once per route rather than once per plane. Another rank's
-/// plane of a large leader's table, width and ids copies the leader's bytes.
+/// plane of a large leader's table, width and ids receives the leader's
+/// bytes as the large copy writes them.
 /// Every other plane then gathers on its own, as [`gather_plane_v1`] does;
 /// another rank's copy of a resident-path leader finds its rows in the
 /// resident cache, or without one in the page cache. The bytes equal
@@ -268,8 +269,7 @@ pub(crate) fn gather_planes_routed(
             })
         })
         .collect::<Vec<_>>();
-    // Direct large reads write each twin's rows as they read its leader's.
-    let direct = route.direct.is_some();
+    // Large reads write each twin's rows as they read its leader's.
     for kind in [Lead::Resident, Lead::Large] {
         let mut slots = outputs
             .iter_mut()
@@ -289,7 +289,7 @@ pub(crate) fn gather_planes_routed(
                 rows: ids.as_deref().expect("a leader's ids"),
                 out: slots[index].take().expect("one plane per output"),
             });
-            if kind == Lead::Large && direct {
+            if kind == Lead::Large {
                 copy_twins.push(
                     (index + 1..planes.len())
                         .filter(|&twin| twins[twin] == Some(index))
@@ -309,15 +309,12 @@ pub(crate) fn gather_planes_routed(
         if leads[index] != Lead::No {
             continue;
         }
-        let (done, rest) = outputs.split_at_mut(index);
         match twins[index] {
-            Some(leader) => {
+            // The large copy wrote a twin's rows with its leader's.
+            Some(_) => {
                 let _ = gather::mapped_async_read_ahead_v1();
-                if !direct {
-                    rest[0].copy_from_slice(done[leader]);
-                }
             }
-            None => gather_plane_routed(&planes[index], input, rest[0], route)?,
+            None => gather_plane_routed(&planes[index], input, outputs[index], route)?,
         }
     }
     Ok(())

@@ -368,7 +368,7 @@ fn twins_of_another_length_are_refused_before_any_read() {
     let mut short = vec![GARBAGE; rows.len() * 8 - 8];
     let route = super::super::LargeRoute {
         reader_files: 0,
-        direct: Some(2),
+        workers: 2,
     };
     let result = super::super::copy_large_twinned(
         &mut [PlaneCopy {

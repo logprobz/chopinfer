@@ -345,25 +345,25 @@ only when it names the same device and inode, at most 24 per mapping and
 `min(256, RLIMIT_NOFILE soft / 16)` in the process, and closed with the
 mapping. It reads the rows on scoped workers (the CPUs the process may use
 less two, from 1 to 24) straight into the gather's outputs and writes the
-other ranks' copies in the same pass. Two candidate switches, on by
-default and not serving options, select the earlier routes:
-`CHOPINFER_MAPPED_LARGE_GATHER_DIRECT=0` has the reader pool read the rows
-through the descriptions, and `CHOPINFER_MAPPED_READER_FILES=0` reads them
-through the retained descriptor alone, on the pool. Bytes, routes, events
-and ordering are unchanged. Each route logs one `chopinfer.mapped-row-fetch.v1`
-line when it first engages (`reader-files` with the description count and
-budget, `direct-gather` with the worker count). The process's first
-description that fails to open logs one `reader-files` line with a
-`reason`; that mapping opens no more, and its gathers read through the
-descriptions it has or the retained one. The `miss_fetch` object of the
-mapped-row reports counts `reader_file_gathers`, `reader_files_held`,
-`reader_file_failures`, the `direct` gathers and workers, and the `nowait`
-probe classes (`full`, `short`, `would_block`, `unsupported`, `other`). On
-2026-11-07, a CPU benchmark of a four-rank layer gather of resident rows on
-24 CPUs of a shared host took 26.3, 9.6 and 5.9 ms at 2890 prefill rows
-through the retained descriptor, the descriptions and the direct workers.
-The route was adopted on 2026-11-08 from DeepSeek V4.1's
-[served timing](../models/deepseek41/README.md#served-timing).
+other ranks' copies in the same pass, where the reader pool once read
+them through the retained descriptor and replied with buffers copied into
+place. Bytes, events and ordering are the same either way. Each logs one
+`chopinfer.mapped-row-fetch.v1` line when it first engages (`reader-files`
+with the description count and budget, `direct-gather` with the worker
+count). The process's first description that fails to open logs one
+`reader-files` line with a `reason`; that mapping opens no more, and its
+gathers read through the descriptions it has or the retained one. The
+`miss_fetch` object of the mapped-row reports counts `reader_file_gathers`,
+`reader_files_held`, `reader_file_failures`, the `direct` gathers and
+workers, and the `nowait` probe classes (`full`, `short`, `would_block`,
+`unsupported`, `other`). On 2026-11-07, a CPU benchmark of a four-rank
+layer gather of resident rows on 24 CPUs of a shared host took 26.3, 9.6
+and 5.9 ms at 2890 prefill rows through the retained descriptor, the
+descriptions and the direct workers. The route was adopted on 2026-11-08
+from DeepSeek V4.1's
+[served timing](../models/deepseek41/README.md#served-timing), and the
+`CHOPINFER_MAPPED_READER_FILES` and `CHOPINFER_MAPPED_LARGE_GATHER_DIRECT`
+candidate switches that selected it were removed.
 
 ### Weight keeper
 

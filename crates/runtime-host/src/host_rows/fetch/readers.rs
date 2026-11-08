@@ -1,5 +1,5 @@
 //! Open file descriptions of a mapping's retained descriptor for the readers
-//! of large gathers (`CHOPINFER_MAPPED_READER_FILES`).
+//! of large gathers.
 //!
 //! A mapping keeps one descriptor of its file, a duplicate of the loader's,
 //! so every reader of every mapping of one file reads through one open file

@@ -384,101 +384,19 @@ fn large_gathers_settle_release_and_fail_without_leaks() {
     settle_and_fail(FakeHostDeviceV1::new(), [0, 1], "settle-fake");
 }
 
-/// One opt-out of the default route: its name, its selectors' values, and
-/// the log lines that show it engaged and that it did not take the default.
-struct Candidate {
-    name: &'static str,
-    selectors: &'static [(&'static str, &'static str)],
-    engaged: Option<&'static str>,
-    absent: &'static [&'static str],
-}
-
-const READER_FILES: &str = "\"phase\":\"reader-files\",\"descriptions\"";
-const DIRECT: &str = "\"phase\":\"direct-gather\"";
-
-const CANDIDATES: [Candidate; 2] = [
-    Candidate {
-        name: "reader-files",
-        selectors: &[("CHOPINFER_MAPPED_LARGE_GATHER_DIRECT", "0")],
-        engaged: Some(READER_FILES),
-        absent: &[DIRECT],
-    },
-    Candidate {
-        name: "shared",
-        selectors: &[("CHOPINFER_MAPPED_READER_FILES", "0")],
-        engaged: None,
-        absent: &[READER_FILES, DIRECT],
-    },
-];
-
-/// Runs test `name` of this binary in a child process under each opt-out,
-/// which the child names in `child`, and checks the log lines that show
-/// the route it took.
-fn under_candidates(name: &str, child: &str) {
-    for Candidate {
-        name: candidate,
-        selectors,
-        engaged,
-        absent,
-    } in CANDIDATES
-    {
-        let mut command = std::process::Command::new(std::env::current_exe().unwrap());
-        command
-            .args(["--exact", name, "--nocapture", "--test-threads", "1"])
-            .env(child, candidate)
-            .env_remove("CHOPINFER_MAPPED_READER_FILES")
-            .env_remove("CHOPINFER_MAPPED_LARGE_GATHER_DIRECT");
-        for (key, value) in selectors {
-            command.env(key, value);
-        }
-        let output = command.output().unwrap();
-        let (out, errors) = (
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr),
-        );
-        assert!(output.status.success(), "{candidate}: {out}\n{errors}");
-        assert!(out.contains("1 passed; 0 failed"), "{candidate}: {out}");
-        assert!(engaged.is_none_or(|engaged| errors.contains(engaged)), "{candidate}: {errors}");
-        assert!(!absent.iter().any(|line| errors.contains(line)), "{candidate}: {errors}");
-    }
-}
-
 #[test]
-fn large_layer_gathers_on_candidate_routes_preserve_bytes_and_release() {
-    const CHILD: &str = "HOST_MAPPED_LAYER_ROUTE";
-    if std::env::var_os(CHILD).is_some() {
-        exercise(FakeHostDeviceV1::new(), [0, 1], "route-fake", &REUSED);
-        settle_and_fail(FakeHostDeviceV1::new(), [0, 1], "route-settle-fake");
-        runtime_engine::logging::flush();
-        return;
-    }
-    under_candidates(
-        "layer_gathers::large_layer_gathers_on_candidate_routes_preserve_bytes_and_release",
-        CHILD,
-    );
+fn reused_large_layer_gathers_preserve_bytes_and_release() {
+    exercise(FakeHostDeviceV1::new(), [0, 1], "reused-fake", &REUSED);
 }
 
 #[cfg(feature = "cuda-fake-driver-tests")]
 #[test]
-fn large_layer_gathers_through_the_cuda_fake_driver_on_every_route() {
-    const CHILD: &str = "HOST_MAPPED_LAYER_DRIVER_ROUTE";
-    let run = || {
-        runtime_cuda::fake_driver::reset();
-        let device = || runtime_host::cuda::CudaHostDeviceV1::new().unwrap();
-        exercise(device(), [0, 1], "layer-driver", &REUSED);
-        settle_and_fail(device(), [0, 1], "settle-driver");
-        assert_eq!(runtime_cuda::fake_driver::ordering_violations(), 0);
-    };
-    if std::env::var_os(CHILD).is_some() {
-        run();
-        runtime_engine::logging::flush();
-        return;
-    }
-    run();
-    under_candidates(
-        "layer_gathers::large_layer_gathers_through_the_cuda_fake_driver_on_every_route",
-        CHILD,
-    );
+fn large_layer_gathers_through_the_cuda_fake_driver() {
+    runtime_cuda::fake_driver::reset();
+    let device = || runtime_host::cuda::CudaHostDeviceV1::new().unwrap();
+    exercise(device(), [0, 1], "layer-driver", &REUSED);
+    settle_and_fail(device(), [0, 1], "settle-driver");
+    assert_eq!(runtime_cuda::fake_driver::ordering_violations(), 0);
 }
 
 #[cfg(all(feature = "linux-cuda-host", not(feature = "cuda-fake-driver-tests")))]

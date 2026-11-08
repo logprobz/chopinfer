@@ -518,46 +518,8 @@ pub(crate) fn parse(
             if plain {
                 validate_single_turn_plain_chat(&request)?;
             }
-            let tool_objects = if frontend.reads_tool_objects() {
-                let raw: RawToolsV1 = decode(body)?;
-                let objects: Vec<FrontendJsonV1> = raw
-                    .tools
-                    .unwrap_or_default()
-                    .into_iter()
-                    .map(|tool| tool.function)
-                    .collect();
-                for object in &objects {
-                    validate_json_strings(object, "tools", max_string_bytes)?;
-                }
-                objects
-            } else {
-                Vec::new()
-            };
-            let tool_namespaces = if frontend.tool_namespace_separator().is_some() {
-                let raw: RawNamespacesV1 = decode(body)?;
-                raw.tools
-                    .unwrap_or_default()
-                    .into_iter()
-                    .map(|tool| {
-                        let present = |namespace: Option<crate::frontend::LastValueJsonV1>| {
-                            namespace
-                                .map(|namespace| namespace.0)
-                                .filter(|namespace| *namespace != FrontendJsonV1::Null)
-                        };
-                        present(tool.namespace).or_else(|| {
-                            tool.function
-                                .and_then(|function| present(function.namespace))
-                        })
-                    })
-                    .collect()
-            } else {
-                Vec::new()
-            };
-            let raw: RawTemplateKwargsV1 = decode(body)?;
-            let template_kwargs = raw
-                .chat_template_kwargs
-                .map(|kwargs| kwargs.0)
-                .and_then(crate::frontend::forwarded_template_kwargs_v1);
+            let (tool_objects, tool_namespaces, template_kwargs) =
+                chat_members_as_sent(frontend, body, &request, max_string_bytes)?;
             if let Some(maximum) = exact_shape {
                 let (declared, parameter) = match request.max_completion_tokens {
                     Some(declared) => (Some(declared), "max_completion_tokens"),
@@ -575,6 +537,74 @@ pub(crate) fn parse(
             )
         }
     }
+}
+
+/// The members of a chat body that reach the frontend as the client sent
+/// them, read after the typed read of the whole body: each offered tool's
+/// function object, when the frontend reads them, each tool's namespace,
+/// when it qualifies names, and the template keywords.
+#[allow(clippy::type_complexity)]
+fn chat_members_as_sent(
+    frontend: &dyn ServerFrontendV1,
+    body: &[u8],
+    request: &ChatRequest,
+    max_string_bytes: usize,
+) -> Result<
+    (
+        Vec<FrontendJsonV1>,
+        Vec<Option<FrontendJsonV1>>,
+        Option<FrontendJsonV1>,
+    ),
+    ApiError,
+> {
+    // The typed read validated the body, so the reads of its members
+    // as sent check its bounds no more. A member the typed read found
+    // absent or null reads as absent, so it is not read again.
+    let tool_objects = if frontend.reads_tool_objects() && request.tools.is_some() {
+        let raw: RawToolsV1 = decode_validated(body)?;
+        let objects: Vec<FrontendJsonV1> = raw
+            .tools
+            .unwrap_or_default()
+            .into_iter()
+            .map(|tool| tool.function)
+            .collect();
+        for object in &objects {
+            validate_json_strings(object, "tools", max_string_bytes)?;
+        }
+        objects
+    } else {
+        Vec::new()
+    };
+    let tool_namespaces =
+        if frontend.tool_namespace_separator().is_some() && request.tools.is_some() {
+            let raw: RawNamespacesV1 = decode_validated(body)?;
+            raw.tools
+                .unwrap_or_default()
+                .into_iter()
+                .map(|tool| {
+                    let present = |namespace: Option<crate::frontend::LastValueJsonV1>| {
+                        namespace
+                            .map(|namespace| namespace.0)
+                            .filter(|namespace| *namespace != FrontendJsonV1::Null)
+                    };
+                    present(tool.namespace).or_else(|| {
+                        tool.function
+                            .and_then(|function| present(function.namespace))
+                    })
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+    let template_kwargs = if request.chat_template_kwargs.is_some() {
+        let raw: RawTemplateKwargsV1 = decode_validated(body)?;
+        raw.chat_template_kwargs
+            .map(|kwargs| kwargs.0)
+            .and_then(crate::frontend::forwarded_template_kwargs_v1)
+    } else {
+        None
+    };
+    Ok((tool_objects, tool_namespaces, template_kwargs))
 }
 
 /// Requires the generation length this deployment measured, stated as itself.
@@ -768,6 +798,12 @@ fn validate_single_turn_plain_chat(request: &ChatRequest) -> Result<(), ApiError
 
 fn decode<'a, T: Deserialize<'a>>(body: &'a [u8]) -> Result<T, ApiError> {
     crate::json_limits::validate(body).map_err(|error| ApiError::invalid_json(&error, None))?;
+    decode_validated(body)
+}
+
+/// Reads `body` as `T` after [`decode`] read it once, so its bounds are
+/// known to hold.
+fn decode_validated<'a, T: Deserialize<'a>>(body: &'a [u8]) -> Result<T, ApiError> {
     let mut deserializer = serde_json::Deserializer::from_slice(body);
     let value = T::deserialize(&mut deserializer).map_err(|error| {
         ApiError::invalid_json(&error, json_error_parameter(&error.to_string()))
@@ -2918,6 +2954,170 @@ mod tests {
         // The model is checked before the prompt, as before.
         let refused = served_prompts(br#"{"model":"n","prompt":[1,"a"]}"#).unwrap_err();
         assert_eq!(refused.1, "model 'n' is not available");
+    }
+
+    /// Serves one model, reading tool objects and qualifying names by
+    /// namespace when asked to.
+    struct MembersFrontend {
+        tool_objects: bool,
+        namespaces: bool,
+    }
+
+    impl ServerFrontendV1 for MembersFrontend {
+        fn models(&self) -> &[crate::FrontendModelV1] {
+            OneModel.models()
+        }
+        fn reads_tool_objects(&self) -> bool {
+            self.tool_objects
+        }
+        fn tool_namespace_separator(&self) -> Option<&str> {
+            self.namespaces.then_some(".")
+        }
+        fn maximum_total_tokens(&self) -> usize {
+            1 << 21
+        }
+        fn maximum_tool_calls(&self) -> usize {
+            1
+        }
+        fn render_chat(
+            &self,
+            _: FrontendChatRequestV1,
+        ) -> Result<crate::FrontendRenderedChatV1, FrontendErrorV1> {
+            Err(FrontendErrorV1::new("no chat", None))
+        }
+        fn validate_tool_call(&self, _: &str, _: &str) -> Result<(), FrontendErrorV1> {
+            Ok(())
+        }
+    }
+
+    type Members = (
+        Vec<FrontendJsonV1>,
+        Vec<Option<FrontendJsonV1>>,
+        Option<FrontendJsonV1>,
+    );
+
+    /// A chat body's members as sent, read as they were before the body's
+    /// bounds were checked once: each read validates the whole body, and
+    /// each runs whatever the typed read found.
+    fn reference_members(frontend: &dyn ServerFrontendV1, body: &[u8]) -> Result<Members, Refusal> {
+        let tool_objects = if frontend.reads_tool_objects() {
+            let raw: RawToolsV1 = decode(body).map_err(|error| refusal(&error))?;
+            let objects: Vec<FrontendJsonV1> = raw
+                .tools
+                .unwrap_or_default()
+                .into_iter()
+                .map(|tool| tool.function)
+                .collect();
+            for object in &objects {
+                validate_json_strings(object, "tools", 64).map_err(|error| refusal(&error))?;
+            }
+            objects
+        } else {
+            Vec::new()
+        };
+        let tool_namespaces = if frontend.tool_namespace_separator().is_some() {
+            let raw: RawNamespacesV1 = decode(body).map_err(|error| refusal(&error))?;
+            raw.tools
+                .unwrap_or_default()
+                .into_iter()
+                .map(|tool| {
+                    let present = |namespace: Option<crate::frontend::LastValueJsonV1>| {
+                        namespace
+                            .map(|namespace| namespace.0)
+                            .filter(|namespace| *namespace != FrontendJsonV1::Null)
+                    };
+                    present(tool.namespace).or_else(|| {
+                        tool.function
+                            .and_then(|function| present(function.namespace))
+                    })
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+        let raw: RawTemplateKwargsV1 = decode(body).map_err(|error| refusal(&error))?;
+        let template_kwargs = raw
+            .chat_template_kwargs
+            .map(|kwargs| kwargs.0)
+            .and_then(crate::frontend::forwarded_template_kwargs_v1);
+        Ok((tool_objects, tool_namespaces, template_kwargs))
+    }
+
+    /// A chat body's members as sent read only when the typed read found
+    /// them, and with the body's bounds checked once, read the same, or are
+    /// refused the same, as when every read ran and checked them: tools
+    /// absent, null, empty, plain, with namespaces of every kind, with a key
+    /// a function object names twice and with a string past the limit; and
+    /// template keywords absent, null, empty, an array, and with a key named
+    /// twice. Bodies the typed read refuses are refused before either.
+    #[test]
+    fn chat_members_read_as_sent_as_every_read_read_them() {
+        let tools = [
+            None,
+            Some("null"),
+            Some("[]"),
+            Some(r#"[{"type":"function","function":{"name":"f","parameters":{"type":"object"}}}]"#),
+            Some(r#"[{"type":"function","function":{"name":"f","x":1,"x":2}}]"#),
+            Some(r#"[{"type":"function","namespace":"n","function":{"name":"f"}}]"#),
+            Some(
+                r#"[{"type":"function","namespace":null,"function":{"name":"f","namespace":{"name":"m","name":"o"}}}]"#,
+            ),
+            Some(
+                r#"[{"type":"function","namespace":"a","namespace":"b","function":{"name":"f"}}]"#,
+            ),
+            Some(
+                r#"[{"type":"function","function":{"name":"f","description":"a description much longer than the sixty-four bytes the test allows"}}]"#,
+            ),
+            Some(
+                r#"[{"type":"function","function":{"name":"f"}},{"type":"function","function":{"name":"g","namespace":"n"}}]"#,
+            ),
+        ];
+        let kwargs = [
+            None,
+            Some("null"),
+            Some("{}"),
+            Some("[true]"),
+            Some(r#"{"enable_thinking":true,"x":[1,2],"x":3}"#),
+            Some(r#"{"thinking":null,"y":{"z":1,"z":2}}"#),
+        ];
+        let mut compared = 0;
+        let mut refused = 0;
+        for tool_objects in [false, true] {
+            for namespaces in [false, true] {
+                let frontend = MembersFrontend {
+                    tool_objects,
+                    namespaces,
+                };
+                for tools in tools {
+                    for kwargs in kwargs {
+                        let mut body = String::from(
+                            r#"{"model":"m","messages":[{"role":"user","content":"hi"}]"#,
+                        );
+                        if let Some(tools) = tools {
+                            body.push_str(&format!(r#","tools":{tools}"#));
+                        }
+                        if let Some(kwargs) = kwargs {
+                            body.push_str(&format!(r#","chat_template_kwargs":{kwargs}"#));
+                        }
+                        body.push('}');
+                        let Ok(request) = decode_chat::<ChatRequest>(body.as_bytes(), false) else {
+                            continue;
+                        };
+                        let members =
+                            chat_members_as_sent(&frontend, body.as_bytes(), &request, 64)
+                                .map_err(|error| refusal(&error));
+                        refused += usize::from(members.is_err());
+                        assert_eq!(
+                            members,
+                            reference_members(&frontend, body.as_bytes()),
+                            "{body}"
+                        );
+                        compared += 1;
+                    }
+                }
+            }
+        }
+        assert!(compared > 150 && refused > 20, "{compared} {refused}");
     }
 
     struct Panics;
